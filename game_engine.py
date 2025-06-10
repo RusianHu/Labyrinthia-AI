@@ -208,8 +208,9 @@ class GameEngine:
                 game_state.game_time += 1  # 每回合1分钟
 
                 # 处理怪物行动（如果游戏没有结束）
+                monster_events_occurred = False
                 if not game_state.is_game_over:
-                    await self._process_monster_turns(game_state)
+                    monster_events_occurred = await self._process_monster_turns(game_state)
 
                 # 添加待处理事件到结果中
                 if hasattr(game_state, 'pending_events') and game_state.pending_events:
@@ -223,8 +224,14 @@ class GameEngine:
                     result["game_over"] = True
                     result["game_over_reason"] = game_state.game_over_reason
 
-                # 只有特殊行动或有事件发生时才生成叙述文本
+                # 判断是否需要LLM交互
                 should_generate_narrative = self._should_generate_narrative(action, result)
+                llm_interaction_required = should_generate_narrative or monster_events_occurred
+
+                # 添加LLM交互标识到结果中
+                result["llm_interaction_required"] = llm_interaction_required
+
+                # 只有特殊行动或有事件发生时才生成叙述文本
                 if should_generate_narrative and not game_state.is_game_over:
                     narrative = await llm_service.generate_narrative(game_state, action)
                     result["narrative"] = narrative
@@ -312,7 +319,12 @@ class GameEngine:
         elif target_tile.terrain == TerrainType.TREASURE:
             events.append(await self._find_treasure(game_state))
         elif target_tile.terrain == TerrainType.STAIRS_DOWN:
-            events.append(await self._descend_stairs(game_state))
+            # 不自动切换地图，而是设置待切换状态
+            game_state.pending_map_transition = "stairs_down"
+            events.append("你发现了通往下一层的楼梯。你可以选择进入下一层。")
+        elif target_tile.terrain == TerrainType.STAIRS_UP:
+            game_state.pending_map_transition = "stairs_up"
+            events.append("你发现了通往上一层的楼梯。你可以选择返回上一层。")
 
         # 检查瓦片事件
         if target_tile.has_event and not target_tile.event_triggered:
@@ -600,6 +612,36 @@ class GameEngine:
             "events": events
         }
 
+    async def transition_map(self, game_state: GameState, transition_type: str) -> Dict[str, Any]:
+        """手动切换地图"""
+        if not game_state.pending_map_transition:
+            return {
+                "success": False,
+                "message": "当前位置无法进行地图切换"
+            }
+
+        if transition_type != game_state.pending_map_transition:
+            return {
+                "success": False,
+                "message": "切换类型不匹配"
+            }
+
+        events = []
+
+        if transition_type == "stairs_down":
+            events.append(await self._descend_stairs(game_state))
+        elif transition_type == "stairs_up":
+            events.append(await self._ascend_stairs(game_state))
+
+        # 清除待切换状态
+        game_state.pending_map_transition = None
+
+        return {
+            "success": True,
+            "message": "成功切换地图",
+            "events": events
+        }
+
     async def _handle_rest(self, game_state: GameState) -> Dict[str, Any]:
         """处理休息行动"""
         player = game_state.player
@@ -806,6 +848,11 @@ class GameEngine:
         """下楼梯"""
         # 生成新的地图层
         new_depth = game_state.current_map.depth + 1
+
+        # 开发阶段：限制为2层
+        if new_depth > 2:
+            return "你已经到达了地下城的最深处！"
+
         new_map = await content_generator.generate_dungeon_map(
             width=game_state.current_map.width,
             height=game_state.current_map.height,
@@ -839,10 +886,127 @@ class GameEngine:
                 tile.character_id = monster.id
             game_state.monsters.append(monster)
 
+        # 更新任务进度
+        await self._update_quest_progress(game_state, "map_transition", new_depth)
+
         return f"进入了{new_map.name}"
-    
-    async def _process_monster_turns(self, game_state: GameState):
-        """处理怪物回合"""
+
+    async def _ascend_stairs(self, game_state: GameState) -> str:
+        """上楼梯"""
+        new_depth = game_state.current_map.depth - 1
+
+        if new_depth < 1:
+            return "你已经回到了地面！"
+
+        # 这里可以实现返回上一层的逻辑
+        # 简化实现：重新生成上一层
+        new_map = await content_generator.generate_dungeon_map(
+            width=game_state.current_map.width,
+            height=game_state.current_map.height,
+            depth=new_depth,
+            theme=f"地下城第{new_depth}层"
+        )
+
+        game_state.current_map = new_map
+
+        # 设置玩家位置
+        spawn_positions = content_generator.get_spawn_positions(new_map, 1)
+        if spawn_positions:
+            game_state.player.position = spawn_positions[0]
+            tile = new_map.get_tile(*game_state.player.position)
+            if tile:
+                tile.character_id = game_state.player.id
+                tile.is_explored = True
+                tile.is_visible = True
+
+        # 更新任务进度
+        await self._update_quest_progress(game_state, "map_transition", new_depth)
+
+        return f"返回到了{new_map.name}"
+
+    async def _update_quest_progress(self, game_state: GameState, event_type: str, context: Any = None):
+        """更新任务进度"""
+        if not game_state.quests:
+            return
+
+        active_quest = None
+        for quest in game_state.quests:
+            if quest.is_active and not quest.is_completed:
+                active_quest = quest
+                break
+
+        if not active_quest:
+            return
+
+        # 计算基于系数的进度增量
+        progress_increment = 0.0
+        if event_type == "map_transition" and context:
+            # 根据配置的进度系数计算进度
+            current_depth = context
+            progress_increment = (current_depth / config.game.max_quest_floors) * 100.0
+            # 确保不超过100%
+            new_progress = min(100.0, progress_increment)
+        else:
+            # 其他事件类型的小幅进度增加
+            progress_increment = 5.0
+            new_progress = min(100.0, active_quest.progress_percentage + progress_increment)
+
+        # 使用LLM更新任务进度和故事内容
+        prompt = f"""
+        当前任务状态：
+        - 标题：{active_quest.title}
+        - 描述：{active_quest.description}
+        - 当前进度：{active_quest.progress_percentage}%
+        - 计算的新进度：{new_progress}%
+        - 故事背景：{active_quest.story_context}
+
+        事件类型：{event_type}
+        事件上下文：{context}
+        玩家等级：{game_state.player.stats.level}
+        当前地图深度：{game_state.current_map.depth}
+
+        进度控制说明：
+        - 进度百分比已根据系数计算为 {new_progress}%
+        - 最大楼层数：{config.game.max_quest_floors}
+        - 当前楼层：{context if event_type == "map_transition" else game_state.current_map.depth}
+
+        请更新任务内容，返回JSON格式：
+        {{
+            "story_context": "更新的故事背景，反映当前进度",
+            "llm_notes": "LLM的内部笔记，用于控制节奏",
+            "should_complete": 是否应该完成任务(true/false，当进度达到100%时),
+            "new_objectives": ["如果需要，更新的目标列表"]
+        }}
+
+        注意：进度百分比由系统控制，你只需要更新故事内容。当进度达到100%时，任务应该完成。
+        """
+
+        try:
+            result = await llm_service._async_generate_json(prompt)
+            if result:
+                # 使用计算的进度值，而不是LLM返回的
+                active_quest.progress_percentage = new_progress
+                active_quest.story_context = result.get("story_context", active_quest.story_context)
+                active_quest.llm_notes = result.get("llm_notes", active_quest.llm_notes)
+
+                # 检查是否应该完成任务
+                if new_progress >= 100.0 or result.get("should_complete", False):
+                    active_quest.is_completed = True
+                    active_quest.is_active = False
+                    active_quest.progress_percentage = 100.0
+                    # 给予经验奖励
+                    game_state.player.stats.experience += active_quest.experience_reward
+                    game_state.pending_events.append(f"任务完成：{active_quest.title}！获得 {active_quest.experience_reward} 经验值！")
+
+                if result.get("new_objectives"):
+                    active_quest.objectives = result["new_objectives"]
+                    active_quest.completed_objectives = [False] * len(active_quest.objectives)
+
+        except Exception as e:
+            logger.error(f"Failed to update quest progress: {e}")
+
+    async def _process_monster_turns(self, game_state: GameState) -> bool:
+        """处理怪物回合，返回是否有怪物事件发生"""
         combat_events = []
 
         for monster in game_state.monsters[:]:  # 使用切片避免修改列表时的问题
@@ -877,6 +1041,9 @@ class GameEngine:
             if not hasattr(game_state, 'pending_events'):
                 game_state.pending_events = []
             game_state.pending_events.extend(combat_events)
+
+        # 返回是否有怪物事件发生（主要是攻击事件）
+        return len(combat_events) > 0
     
     async def _move_monster_towards_player(self, game_state: GameState, monster: Monster):
         """移动怪物靠近玩家"""

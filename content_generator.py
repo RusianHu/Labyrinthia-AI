@@ -291,28 +291,30 @@ class ContentGenerator:
         
         return items
     
-    async def generate_quest_chain(self, player_level: int, 
-                                 chain_length: int = 3) -> List[Quest]:
-        """生成任务链"""
+    async def generate_quest_chain(self, player_level: int,
+                                 chain_length: int = 1) -> List[Quest]:
+        """生成任务链（开发阶段简化）"""
         quests = []
-        
-        # 生成主线任务
+
+        # 生成主线任务（开发阶段简化为单个任务）
         main_quest_prompt = f"""
-        为等级{player_level}的玩家生成一个{chain_length}部分的主线任务链。
-        
-        请返回JSON格式的任务链，包含{chain_length}个相关的任务：
+        为等级{player_level}的玩家生成1个DnD风格的主线任务，适合在2层地下城中完成。
+
+        请返回JSON格式：
         {{
             "quests": [
                 {{
                     "title": "任务标题",
-                    "description": "任务描述",
-                    "objectives": ["目标1", "目标2"],
-                    "experience_reward": 经验奖励
+                    "description": "任务描述（简短，适合2层地下城）",
+                    "objectives": ["探索第一层", "进入第二层", "完成最终目标"],
+                    "experience_reward": 500,
+                    "story_context": "故事背景描述",
+                    "progress_percentage": 0
                 }}
             ]
         }}
-        
-        确保任务之间有逻辑联系，形成完整的故事线。
+
+        开发阶段：任务应该在2个地图层内完成，目标简洁明确。
         """
         
         try:
@@ -324,12 +326,14 @@ class ContentGenerator:
                     quest.description = quest_data.get("description", "")
                     quest.objectives = quest_data.get("objectives", [])
                     quest.completed_objectives = [False] * len(quest.objectives)
-                    quest.experience_reward = quest_data.get("experience_reward", 100)
-                    
+                    quest.experience_reward = quest_data.get("experience_reward", 500)
+                    quest.story_context = quest_data.get("story_context", "")
+                    quest.progress_percentage = quest_data.get("progress_percentage", 0.0)
+
                     # 第一个任务设为激活状态
                     if i == 0:
                         quest.is_active = True
-                    
+
                     quests.append(quest)
         except Exception as e:
             logger.error(f"Failed to generate quest chain: {e}")

@@ -11,9 +11,12 @@ class LabyrinthiaGame {
         this.lastLLMResponse = null;
         this.hoveredTile = null;
         this.highlightedTiles = [];
+        this.currentProgressInterval = null;
+        this.config = null;
 
         this.init();
         this.initializeDebugMode();
+        this.loadConfig();
     }
     
     init() {
@@ -223,6 +226,12 @@ class LabyrinthiaGame {
             }
             
             if (result.success) {
+                // 检查后端是否指示需要LLM遮罩（用于怪物攻击等情况）
+                const backendNeedsLLMOverlay = result.llm_interaction_required;
+                if (backendNeedsLLMOverlay && !needsLLMOverlay) {
+                    this.showLLMOverlay('处理中');
+                }
+
                 // 更新游戏状态
                 await this.refreshGameState();
 
@@ -247,6 +256,11 @@ class LabyrinthiaGame {
                 if (result.game_over) {
                     this.handleGameOver(result.game_over_reason);
                 }
+
+                // 如果后端指示需要LLM遮罩，也要隐藏它
+                if (backendNeedsLLMOverlay && !needsLLMOverlay) {
+                    this.hideLLMOverlay();
+                }
             } else {
                 this.addMessage(result.message || '行动失败', 'error');
             }
@@ -264,25 +278,40 @@ class LabyrinthiaGame {
     
     async refreshGameState() {
         if (!this.gameId) return;
-        
+
         try {
             const response = await fetch(`/api/game/${this.gameId}`);
             const gameState = await response.json();
-            
+
             this.gameState = gameState;
             this.updateUI();
         } catch (error) {
             console.error('Failed to refresh game state:', error);
         }
     }
+
+    async loadConfig() {
+        try {
+            const response = await fetch('/api/config');
+            this.config = await response.json();
+        } catch (error) {
+            console.error('Failed to load config:', error);
+            this.config = { debug_mode: false }; // 默认配置
+        }
+    }
     
     updateUI() {
         if (!this.gameState) return;
-        
+
         this.updateCharacterStats();
         this.updateMap();
         this.updateInventory();
         this.updateQuests();
+        this.updateControlPanel();
+    }
+
+    renderGame() {
+        this.updateUI();
     }
     
     updateCharacterStats() {
@@ -423,23 +452,42 @@ class LabyrinthiaGame {
     updateQuests() {
         const questList = document.getElementById('quest-list');
         const quests = this.gameState.quests.filter(q => q.is_active);
-        
+
         questList.innerHTML = '';
-        
+
         quests.forEach(quest => {
             const questElement = document.createElement('div');
             questElement.className = 'quest-item';
-            questElement.innerHTML = `
+
+            // 构建任务HTML
+            let questHTML = `
                 <h4>${quest.title}</h4>
                 <p>${quest.description}</p>
+            `;
+
+            // 根据配置显示进度百分比
+            if (this.config && this.config.show_quest_progress && quest.progress_percentage !== undefined) {
+                questHTML += `
+                    <div class="quest-progress">
+                        <div class="progress-bar-small">
+                            <div class="progress-fill-small" style="width: ${quest.progress_percentage}%"></div>
+                        </div>
+                        <span class="progress-text-small">进度: ${quest.progress_percentage.toFixed(1)}%</span>
+                    </div>
+                `;
+            }
+
+            questHTML += `
                 <div class="quest-objectives">
-                    ${quest.objectives.map((obj, index) => 
+                    ${quest.objectives.map((obj, index) =>
                         `<div class="objective ${quest.completed_objectives[index] ? 'completed' : ''}">
                             ${quest.completed_objectives[index] ? '✓' : '○'} ${obj}
                         </div>`
                     ).join('')}
                 </div>
             `;
+
+            questElement.innerHTML = questHTML;
             questList.appendChild(questElement);
         });
     }
@@ -727,7 +775,8 @@ class LabyrinthiaGame {
         const title = titles[action] || titles['default'];
         const subtitle = subtitles[action] || subtitles['default'];
 
-        this.showFullscreenOverlay(title, subtitle, '正在与AI通信...');
+        // 使用新的部分遮罩而不是全屏遮罩
+        this.showPartialOverlay(title, subtitle, '正在与AI通信...');
 
         // 模拟进度更新
         let progress = 0;
@@ -755,14 +804,14 @@ class LabyrinthiaGame {
 
         // 延迟隐藏以显示完成状态
         setTimeout(() => {
-            this.hideFullscreenOverlay();
+            this.hidePartialOverlay();
         }, 500);
     }
 
     shouldShowLLMOverlay(action, parameters) {
         // 检查是否需要显示LLM遮罩
         // 主要在以下情况显示：
-        // 1. 移动到特殊地形
+        // 1. 移动到特殊地形（但不包括楼梯，楼梯只是提示）
         // 2. 交互行动
         // 3. 攻击行动
         // 4. 休息时可能触发事件
@@ -799,9 +848,9 @@ class LabyrinthiaGame {
                     const targetTile = this.gameState.current_map.tiles[tileKey];
 
                     if (targetTile) {
-                        // 特殊地形需要LLM处理
-                        const specialTerrains = ['trap', 'treasure', 'stairs_down', 'stairs_up', 'door'];
-                        if (specialTerrains.includes(targetTile.terrain) || targetTile.has_event) {
+                        // 特殊地形需要LLM处理（楼梯除外，楼梯只是设置待切换状态）
+                        const llmRequiredTerrains = ['trap', 'treasure', 'door'];
+                        if (llmRequiredTerrains.includes(targetTile.terrain) || targetTile.has_event) {
                             return true;
                         }
                     }
@@ -1151,6 +1200,204 @@ class LabyrinthiaGame {
             </div>
         `;
         return modal;
+    }
+
+    // 新增：部分遮罩方法（只遮住地图区域）
+    showPartialOverlay(title, subtitle, description) {
+        let overlay = document.getElementById('partial-overlay');
+        if (!overlay) {
+            overlay = document.createElement('div');
+            overlay.id = 'partial-overlay';
+            overlay.className = 'partial-overlay';
+            overlay.innerHTML = `
+                <div class="partial-overlay-content">
+                    <div class="overlay-header">
+                        <h3 id="partial-overlay-title">${title}</h3>
+                        <p id="partial-overlay-subtitle">${subtitle}</p>
+                    </div>
+                    <div class="overlay-body">
+                        <div class="progress-container">
+                            <div class="progress-bar">
+                                <div class="progress-fill" id="partial-progress-fill"></div>
+                            </div>
+                            <p class="progress-text" id="partial-progress-text">${description}</p>
+                        </div>
+                    </div>
+                </div>
+            `;
+            document.body.appendChild(overlay);
+        } else {
+            document.getElementById('partial-overlay-title').textContent = title;
+            document.getElementById('partial-overlay-subtitle').textContent = subtitle;
+            document.getElementById('partial-progress-text').textContent = description;
+            document.getElementById('partial-progress-fill').style.width = '0%';
+        }
+
+        overlay.style.display = 'flex';
+    }
+
+    hidePartialOverlay() {
+        const overlay = document.getElementById('partial-overlay');
+        if (overlay) {
+            overlay.style.display = 'none';
+        }
+    }
+
+    updateOverlayProgress(percentage, text = null) {
+        // 更新全屏遮罩进度
+        const fullProgressFill = document.getElementById('progress-fill');
+        const fullProgressText = document.getElementById('progress-text');
+
+        if (fullProgressFill) {
+            fullProgressFill.style.width = `${percentage}%`;
+        }
+        if (fullProgressText && text) {
+            fullProgressText.textContent = text;
+        }
+
+        // 更新部分遮罩进度
+        const partialProgressFill = document.getElementById('partial-progress-fill');
+        const partialProgressText = document.getElementById('partial-progress-text');
+
+        if (partialProgressFill) {
+            partialProgressFill.style.width = `${percentage}%`;
+        }
+        if (partialProgressText && text) {
+            partialProgressText.textContent = text;
+        }
+    }
+
+    // 新增：地图切换方法
+    async transitionMap(transitionType) {
+        if (this.isLoading || !this.gameId) return;
+
+        this.setLoading(true);
+        this.showPartialOverlay('地图切换', '正在进入新区域...', '准备新的冒险...');
+
+        try {
+            const response = await fetch(`/api/game/${this.gameId}/transition`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    type: transitionType
+                })
+            });
+
+            const result = await response.json();
+
+            if (result.success) {
+                this.updateOverlayProgress(70, '加载新地图...');
+
+                // 更新游戏状态
+                this.gameState = result.game_state;
+
+                this.updateOverlayProgress(90, '更新界面...');
+
+                // 重新渲染游戏界面
+                this.renderGame();
+
+                // 显示事件消息
+                if (result.events) {
+                    result.events.forEach(event => {
+                        this.addMessage(event, 'event');
+                    });
+                }
+
+                this.updateOverlayProgress(100, '完成！');
+
+                setTimeout(() => {
+                    this.hidePartialOverlay();
+                }, 500);
+            } else {
+                this.addMessage(result.message || '地图切换失败', 'error');
+                this.hidePartialOverlay();
+            }
+        } catch (error) {
+            console.error('Map transition error:', error);
+            this.addMessage('地图切换时发生错误', 'error');
+            this.hidePartialOverlay();
+        } finally {
+            this.setLoading(false);
+        }
+    }
+
+    // 更新控制面板以显示地图切换按钮
+    updateControlPanel() {
+        const controlPanel = document.querySelector('.controls');
+        if (!controlPanel) {
+            console.warn('Control panel not found');
+            return;
+        }
+
+        // 检查是否有待切换的地图
+        const hasPendingTransition = this.gameState && this.gameState.pending_map_transition;
+
+        // 调试信息
+        if (this.config && this.config.debug_mode) {
+            console.log('updateControlPanel called');
+            console.log('gameState:', this.gameState);
+            console.log('pending_map_transition:', this.gameState?.pending_map_transition);
+            console.log('hasPendingTransition:', hasPendingTransition);
+        }
+
+        let transitionButton = document.getElementById('transition-button');
+
+        if (hasPendingTransition) {
+            if (!transitionButton) {
+                transitionButton = document.createElement('button');
+                transitionButton.id = 'transition-button';
+                transitionButton.className = 'btn btn-warning control-btn transition-btn';
+                controlPanel.appendChild(transitionButton);
+
+                if (this.config && this.config.debug_mode) {
+                    console.log('Transition button created and added to DOM');
+                    console.log('Control panel:', controlPanel);
+                    console.log('Button element:', transitionButton);
+                }
+            }
+
+            const transitionType = this.gameState.pending_map_transition;
+            const buttonText = transitionType === 'stairs_down' ? '进入下一层' : '返回上一层';
+            const iconName = transitionType === 'stairs_down' ? 'keyboard_arrow_down' : 'keyboard_arrow_up';
+
+            transitionButton.innerHTML = `
+                <i class="material-icons">${iconName}</i>
+                ${buttonText}
+            `;
+
+            transitionButton.onclick = () => this.transitionMap(transitionType);
+            transitionButton.disabled = this.isLoading;
+
+            if (this.config && this.config.debug_mode) {
+                console.log('Transition button created/updated:', buttonText);
+            }
+        } else if (transitionButton) {
+            transitionButton.remove();
+            if (this.config && this.config.debug_mode) {
+                console.log('Transition button removed');
+            }
+        }
+
+        // 调试模式下添加测试按钮
+        if (this.config && this.config.debug_mode && this.gameId) {
+            let testButton = document.getElementById('test-transition-button');
+            if (!testButton) {
+                testButton = document.createElement('button');
+                testButton.id = 'test-transition-button';
+                testButton.className = 'btn btn-info control-btn';
+                testButton.innerHTML = '<i class="material-icons">bug_report</i>测试楼梯';
+                testButton.onclick = () => {
+                    // 手动设置待切换状态进行测试
+                    if (this.gameState) {
+                        this.gameState.pending_map_transition = 'stairs_down';
+                        this.updateControlPanel();
+                    }
+                };
+                controlPanel.appendChild(testButton);
+            }
+        }
     }
 }
 

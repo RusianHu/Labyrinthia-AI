@@ -278,6 +278,10 @@ class Quest:
     experience_reward: int = 0
     is_completed: bool = False
     is_active: bool = False
+    # 新增：LLM控制的进度系统
+    progress_percentage: float = 0.0  # 隐藏的进度百分比（0-100）
+    story_context: str = ""  # 故事背景上下文
+    llm_notes: str = ""  # LLM的内部笔记，用于控制节奏
     
     def complete_objective(self, index: int):
         """完成指定目标"""
@@ -296,7 +300,10 @@ class Quest:
             "rewards": [item.to_dict() for item in self.rewards],
             "experience_reward": self.experience_reward,
             "is_completed": self.is_completed,
-            "is_active": self.is_active
+            "is_active": self.is_active,
+            "progress_percentage": self.progress_percentage,
+            "story_context": self.story_context,
+            "llm_notes": self.llm_notes
         }
 
 
@@ -316,6 +323,8 @@ class GameState:
     pending_events: List[str] = field(default_factory=list)  # 待显示的事件
     created_at: datetime = field(default_factory=datetime.now)
     last_saved: datetime = field(default_factory=datetime.now)
+    # 新增：地图切换控制
+    pending_map_transition: Optional[str] = None  # 待切换的地图类型 ("stairs_down", "stairs_up", etc.)
     
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -331,7 +340,8 @@ class GameState:
             "game_over_reason": self.game_over_reason,
             "pending_events": self.pending_events,
             "created_at": self.created_at.isoformat(),
-            "last_saved": self.last_saved.isoformat()
+            "last_saved": self.last_saved.isoformat(),
+            "pending_map_transition": self.pending_map_transition
         }
 
 

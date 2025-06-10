@@ -213,7 +213,16 @@ async def list_saves():
 async def get_config():
     """获取游戏配置"""
     try:
-        return config.to_dict()
+        return {
+            "game_name": config.game.game_name,
+            "version": config.game.version,
+            "debug_mode": config.game.debug_mode,
+            "show_quest_progress": config.game.show_quest_progress,
+            "quest_progress_multiplier": config.game.quest_progress_multiplier,
+            "max_quest_floors": config.game.max_quest_floors,
+            "max_player_level": config.game.max_player_level,
+            "default_map_size": config.game.default_map_size
+        }
     except Exception as e:
         logger.error(f"Error getting config: {e}")
         raise HTTPException(status_code=500, detail="获取配置失败")
@@ -224,29 +233,17 @@ async def delete_save(save_id: str):
     """删除存档"""
     try:
         success = data_manager.delete_save(save_id)
-        
+
         if success:
             return {"success": True, "message": "存档已删除"}
         else:
             raise HTTPException(status_code=404, detail="存档未找到")
-            
+
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Failed to delete save: {e}")
         raise HTTPException(status_code=500, detail=f"删除存档失败: {str(e)}")
-
-
-@app.get("/api/config")
-async def get_config():
-    """获取游戏配置"""
-    return {
-        "game_name": config.game.game_name,
-        "version": config.game.version,
-        "debug_mode": config.game.debug_mode,
-        "max_player_level": config.game.max_player_level,
-        "default_map_size": config.game.default_map_size
-    }
 
 
 @app.post("/api/config")
@@ -265,6 +262,38 @@ async def update_config(updates: Dict[str, Any]):
     except Exception as e:
         logger.error(f"Failed to update config: {e}")
         raise HTTPException(status_code=500, detail=f"更新配置失败: {str(e)}")
+
+
+@app.post("/api/game/{game_id}/transition")
+async def transition_map(game_id: str, transition_data: Dict[str, Any]):
+    """手动切换地图"""
+    try:
+        transition_type = transition_data.get("type")
+        if not transition_type:
+            raise HTTPException(status_code=400, detail="缺少切换类型")
+
+        result = await game_engine.transition_map(
+            game_engine.active_games[game_id],
+            transition_type
+        )
+
+        if result["success"]:
+            # 返回更新后的游戏状态
+            game_state = game_engine.active_games[game_id]
+            return {
+                "success": True,
+                "message": result["message"],
+                "events": result["events"],
+                "game_state": game_state.to_dict()
+            }
+        else:
+            return result
+
+    except KeyError:
+        raise HTTPException(status_code=404, detail="游戏未找到")
+    except Exception as e:
+        logger.error(f"Map transition failed: {e}")
+        raise HTTPException(status_code=500, detail=f"地图切换失败: {str(e)}")
 
 
 @app.get("/api/health")
