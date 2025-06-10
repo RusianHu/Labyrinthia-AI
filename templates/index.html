@@ -1,0 +1,432 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Labyrinthia AI - DnD风格地牢冒险</title>
+    
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
+    
+    <!-- 样式表 -->
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <!-- 头部 -->
+    <div class="header elevation-2">
+        <div class="container">
+            <h1>🏰 Labyrinthia AI</h1>
+            <div class="subtitle">AI驱动的DnD风格地牢冒险游戏</div>
+        </div>
+    </div>
+
+    <div class="container">
+        <!-- 主菜单 -->
+        <div id="main-menu" class="main-menu">
+            <div class="menu-panel elevation-3">
+                <h2>欢迎来到 Labyrinthia AI</h2>
+                <p>一个由人工智能驱动的地下城与龙风格冒险游戏</p>
+                
+                <div class="menu-buttons">
+                    <button id="btn-new-game" class="btn btn-primary">
+                        <i class="material-icons">add</i>
+                        开始新游戏
+                    </button>
+                    <button id="btn-load-game" class="btn btn-secondary" onclick="game.loadGameList()">
+                        <i class="material-icons">folder_open</i>
+                        加载游戏
+                    </button>
+                </div>
+                
+                <!-- 存档列表 -->
+                <div id="saves-list" class="saves-list"></div>
+            </div>
+        </div>
+
+        <!-- 游戏界面 -->
+        <div id="game-interface" class="game-layout" style="display: none;">
+            <!-- 主游戏区域 -->
+            <div class="game-main elevation-2">
+                <!-- 地图容器 -->
+                <div class="map-container">
+                    <div id="map-grid" class="map-grid"></div>
+                </div>
+                
+                <!-- 消息日志 -->
+                <div class="panel" style="margin-top: 15px;">
+                    <h3>
+                        <i class="material-icons">chat</i>
+                        消息日志
+                    </h3>
+                    <div id="message-log" class="message-log"></div>
+                </div>
+            </div>
+
+            <!-- 侧边栏 -->
+            <div class="sidebar">
+                <!-- 角色状态 -->
+                <div class="panel elevation-2">
+                    <h3>
+                        <i class="material-icons">person</i>
+                        角色状态
+                    </h3>
+                    
+                    <div class="character-info">
+                        <div class="character-name">
+                            <strong id="player-name">冒险者</strong>
+                            <span class="level">等级 <span id="player-level">1</span></span>
+                        </div>
+                        <div class="character-class" id="player-class">战士</div>
+                        <div class="character-position">位置: <span id="player-position">(0, 0)</span></div>
+                    </div>
+                    
+                    <div class="stats-container">
+                        <!-- 生命值 -->
+                        <div class="stat-bar">
+                            <div class="stat-label">
+                                <i class="material-icons">favorite</i>
+                                生命值
+                            </div>
+                            <div class="stat-value">
+                                <span id="hp-current">100</span>/<span id="hp-max">100</span>
+                            </div>
+                            <div class="progress-bar">
+                                <div id="hp-bar" class="progress-fill progress-hp" style="width: 100%"></div>
+                            </div>
+                        </div>
+                        
+                        <!-- 法力值 -->
+                        <div class="stat-bar">
+                            <div class="stat-label">
+                                <i class="material-icons">auto_awesome</i>
+                                法力值
+                            </div>
+                            <div class="stat-value">
+                                <span id="mp-current">50</span>/<span id="mp-max">50</span>
+                            </div>
+                            <div class="progress-bar">
+                                <div id="mp-bar" class="progress-fill progress-mp" style="width: 100%"></div>
+                            </div>
+                        </div>
+                        
+                        <!-- 经验值 -->
+                        <div class="stat-bar">
+                            <div class="stat-label">
+                                <i class="material-icons">trending_up</i>
+                                经验值
+                            </div>
+                            <div class="stat-value" id="exp-text">0/1000</div>
+                            <div class="progress-bar">
+                                <div id="exp-bar" class="progress-fill progress-exp" style="width: 0%"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 控制面板 -->
+                <div class="panel elevation-2">
+                    <h3>
+                        <i class="material-icons">gamepad</i>
+                        控制
+                    </h3>
+                    
+                    <!-- 方向控制 -->
+                    <div class="direction-controls">
+                        <button class="btn btn-secondary dir-btn dir-nw" data-direction="northwest">↖</button>
+                        <button class="btn btn-secondary dir-btn dir-n" data-direction="north">↑</button>
+                        <button class="btn btn-secondary dir-btn dir-ne" data-direction="northeast">↗</button>
+                        <button class="btn btn-secondary dir-btn dir-w" data-direction="west">←</button>
+                        <div class="dir-center"></div>
+                        <button class="btn btn-secondary dir-btn dir-e" data-direction="east">→</button>
+                        <button class="btn btn-secondary dir-btn dir-sw" data-direction="southwest">↙</button>
+                        <button class="btn btn-secondary dir-btn dir-s" data-direction="south">↓</button>
+                        <button class="btn btn-secondary dir-btn dir-se" data-direction="southeast">↘</button>
+                    </div>
+                    
+                    <!-- 行动按钮 -->
+                    <div class="controls">
+                        <button id="btn-rest" class="btn btn-success control-btn">
+                            <i class="material-icons">hotel</i>
+                            休息
+                        </button>
+                        <button id="btn-save" class="btn btn-primary control-btn">
+                            <i class="material-icons">save</i>
+                            保存
+                        </button>
+                        <button id="btn-menu" class="btn btn-secondary control-btn" onclick="location.reload()">
+                            <i class="material-icons">menu</i>
+                            菜单
+                        </button>
+                    </div>
+                    
+                    <div class="loading-indicator" style="display: none;">
+                        <div class="loading"></div>
+                        处理中...
+                    </div>
+                </div>
+
+                <!-- 物品栏 -->
+                <div class="panel elevation-2">
+                    <h3>
+                        <i class="material-icons">inventory</i>
+                        物品栏
+                    </h3>
+                    <div id="inventory-grid" class="inventory-grid"></div>
+                </div>
+
+                <!-- 任务 -->
+                <div class="panel elevation-2">
+                    <h3>
+                        <i class="material-icons">assignment</i>
+                        任务
+                    </h3>
+                    <div id="quest-list" class="quest-list"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 新游戏模态框 -->
+    <div id="new-game-modal" class="modal">
+        <div class="modal-content elevation-4">
+            <span class="close">&times;</span>
+            <h2>创建新角色</h2>
+            
+            <form id="new-game-form" onsubmit="event.preventDefault(); game.createNewGame();">
+                <div class="form-group">
+                    <label for="player-name-input">角色名称:</label>
+                    <input type="text" id="player-name-input" required maxlength="20" 
+                           placeholder="输入你的角色名称">
+                </div>
+                
+                <div class="form-group">
+                    <label for="character-class-select">职业:</label>
+                    <select id="character-class-select" required>
+                        <option value="fighter">战士 (Fighter)</option>
+                        <option value="wizard">法师 (Wizard)</option>
+                        <option value="rogue">盗贼 (Rogue)</option>
+                        <option value="cleric">牧师 (Cleric)</option>
+                        <option value="ranger">游侠 (Ranger)</option>
+                        <option value="barbarian">野蛮人 (Barbarian)</option>
+                        <option value="bard">吟游诗人 (Bard)</option>
+                        <option value="paladin">圣骑士 (Paladin)</option>
+                        <option value="sorcerer">术士 (Sorcerer)</option>
+                        <option value="warlock">术士 (Warlock)</option>
+                    </select>
+                </div>
+                
+                <div class="form-buttons">
+                    <button type="submit" class="btn btn-primary">
+                        <i class="material-icons">play_arrow</i>
+                        开始冒险
+                    </button>
+                    <button type="button" class="btn btn-secondary" onclick="document.getElementById('new-game-modal').style.display='none'">
+                        取消
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- 脚本 -->
+    <script src="/static/game.js"></script>
+    
+    <style>
+        /* 额外的样式 */
+        .main-menu {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 60vh;
+        }
+        
+        .menu-panel {
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 12px;
+            padding: 40px;
+            text-align: center;
+            max-width: 500px;
+            width: 100%;
+        }
+        
+        .menu-panel h2 {
+            color: #5e35b1;
+            margin-bottom: 15px;
+            font-weight: 300;
+        }
+        
+        .menu-panel p {
+            color: #666;
+            margin-bottom: 30px;
+            line-height: 1.6;
+        }
+        
+        .menu-buttons {
+            display: flex;
+            gap: 15px;
+            justify-content: center;
+            margin-bottom: 30px;
+        }
+        
+        .menu-buttons .btn {
+            flex: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+        }
+        
+        .saves-list {
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        
+        .save-item {
+            background: rgba(94, 53, 177, 0.1);
+            border-radius: 8px;
+            padding: 15px;
+            margin-bottom: 10px;
+            text-align: left;
+        }
+        
+        .save-item h4 {
+            color: #5e35b1;
+            margin-bottom: 5px;
+        }
+        
+        .save-item p {
+            color: #666;
+            font-size: 0.9rem;
+            margin-bottom: 5px;
+        }
+        
+        .save-item button {
+            margin-right: 10px;
+            margin-top: 10px;
+        }
+        
+        .form-group {
+            margin-bottom: 20px;
+            text-align: left;
+        }
+        
+        .form-group label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: 500;
+            color: #5e35b1;
+        }
+        
+        .form-group input,
+        .form-group select {
+            width: 100%;
+            padding: 10px;
+            border: 2px solid #ddd;
+            border-radius: 6px;
+            font-size: 1rem;
+            transition: border-color 0.2s ease;
+        }
+        
+        .form-group input:focus,
+        .form-group select:focus {
+            outline: none;
+            border-color: #5e35b1;
+        }
+        
+        .form-buttons {
+            display: flex;
+            gap: 15px;
+            justify-content: center;
+            margin-top: 30px;
+        }
+        
+        .character-info {
+            margin-bottom: 20px;
+            padding: 15px;
+            background: rgba(94, 53, 177, 0.1);
+            border-radius: 8px;
+        }
+        
+        .character-name {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 5px;
+        }
+        
+        .level {
+            background: #5e35b1;
+            color: white;
+            padding: 2px 8px;
+            border-radius: 12px;
+            font-size: 0.8rem;
+        }
+        
+        .character-class {
+            color: #666;
+            font-style: italic;
+            margin-bottom: 5px;
+        }
+        
+        .character-position {
+            color: #666;
+            font-size: 0.9rem;
+        }
+        
+        .stat-bar {
+            margin-bottom: 15px;
+        }
+        
+        .stat-label {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            margin-bottom: 5px;
+            font-weight: 500;
+            color: #5e35b1;
+        }
+        
+        .stat-label .material-icons {
+            font-size: 18px;
+        }
+        
+        .stat-value {
+            text-align: right;
+            font-weight: 500;
+            margin-bottom: 5px;
+        }
+        
+        .quest-list {
+            max-height: 200px;
+            overflow-y: auto;
+        }
+        
+        .quest-item {
+            background: rgba(94, 53, 177, 0.1);
+            border-radius: 8px;
+            padding: 15px;
+            margin-bottom: 10px;
+        }
+        
+        .quest-item h4 {
+            color: #5e35b1;
+            margin-bottom: 8px;
+        }
+        
+        .quest-objectives {
+            margin-top: 10px;
+        }
+        
+        .objective {
+            padding: 3px 0;
+            font-size: 0.9rem;
+        }
+        
+        .objective.completed {
+            color: #27ae60;
+            text-decoration: line-through;
+        }
+    </style>
+</body>
+</html>

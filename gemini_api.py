@@ -48,11 +48,13 @@ class GeminiAPI:
         endpoint: str = DEFAULT_ENDPOINT,
         api_version: str = DEFAULT_API_VERSION,
         default_timeout: int = DEFAULT_TIMEOUT,
+        proxies: Optional[Dict[str, str]] = None,
     ) -> None:
         self.api_key = api_key
         self.endpoint = endpoint.rstrip("/")
         self.api_version = api_version
         self.default_timeout = default_timeout
+        self.proxies = proxies or {}
 
     # ---------------------------------------------------------------------
     # Low‑level helpers
@@ -65,7 +67,19 @@ class GeminiAPI:
         """HTTP POST with JSON payload and robust error handling."""
         url = self._url(path)
         t = timeout or self.default_timeout
-        resp = requests.post(url, json=payload, timeout=t)
+
+        # 添加请求头以模拟海外用户
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'application/json',
+            'Accept-Language': 'en-US,en;q=0.9',
+            'Accept-Encoding': 'gzip, deflate, br',
+            'DNT': '1',
+            'Connection': 'keep-alive',
+            'Upgrade-Insecure-Requests': '1',
+        }
+
+        resp = requests.post(url, json=payload, timeout=t, proxies=self.proxies, headers=headers)
         try:
             resp.raise_for_status()
         except requests.HTTPError as exc:
@@ -334,7 +348,19 @@ class GeminiAPI:
     def list_models(self) -> dict:
         """GET /models – list available models."""
         url = self._url("models")
-        resp = requests.get(url, timeout=self.default_timeout)
+
+        # 添加请求头以模拟海外用户
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'application/json',
+            'Accept-Language': 'en-US,en;q=0.9',
+            'Accept-Encoding': 'gzip, deflate, br',
+            'DNT': '1',
+            'Connection': 'keep-alive',
+            'Upgrade-Insecure-Requests': '1',
+        }
+
+        resp = requests.get(url, timeout=self.default_timeout, proxies=self.proxies, headers=headers)
         try:
             resp.raise_for_status()
         except requests.HTTPError as exc:

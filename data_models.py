@@ -1,0 +1,324 @@
+"""
+Labyrinthia AI - 数据模型定义
+Data models for the Labyrinthia AI game
+"""
+
+from dataclasses import dataclass, field
+from typing import Dict, List, Optional, Any, Union
+from enum import Enum
+import uuid
+from datetime import datetime
+
+
+class CharacterClass(Enum):
+    """角色职业枚举"""
+    FIGHTER = "fighter"
+    WIZARD = "wizard"
+    ROGUE = "rogue"
+    CLERIC = "cleric"
+    RANGER = "ranger"
+    BARBARIAN = "barbarian"
+    BARD = "bard"
+    PALADIN = "paladin"
+    SORCERER = "sorcerer"
+    WARLOCK = "warlock"
+
+
+class CreatureType(Enum):
+    """生物类型枚举"""
+    HUMANOID = "humanoid"
+    BEAST = "beast"
+    UNDEAD = "undead"
+    DRAGON = "dragon"
+    FIEND = "fiend"
+    CELESTIAL = "celestial"
+    ELEMENTAL = "elemental"
+    FEY = "fey"
+    ABERRATION = "aberration"
+    CONSTRUCT = "construct"
+
+
+class DamageType(Enum):
+    """伤害类型枚举"""
+    PHYSICAL = "physical"
+    FIRE = "fire"
+    COLD = "cold"
+    LIGHTNING = "lightning"
+    ACID = "acid"
+    POISON = "poison"
+    NECROTIC = "necrotic"
+    RADIANT = "radiant"
+    PSYCHIC = "psychic"
+
+
+class TerrainType(Enum):
+    """地形类型枚举"""
+    FLOOR = "floor"
+    WALL = "wall"
+    DOOR = "door"
+    TRAP = "trap"
+    TREASURE = "treasure"
+    STAIRS_UP = "stairs_up"
+    STAIRS_DOWN = "stairs_down"
+    WATER = "water"
+    LAVA = "lava"
+    PIT = "pit"
+
+
+@dataclass
+class Ability:
+    """能力值"""
+    strength: int = 10
+    dexterity: int = 10
+    constitution: int = 10
+    intelligence: int = 10
+    wisdom: int = 10
+    charisma: int = 10
+    
+    def get_modifier(self, ability_name: str) -> int:
+        """获取能力调整值"""
+        value = getattr(self, ability_name.lower())
+        return (value - 10) // 2
+
+
+@dataclass
+class Stats:
+    """角色属性"""
+    hp: int = 100
+    max_hp: int = 100
+    mp: int = 50
+    max_mp: int = 50
+    ac: int = 10  # 护甲等级
+    speed: int = 30
+    level: int = 1
+    experience: int = 0
+    
+    def is_alive(self) -> bool:
+        return self.hp > 0
+
+
+@dataclass
+class Item:
+    """物品"""
+    id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    name: str = ""
+    description: str = ""
+    item_type: str = "misc"  # weapon, armor, consumable, misc
+    value: int = 0
+    weight: float = 0.0
+    rarity: str = "common"  # common, uncommon, rare, epic, legendary
+    properties: Dict[str, Any] = field(default_factory=dict)
+    
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "id": self.id,
+            "name": self.name,
+            "description": self.description,
+            "item_type": self.item_type,
+            "value": self.value,
+            "weight": self.weight,
+            "rarity": self.rarity,
+            "properties": self.properties
+        }
+
+
+@dataclass
+class Spell:
+    """法术"""
+    id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    name: str = ""
+    description: str = ""
+    level: int = 1
+    school: str = "evocation"
+    casting_time: str = "1 action"
+    range: str = "60 feet"
+    components: List[str] = field(default_factory=list)
+    duration: str = "instantaneous"
+    damage: str = ""
+    damage_type: DamageType = DamageType.PHYSICAL
+    
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "id": self.id,
+            "name": self.name,
+            "description": self.description,
+            "level": self.level,
+            "school": self.school,
+            "casting_time": self.casting_time,
+            "range": self.range,
+            "components": self.components,
+            "duration": self.duration,
+            "damage": self.damage,
+            "damage_type": self.damage_type.value
+        }
+
+
+@dataclass
+class Character:
+    """角色基类"""
+    id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    name: str = ""
+    description: str = ""
+    character_class: CharacterClass = CharacterClass.FIGHTER
+    creature_type: CreatureType = CreatureType.HUMANOID
+    abilities: Ability = field(default_factory=Ability)
+    stats: Stats = field(default_factory=Stats)
+    inventory: List[Item] = field(default_factory=list)
+    spells: List[Spell] = field(default_factory=list)
+    position: tuple = (0, 0)
+    
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "id": self.id,
+            "name": self.name,
+            "description": self.description,
+            "character_class": self.character_class.value,
+            "creature_type": self.creature_type.value,
+            "abilities": self.abilities.__dict__,
+            "stats": self.stats.__dict__,
+            "inventory": [item.to_dict() for item in self.inventory],
+            "spells": [spell.to_dict() for spell in self.spells],
+            "position": self.position
+        }
+
+
+@dataclass
+class Monster(Character):
+    """怪物"""
+    challenge_rating: float = 1.0
+    behavior: str = "aggressive"  # aggressive, defensive, neutral, flee
+    loot_table: List[str] = field(default_factory=list)
+    
+    def to_dict(self) -> Dict[str, Any]:
+        data = super().to_dict()
+        data.update({
+            "challenge_rating": self.challenge_rating,
+            "behavior": self.behavior,
+            "loot_table": self.loot_table
+        })
+        return data
+
+
+@dataclass
+class MapTile:
+    """地图瓦片"""
+    x: int = 0
+    y: int = 0
+    terrain: TerrainType = TerrainType.FLOOR
+    is_explored: bool = False
+    is_visible: bool = False
+    items: List[Item] = field(default_factory=list)
+    character_id: Optional[str] = None
+    
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "x": self.x,
+            "y": self.y,
+            "terrain": self.terrain.value,
+            "is_explored": self.is_explored,
+            "is_visible": self.is_visible,
+            "items": [item.to_dict() for item in self.items],
+            "character_id": self.character_id
+        }
+
+
+@dataclass
+class GameMap:
+    """游戏地图"""
+    id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    name: str = ""
+    description: str = ""
+    width: int = 20
+    height: int = 20
+    depth: int = 1  # 地下层数
+    tiles: Dict[tuple, MapTile] = field(default_factory=dict)
+    
+    def get_tile(self, x: int, y: int) -> Optional[MapTile]:
+        """获取指定位置的瓦片"""
+        return self.tiles.get((x, y))
+    
+    def set_tile(self, x: int, y: int, tile: MapTile):
+        """设置指定位置的瓦片"""
+        tile.x = x
+        tile.y = y
+        self.tiles[(x, y)] = tile
+    
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "id": self.id,
+            "name": self.name,
+            "description": self.description,
+            "width": self.width,
+            "height": self.height,
+            "depth": self.depth,
+            "tiles": {f"{k[0]},{k[1]}": v.to_dict() for k, v in self.tiles.items()}
+        }
+
+
+@dataclass
+class Quest:
+    """任务"""
+    id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    title: str = ""
+    description: str = ""
+    objectives: List[str] = field(default_factory=list)
+    completed_objectives: List[bool] = field(default_factory=list)
+    rewards: List[Item] = field(default_factory=list)
+    experience_reward: int = 0
+    is_completed: bool = False
+    is_active: bool = False
+    
+    def complete_objective(self, index: int):
+        """完成指定目标"""
+        if 0 <= index < len(self.completed_objectives):
+            self.completed_objectives[index] = True
+            if all(self.completed_objectives):
+                self.is_completed = True
+    
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "id": self.id,
+            "title": self.title,
+            "description": self.description,
+            "objectives": self.objectives,
+            "completed_objectives": self.completed_objectives,
+            "rewards": [item.to_dict() for item in self.rewards],
+            "experience_reward": self.experience_reward,
+            "is_completed": self.is_completed,
+            "is_active": self.is_active
+        }
+
+
+@dataclass
+class GameState:
+    """游戏状态"""
+    id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    player: Character = field(default_factory=Character)
+    current_map: GameMap = field(default_factory=GameMap)
+    monsters: List[Monster] = field(default_factory=list)
+    quests: List[Quest] = field(default_factory=list)
+    turn_count: int = 0
+    game_time: int = 0  # 游戏内时间（分钟）
+    created_at: datetime = field(default_factory=datetime.now)
+    last_saved: datetime = field(default_factory=datetime.now)
+    
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "id": self.id,
+            "player": self.player.to_dict(),
+            "current_map": self.current_map.to_dict(),
+            "monsters": [monster.to_dict() for monster in self.monsters],
+            "quests": [quest.to_dict() for quest in self.quests],
+            "turn_count": self.turn_count,
+            "game_time": self.game_time,
+            "created_at": self.created_at.isoformat(),
+            "last_saved": self.last_saved.isoformat()
+        }
+
+
+# 导出所有模型
+__all__ = [
+    "CharacterClass", "CreatureType", "DamageType", "TerrainType",
+    "Ability", "Stats", "Item", "Spell", "Character", "Monster",
+    "MapTile", "GameMap", "Quest", "GameState"
+]
