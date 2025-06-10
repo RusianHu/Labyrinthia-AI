@@ -207,12 +207,25 @@ class GameEngine:
                 game_state.turn_count += 1
                 game_state.game_time += 1  # 每回合1分钟
 
-                # 处理怪物行动
-                await self._process_monster_turns(game_state)
+                # 处理怪物行动（如果游戏没有结束）
+                if not game_state.is_game_over:
+                    await self._process_monster_turns(game_state)
+
+                # 添加待处理事件到结果中
+                if hasattr(game_state, 'pending_events') and game_state.pending_events:
+                    if "events" not in result:
+                        result["events"] = []
+                    result["events"].extend(game_state.pending_events)
+                    game_state.pending_events.clear()
+
+                # 检查游戏是否结束
+                if game_state.is_game_over:
+                    result["game_over"] = True
+                    result["game_over_reason"] = game_state.game_over_reason
 
                 # 只有特殊行动或有事件发生时才生成叙述文本
                 should_generate_narrative = self._should_generate_narrative(action, result)
-                if should_generate_narrative:
+                if should_generate_narrative and not game_state.is_game_over:
                     narrative = await llm_service.generate_narrative(game_state, action)
                     result["narrative"] = narrative
 
@@ -614,6 +627,13 @@ class GameEngine:
         """触发陷阱"""
         damage = random.randint(5, 15)
         game_state.player.stats.hp -= damage
+
+        # 检查玩家是否死亡
+        if game_state.player.stats.hp <= 0:
+            game_state.is_game_over = True
+            game_state.game_over_reason = "被陷阱杀死"
+            return f"触发了陷阱！受到了 {damage} 点伤害！你被陷阱杀死了！"
+
         return f"触发了陷阱！受到了 {damage} 点伤害"
 
     async def _trigger_tile_event(self, game_state: GameState, tile: MapTile) -> str:
@@ -717,6 +737,13 @@ class GameEngine:
 
         if trap_type == "damage":
             game_state.player.stats.hp -= damage
+
+            # 检查玩家是否死亡
+            if game_state.player.stats.hp <= 0:
+                game_state.is_game_over = True
+                game_state.game_over_reason = "被陷阱杀死"
+                return f"触发了陷阱！受到了 {damage} 点伤害！你被陷阱杀死了！"
+
             return f"触发了陷阱！受到了 {damage} 点伤害！"
         elif trap_type == "debuff":
             # 简化处理，减少移动速度
@@ -816,23 +843,40 @@ class GameEngine:
     
     async def _process_monster_turns(self, game_state: GameState):
         """处理怪物回合"""
+        combat_events = []
+
         for monster in game_state.monsters[:]:  # 使用切片避免修改列表时的问题
             if not monster.stats.is_alive():
                 continue
-            
+
             # 简单的AI：如果玩家在攻击范围内就攻击，否则移动靠近
             player_x, player_y = game_state.player.position
             monster_x, monster_y = monster.position
             distance = abs(player_x - monster_x) + abs(monster_y - monster_y)
-            
+
             if distance == 1:
                 # 攻击玩家
                 damage = self._calculate_damage(monster, game_state.player)
                 game_state.player.stats.hp -= damage
+                combat_events.append(f"{monster.name} 攻击了你，造成 {damage} 点伤害！")
                 logger.info(f"{monster.name} 攻击玩家造成 {damage} 点伤害")
+
+                # 检查玩家是否死亡
+                if game_state.player.stats.hp <= 0:
+                    combat_events.append("你被击败了！游戏结束！")
+                    game_state.is_game_over = True
+                    game_state.game_over_reason = "被怪物击败"
+                    break  # 玩家死亡，停止处理其他怪物
+
             elif distance <= 5:
                 # 移动靠近玩家
                 await self._move_monster_towards_player(game_state, monster)
+
+        # 将战斗事件添加到游戏状态中，以便前端显示
+        if combat_events:
+            if not hasattr(game_state, 'pending_events'):
+                game_state.pending_events = []
+            game_state.pending_events.extend(combat_events)
     
     async def _move_monster_towards_player(self, game_state: GameState, monster: Monster):
         """移动怪物靠近玩家"""

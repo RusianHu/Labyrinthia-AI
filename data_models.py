@@ -311,6 +311,9 @@ class GameState:
     turn_count: int = 0
     game_time: int = 0  # 游戏内时间（分钟）
     last_narrative: str = ""  # 最后的叙述文本
+    is_game_over: bool = False  # 游戏是否结束
+    game_over_reason: str = ""  # 游戏结束原因
+    pending_events: List[str] = field(default_factory=list)  # 待显示的事件
     created_at: datetime = field(default_factory=datetime.now)
     last_saved: datetime = field(default_factory=datetime.now)
     
@@ -324,6 +327,9 @@ class GameState:
             "turn_count": self.turn_count,
             "game_time": self.game_time,
             "last_narrative": self.last_narrative,
+            "is_game_over": self.is_game_over,
+            "game_over_reason": self.game_over_reason,
+            "pending_events": self.pending_events,
             "created_at": self.created_at.isoformat(),
             "last_saved": self.last_saved.isoformat()
         }

@@ -233,12 +233,19 @@ class LabyrinthiaGame {
 
                 if (result.events) {
                     result.events.forEach(event => {
-                        this.addMessage(event, 'system');
+                        // 战斗伤害消息使用特殊样式
+                        const messageType = event.includes('造成') || event.includes('攻击') ? 'combat' : 'system';
+                        this.addMessage(event, messageType);
                     });
                 }
 
                 if (result.narrative) {
                     this.addMessage(result.narrative, 'narrative');
+                }
+
+                // 检查游戏是否结束
+                if (result.game_over) {
+                    this.handleGameOver(result.game_over_reason);
                 }
             } else {
                 this.addMessage(result.message || '行动失败', 'error');
@@ -566,12 +573,19 @@ class LabyrinthiaGame {
             // 角色信息
             if (tileData.character_id) {
                 if (tileData.character_id === this.gameState.player.id) {
-                    tooltipText += '角色: 玩家\n';
+                    const player = this.gameState.player;
+                    tooltipText += `角色: ${player.name} (玩家)\n`;
+                    tooltipText += `生命值: ${player.stats.hp}/${player.stats.max_hp}\n`;
+                    tooltipText += `法力值: ${player.stats.mp}/${player.stats.max_mp}\n`;
+                    tooltipText += `等级: ${player.stats.level}\n`;
                 } else {
                     const monster = this.gameState.monsters.find(m => m.id === tileData.character_id);
                     if (monster) {
                         tooltipText += `怪物: ${monster.name}\n`;
                         tooltipText += `生命值: ${monster.stats.hp}/${monster.stats.max_hp}\n`;
+                        if (monster.challenge_rating) {
+                            tooltipText += `挑战等级: ${monster.challenge_rating}\n`;
+                        }
                     }
                 }
             }
@@ -1090,6 +1104,53 @@ class LabyrinthiaGame {
         } finally {
             this.setLoading(false);
         }
+    }
+
+    handleGameOver(reason) {
+        // 显示游戏结束界面
+        this.addMessage(`游戏结束：${reason}`, 'error');
+
+        // 禁用所有控制按钮
+        const controlButtons = document.querySelectorAll('.control-btn, .dir-btn');
+        controlButtons.forEach(btn => {
+            btn.disabled = true;
+        });
+
+        // 显示游戏结束模态框
+        setTimeout(() => {
+            const gameOverModal = this.createGameOverModal(reason);
+            document.body.appendChild(gameOverModal);
+        }, 1000);
+    }
+
+    createGameOverModal(reason) {
+        const modal = document.createElement('div');
+        modal.className = 'modal';
+        modal.style.display = 'block';
+        modal.innerHTML = `
+            <div class="modal-content" style="text-align: center; max-width: 400px;">
+                <h2 style="color: #e74c3c; margin-bottom: 20px;">
+                    <i class="material-icons" style="font-size: 48px; display: block; margin-bottom: 10px;">sentiment_very_dissatisfied</i>
+                    游戏结束
+                </h2>
+                <p style="font-size: 18px; margin-bottom: 20px;">${reason}</p>
+                <div style="margin-bottom: 20px;">
+                    <p>你的冒险到此结束...</p>
+                    <p>但是不要放弃，新的冒险等待着你！</p>
+                </div>
+                <div style="display: flex; gap: 10px; justify-content: center;">
+                    <button class="btn btn-primary" onclick="location.reload()">
+                        <i class="material-icons">refresh</i>
+                        重新开始
+                    </button>
+                    <button class="btn btn-secondary" onclick="this.closest('.modal').remove(); document.getElementById('main-menu').style.display = 'block'; document.getElementById('game-interface').style.display = 'none';">
+                        <i class="material-icons">home</i>
+                        返回主菜单
+                    </button>
+                </div>
+            </div>
+        `;
+        return modal;
     }
 }
 
