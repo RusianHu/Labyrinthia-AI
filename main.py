@@ -207,6 +207,16 @@ async def list_saves():
         raise HTTPException(status_code=500, detail=f"获取存档列表失败: {str(e)}")
 
 
+@app.get("/api/config")
+async def get_config():
+    """获取游戏配置"""
+    try:
+        return config.to_dict()
+    except Exception as e:
+        logger.error(f"Error getting config: {e}")
+        raise HTTPException(status_code=500, detail="获取配置失败")
+
+
 @app.delete("/api/save/{save_id}")
 async def delete_save(save_id: str):
     """删除存档"""

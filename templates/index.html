@@ -229,6 +229,35 @@
         </div>
     </div>
 
+    <!-- FAB 调试按钮 -->
+    <button id="debug-fab" class="fab hidden" title="调试信息">
+        🐛
+    </button>
+
+    <!-- 调试面板 -->
+    <div id="debug-panel" class="debug-panel">
+        <button class="debug-close" onclick="game.toggleDebugPanel()">×</button>
+        <h3>🐛 调试信息</h3>
+
+        <div class="debug-section">
+            <h4>最近的LLM请求</h4>
+            <div id="debug-request" class="debug-content">暂无请求</div>
+        </div>
+
+        <div class="debug-section">
+            <h4>最近的LLM响应</h4>
+            <div id="debug-response" class="debug-content">暂无响应</div>
+        </div>
+
+        <div class="debug-section">
+            <h4>游戏状态</h4>
+            <div id="debug-gamestate" class="debug-content">暂无数据</div>
+        </div>
+    </div>
+
+    <!-- 地图瓦片工具提示 -->
+    <div id="tile-tooltip" class="tile-tooltip"></div>
+
     <!-- 脚本 -->
     <script src="/static/game.js"></script>
     

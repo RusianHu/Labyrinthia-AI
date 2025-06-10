@@ -209,6 +209,12 @@ class MapTile:
     is_visible: bool = False
     items: List[Item] = field(default_factory=list)
     character_id: Optional[str] = None
+    # 事件相关字段
+    has_event: bool = False
+    event_type: str = ""  # 事件类型：combat, treasure, trap, story, etc.
+    event_data: Dict[str, Any] = field(default_factory=dict)  # 事件数据
+    is_event_hidden: bool = True  # 事件是否隐藏
+    event_triggered: bool = False  # 事件是否已触发
     
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -218,7 +224,12 @@ class MapTile:
             "is_explored": self.is_explored,
             "is_visible": self.is_visible,
             "items": [item.to_dict() for item in self.items],
-            "character_id": self.character_id
+            "character_id": self.character_id,
+            "has_event": self.has_event,
+            "event_type": self.event_type,
+            "event_data": self.event_data,
+            "is_event_hidden": self.is_event_hidden,
+            "event_triggered": self.event_triggered
         }
 
 
@@ -299,6 +310,7 @@ class GameState:
     quests: List[Quest] = field(default_factory=list)
     turn_count: int = 0
     game_time: int = 0  # 游戏内时间（分钟）
+    last_narrative: str = ""  # 最后的叙述文本
     created_at: datetime = field(default_factory=datetime.now)
     last_saved: datetime = field(default_factory=datetime.now)
     
@@ -311,6 +323,7 @@ class GameState:
             "quests": [quest.to_dict() for quest in self.quests],
             "turn_count": self.turn_count,
             "game_time": self.game_time,
+            "last_narrative": self.last_narrative,
             "created_at": self.created_at.isoformat(),
             "last_saved": self.last_saved.isoformat()
         }

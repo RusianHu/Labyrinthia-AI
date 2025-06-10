@@ -77,16 +77,24 @@ class GameEngine:
             game_state.player.stats.level, 1
         )
         game_state.quests.extend(initial_quests)
-        
+
+        # 生成开场叙述
+        try:
+            opening_narrative = await llm_service.generate_opening_narrative(game_state)
+            game_state.last_narrative = opening_narrative
+        except Exception as e:
+            logger.error(f"Failed to generate opening narrative: {e}")
+            game_state.last_narrative = f"欢迎来到 {game_state.current_map.name}！你的冒险即将开始..."
+
         # 保存游戏状态
         await self._save_game_async(game_state)
-        
+
         # 添加到活跃游戏列表
         self.active_games[game_state.id] = game_state
-        
+
         # 启动自动保存
         self._start_auto_save(game_state.id)
-        
+
         logger.info(f"New game created: {game_state.id}")
         return game_state
     
@@ -155,20 +163,29 @@ class GameEngine:
         if game_state:
             self.active_games[game_state.id] = game_state
             self._start_auto_save(game_state.id)
+
+            # 生成重新进入游戏的叙述
+            try:
+                return_narrative = await llm_service.generate_return_narrative(game_state)
+                game_state.last_narrative = return_narrative
+            except Exception as e:
+                logger.error(f"Failed to generate return narrative: {e}")
+                game_state.last_narrative = f"你重新回到了 {game_state.current_map.name}，继续你的冒险..."
+
             logger.info(f"Game loaded: {game_state.id}")
         return game_state
     
-    async def process_player_action(self, game_id: str, action: str, 
+    async def process_player_action(self, game_id: str, action: str,
                                   parameters: Dict[str, Any] = None) -> Dict[str, Any]:
         """处理玩家行动"""
         if game_id not in self.active_games:
             return {"success": False, "message": "游戏未找到"}
-        
+
         game_state = self.active_games[game_id]
         parameters = parameters or {}
-        
+
         result = {"success": True, "message": "", "events": []}
-        
+
         try:
             if action == "move":
                 result = await self._handle_move(game_state, parameters)
@@ -184,25 +201,38 @@ class GameEngine:
                 result = await self._handle_rest(game_state)
             else:
                 result = {"success": False, "message": f"未知行动: {action}"}
-            
+
             # 增加回合数
             if result["success"]:
                 game_state.turn_count += 1
                 game_state.game_time += 1  # 每回合1分钟
-                
+
                 # 处理怪物行动
                 await self._process_monster_turns(game_state)
-                
-                # 生成叙述文本
-                narrative = await llm_service.generate_narrative(game_state, action)
-                result["narrative"] = narrative
-            
+
+                # 只有特殊行动或有事件发生时才生成叙述文本
+                should_generate_narrative = self._should_generate_narrative(action, result)
+                if should_generate_narrative:
+                    narrative = await llm_service.generate_narrative(game_state, action)
+                    result["narrative"] = narrative
+
         except Exception as e:
             logger.error(f"Error processing action {action}: {e}")
             result = {"success": False, "message": f"处理行动时发生错误: {str(e)}"}
-        
+
         return result
-    
+
+    def _should_generate_narrative(self, action: str, result: Dict[str, Any]) -> bool:
+        """判断是否应该生成叙述文本"""
+        # 普通移动且没有事件发生时不生成叙述
+        if action == "move":
+            events = result.get("events", [])
+            # 只有当移动触发了事件时才生成叙述
+            return len(events) > 0
+
+        # 其他行动都生成叙述
+        return True
+
     async def _handle_move(self, game_state: GameState, parameters: Dict[str, Any]) -> Dict[str, Any]:
         """处理移动行动"""
         direction = parameters.get("direction", "")
@@ -252,7 +282,7 @@ class GameEngine:
         
         # 更新周围瓦片的可见性
         self._update_visibility(game_state, new_x, new_y)
-        
+
         # 检查特殊地形
         events = []
         if target_tile.terrain == TerrainType.TRAP:
@@ -261,6 +291,13 @@ class GameEngine:
             events.append(await self._find_treasure(game_state))
         elif target_tile.terrain == TerrainType.STAIRS_DOWN:
             events.append(await self._descend_stairs(game_state))
+
+        # 检查瓦片事件
+        if target_tile.has_event and not target_tile.event_triggered:
+            event_result = await self._trigger_tile_event(game_state, target_tile)
+            if event_result:
+                events.append(event_result)
+                target_tile.event_triggered = True
         
         return {
             "success": True,
@@ -528,6 +565,152 @@ class GameEngine:
         damage = random.randint(5, 15)
         game_state.player.stats.hp -= damage
         return f"触发了陷阱！受到了 {damage} 点伤害"
+
+    async def _trigger_tile_event(self, game_state: GameState, tile: MapTile) -> str:
+        """触发瓦片事件"""
+        try:
+            if tile.event_type == "combat":
+                return await self._handle_combat_event(game_state, tile)
+            elif tile.event_type == "treasure":
+                return await self._handle_treasure_event(game_state, tile)
+            elif tile.event_type == "story":
+                return await self._handle_story_event(game_state, tile)
+            elif tile.event_type == "trap":
+                return await self._handle_trap_event(game_state, tile)
+            elif tile.event_type == "mystery":
+                return await self._handle_mystery_event(game_state, tile)
+            else:
+                return "发现了一些有趣的东西..."
+        except Exception as e:
+            logger.error(f"Error triggering tile event: {e}")
+            return "发生了意外的事情..."
+
+    async def _handle_combat_event(self, game_state: GameState, tile: MapTile) -> str:
+        """处理战斗事件"""
+        event_data = tile.event_data
+        monster_count = event_data.get("monster_count", 1)
+        difficulty = event_data.get("difficulty", "medium")
+
+        # 生成怪物
+        monsters = await content_generator.generate_encounter_monsters(
+            game_state.player.stats.level, difficulty
+        )
+
+        # 限制怪物数量
+        monsters = monsters[:monster_count]
+
+        # 将怪物添加到游戏状态
+        for monster in monsters:
+            # 在附近找位置放置怪物
+            spawn_positions = content_generator.get_spawn_positions(game_state.current_map, 1)
+            if spawn_positions:
+                monster.position = spawn_positions[0]
+                monster_tile = game_state.current_map.get_tile(*monster.position)
+                if monster_tile:
+                    monster_tile.character_id = monster.id
+                game_state.monsters.append(monster)
+
+        return f"遭遇了 {len(monsters)} 只怪物！战斗开始！"
+
+    async def _handle_treasure_event(self, game_state: GameState, tile: MapTile) -> str:
+        """处理宝藏事件"""
+        event_data = tile.event_data
+        treasure_type = event_data.get("treasure_type", "gold")
+        value = event_data.get("value", 100)
+
+        if treasure_type == "gold":
+            # 添加金币逻辑（这里简化处理）
+            return f"发现了 {value} 金币！"
+        elif treasure_type == "item":
+            # 生成随机物品
+            items = await content_generator.generate_random_items(1, game_state.player.stats.level)
+            if items:
+                game_state.player.inventory.extend(items)
+                return f"发现了 {items[0].name}！"
+        elif treasure_type == "magic_item":
+            # 生成魔法物品
+            items = await content_generator.generate_random_items(1, game_state.player.stats.level)
+            if items:
+                items[0].rarity = "rare"  # 设为稀有
+                game_state.player.inventory.extend(items)
+                return f"发现了稀有物品 {items[0].name}！"
+
+        return "发现了一些有价值的东西！"
+
+    async def _handle_story_event(self, game_state: GameState, tile: MapTile) -> str:
+        """处理故事事件"""
+        event_data = tile.event_data
+        story_type = event_data.get("story_type", "discovery")
+
+        # 使用LLM生成故事内容
+        prompt = f"""
+        为玩家生成一个{story_type}类型的故事事件。
+        玩家当前位置：({tile.x}, {tile.y})
+        玩家等级：{game_state.player.stats.level}
+        地图：{game_state.current_map.name}
+
+        请生成一个简短但有趣的故事描述（50-100字）。
+        """
+
+        try:
+            story_text = await llm_service.generate_text(prompt)
+            return story_text or "你发现了一些古老的痕迹..."
+        except Exception as e:
+            logger.error(f"Error generating story event: {e}")
+            return "你发现了一些古老的痕迹..."
+
+    async def _handle_trap_event(self, game_state: GameState, tile: MapTile) -> str:
+        """处理陷阱事件"""
+        event_data = tile.event_data
+        trap_type = event_data.get("trap_type", "damage")
+        damage = event_data.get("damage", 15)
+
+        if trap_type == "damage":
+            game_state.player.stats.hp -= damage
+            return f"触发了陷阱！受到了 {damage} 点伤害！"
+        elif trap_type == "debuff":
+            # 简化处理，减少移动速度
+            return "触发了减速陷阱！移动变得困难！"
+        elif trap_type == "teleport":
+            # 随机传送到其他位置
+            spawn_positions = content_generator.get_spawn_positions(game_state.current_map, 1)
+            if spawn_positions:
+                old_tile = game_state.current_map.get_tile(*game_state.player.position)
+                if old_tile:
+                    old_tile.character_id = None
+
+                new_pos = spawn_positions[0]
+                game_state.player.position = new_pos
+                new_tile = game_state.current_map.get_tile(*new_pos)
+                if new_tile:
+                    new_tile.character_id = game_state.player.id
+                    new_tile.is_explored = True
+                    new_tile.is_visible = True
+
+                return f"触发了传送陷阱！被传送到了 ({new_pos[0]}, {new_pos[1]})！"
+
+        return "触发了一个神秘的陷阱！"
+
+    async def _handle_mystery_event(self, game_state: GameState, tile: MapTile) -> str:
+        """处理神秘事件"""
+        event_data = tile.event_data
+        mystery_type = event_data.get("mystery_type", "puzzle")
+
+        # 使用LLM生成神秘事件
+        prompt = f"""
+        为玩家生成一个{mystery_type}类型的神秘事件。
+        玩家当前位置：({tile.x}, {tile.y})
+        玩家等级：{game_state.player.stats.level}
+
+        请生成一个简短的神秘事件描述和可能的选择（50-100字）。
+        """
+
+        try:
+            mystery_text = await llm_service.generate_text(prompt)
+            return mystery_text or "你遇到了一个神秘的现象..."
+        except Exception as e:
+            logger.error(f"Error generating mystery event: {e}")
+            return "你遇到了一个神秘的现象..."
 
     async def _find_treasure(self, game_state: GameState) -> str:
         """发现宝藏"""

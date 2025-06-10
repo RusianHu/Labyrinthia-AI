@@ -331,7 +331,46 @@ class LLMService:
         """
         
         return await self._async_generate(prompt)
-    
+
+    async def generate_opening_narrative(self, game_state: GameState) -> str:
+        """生成开场叙述"""
+        prompt = f"""
+        为一个DnD风格的冒险游戏生成开场叙述。
+
+        玩家信息：
+        - 名称：{game_state.player.name}
+        - 职业：{game_state.player.character_class.value}
+        - 等级：{game_state.player.stats.level}
+
+        当前地图：{game_state.current_map.name}
+        地图描述：{game_state.current_map.description}
+
+        请生成一段引人入胜的开场叙述（100-200字），描述玩家刚刚踏入这个地下城的情景，
+        包括环境描述、氛围营造和对即将到来的冒险的暗示。
+        """
+
+        return await self._async_generate(prompt)
+
+    async def generate_return_narrative(self, game_state: GameState) -> str:
+        """生成重新进入游戏的叙述"""
+        prompt = f"""
+        为一个DnD风格的冒险游戏生成重新进入游戏的叙述。
+
+        玩家信息：
+        - 名称：{game_state.player.name}
+        - 职业：{game_state.player.character_class.value}
+        - 等级：{game_state.player.stats.level}
+        - 当前位置：{game_state.player.position}
+
+        当前地图：{game_state.current_map.name}
+        回合数：{game_state.turn_count}
+
+        请生成一段简短的叙述（50-100字），描述玩家重新回到游戏世界的情景，
+        让玩家快速回忆起当前的状况和环境。
+        """
+
+        return await self._async_generate(prompt)
+
     def close(self):
         """关闭服务"""
         self.executor.shutdown(wait=True)

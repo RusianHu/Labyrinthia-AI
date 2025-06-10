@@ -6,13 +6,87 @@ class LabyrinthiaGame {
         this.gameState = null;
         this.isLoading = false;
         this.messageLog = [];
-        
+        this.debugMode = false;
+        this.lastLLMRequest = null;
+        this.lastLLMResponse = null;
+
         this.init();
+        this.initializeDebugMode();
     }
     
     init() {
         this.setupEventListeners();
         this.loadGameList();
+    }
+
+    initializeDebugMode() {
+        // 检查配置中是否启用调试模式
+        this.checkDebugMode();
+
+        // 设置FAB按钮事件
+        const debugFab = document.getElementById('debug-fab');
+        if (debugFab) {
+            debugFab.addEventListener('click', () => {
+                this.toggleDebugPanel();
+            });
+        }
+    }
+
+    async checkDebugMode() {
+        try {
+            const response = await fetch('/api/config');
+            const config = await response.json();
+            this.debugMode = config.game?.show_llm_debug || false;
+
+            const debugFab = document.getElementById('debug-fab');
+            if (debugFab) {
+                if (this.debugMode) {
+                    debugFab.classList.remove('hidden');
+                } else {
+                    debugFab.classList.add('hidden');
+                }
+            }
+        } catch (error) {
+            console.error('Failed to check debug mode:', error);
+        }
+    }
+
+    toggleDebugPanel() {
+        const debugPanel = document.getElementById('debug-panel');
+        if (debugPanel) {
+            debugPanel.classList.toggle('show');
+            this.updateDebugInfo();
+        }
+    }
+
+    updateDebugInfo() {
+        if (!this.debugMode) return;
+
+        // 更新LLM请求信息
+        const requestElement = document.getElementById('debug-request');
+        if (requestElement && this.lastLLMRequest) {
+            requestElement.textContent = JSON.stringify(this.lastLLMRequest, null, 2);
+        }
+
+        // 更新LLM响应信息
+        const responseElement = document.getElementById('debug-response');
+        if (responseElement && this.lastLLMResponse) {
+            responseElement.textContent = JSON.stringify(this.lastLLMResponse, null, 2);
+        }
+
+        // 更新游戏状态信息
+        const gameStateElement = document.getElementById('debug-gamestate');
+        if (gameStateElement && this.gameState) {
+            const debugGameState = {
+                player_position: this.gameState.player.position,
+                player_hp: this.gameState.player.stats.hp,
+                player_level: this.gameState.player.stats.level,
+                map_name: this.gameState.current_map.name,
+                turn_count: this.gameState.turn_count,
+                monsters_count: this.gameState.monsters.length
+            };
+            gameStateElement.textContent = JSON.stringify(debugGameState, null, 2);
+        }
     }
     
     setupEventListeners() {
@@ -102,19 +176,43 @@ class LabyrinthiaGame {
         this.setLoading(true);
         
         try {
+            const requestData = {
+                game_id: this.gameId,
+                action: action,
+                parameters: parameters
+            };
+
+            // 记录调试信息
+            if (this.debugMode) {
+                this.lastLLMRequest = {
+                    timestamp: new Date().toISOString(),
+                    action: action,
+                    parameters: parameters,
+                    game_id: this.gameId
+                };
+            }
+
             const response = await fetch('/api/action', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
                 },
-                body: JSON.stringify({
-                    game_id: this.gameId,
-                    action: action,
-                    parameters: parameters
-                })
+                body: JSON.stringify(requestData)
             });
-            
+
             const result = await response.json();
+
+            // 记录响应调试信息
+            if (this.debugMode) {
+                this.lastLLMResponse = {
+                    timestamp: new Date().toISOString(),
+                    success: result.success,
+                    message: result.message,
+                    events: result.events,
+                    narrative: result.narrative
+                };
+                this.updateDebugInfo();
+            }
             
             if (result.success) {
                 // 更新游戏状态
@@ -219,6 +317,15 @@ class LabyrinthiaGame {
                 tile.className = 'map-tile';
                 tile.dataset.x = x;
                 tile.dataset.y = y;
+
+                // 添加悬停事件
+                tile.addEventListener('mouseenter', (e) => {
+                    this.showTileTooltip(e, tileData, x, y);
+                });
+
+                tile.addEventListener('mouseleave', () => {
+                    this.hideTileTooltip();
+                });
                 
                 if (tileData) {
                     // 设置地形样式
@@ -318,6 +425,101 @@ class LabyrinthiaGame {
     async useItem(itemId) {
         await this.performAction('use_item', { item_id: itemId });
     }
+
+    showTileTooltip(event, tileData, x, y) {
+        const tooltip = document.getElementById('tile-tooltip');
+        if (!tooltip) return;
+
+        let tooltipText = `位置: (${x}, ${y})\n`;
+
+        if (tileData) {
+            // 地形信息
+            const terrainNames = {
+                'floor': '地板',
+                'wall': '墙壁',
+                'door': '门',
+                'trap': '陷阱',
+                'treasure': '宝藏',
+                'stairs_up': '上楼梯',
+                'stairs_down': '下楼梯',
+                'water': '水',
+                'lava': '岩浆',
+                'pit': '深坑'
+            };
+
+            tooltipText += `地形: ${terrainNames[tileData.terrain] || tileData.terrain}\n`;
+
+            // 探索状态
+            if (tileData.is_explored) {
+                tooltipText += '状态: 已探索\n';
+            } else {
+                tooltipText += '状态: 未探索\n';
+            }
+
+            // 角色信息
+            if (tileData.character_id) {
+                if (tileData.character_id === this.gameState.player.id) {
+                    tooltipText += '角色: 玩家\n';
+                } else {
+                    const monster = this.gameState.monsters.find(m => m.id === tileData.character_id);
+                    if (monster) {
+                        tooltipText += `怪物: ${monster.name}\n`;
+                        tooltipText += `生命值: ${monster.stats.hp}/${monster.stats.max_hp}\n`;
+                    }
+                }
+            }
+
+            // 物品信息
+            if (tileData.items && tileData.items.length > 0) {
+                tooltipText += `物品: ${tileData.items.length}个\n`;
+            }
+
+            // 事件信息（如果有且不隐藏）
+            if (tileData.has_event && !tileData.is_event_hidden) {
+                const eventNames = {
+                    'combat': '战斗',
+                    'treasure': '宝藏',
+                    'story': '故事',
+                    'trap': '陷阱',
+                    'mystery': '神秘'
+                };
+                tooltipText += `事件: ${eventNames[tileData.event_type] || tileData.event_type}\n`;
+
+                if (tileData.event_triggered) {
+                    tooltipText += '(已触发)\n';
+                }
+            }
+        } else {
+            tooltipText += '地形: 未知\n';
+        }
+
+        tooltip.textContent = tooltipText.trim();
+        tooltip.classList.add('show');
+
+        // 定位工具提示
+        const rect = event.target.getBoundingClientRect();
+        tooltip.style.left = `${rect.left + rect.width / 2}px`;
+        tooltip.style.top = `${rect.top - tooltip.offsetHeight - 10}px`;
+
+        // 确保工具提示不超出屏幕边界
+        const tooltipRect = tooltip.getBoundingClientRect();
+        if (tooltipRect.left < 0) {
+            tooltip.style.left = '10px';
+        }
+        if (tooltipRect.right > window.innerWidth) {
+            tooltip.style.left = `${window.innerWidth - tooltipRect.width - 10}px`;
+        }
+        if (tooltipRect.top < 0) {
+            tooltip.style.top = `${rect.bottom + 10}px`;
+        }
+    }
+
+    hideTileTooltip() {
+        const tooltip = document.getElementById('tile-tooltip');
+        if (tooltip) {
+            tooltip.classList.remove('show');
+        }
+    }
     
     addMessage(text, type = 'system') {
         const messageLog = document.getElementById('message-log');
@@ -402,19 +604,19 @@ class LabyrinthiaGame {
     
     async loadGame(saveId) {
         this.setLoading(true);
-        
+
         try {
             const response = await fetch(`/api/load/${saveId}`, {
                 method: 'POST'
             });
-            
+
             const result = await response.json();
-            
+
             if (result.success) {
                 this.gameId = result.game_id;
                 await this.refreshGameState();
                 this.addMessage('游戏已加载', 'success');
-                
+
                 // 隐藏主菜单，显示游戏界面
                 document.getElementById('main-menu').style.display = 'none';
                 document.getElementById('game-interface').style.display = 'block';
@@ -424,6 +626,36 @@ class LabyrinthiaGame {
         } catch (error) {
             console.error('Load error:', error);
             this.addMessage('加载时发生错误', 'error');
+        } finally {
+            this.setLoading(false);
+        }
+    }
+
+    async deleteGame(saveId) {
+        // 显示确认对话框
+        if (!confirm('确定要删除这个存档吗？此操作无法撤销。')) {
+            return;
+        }
+
+        this.setLoading(true);
+
+        try {
+            const response = await fetch(`/api/save/${saveId}`, {
+                method: 'DELETE'
+            });
+
+            const result = await response.json();
+
+            if (result.success) {
+                this.addMessage('存档已删除', 'success');
+                // 刷新存档列表
+                await this.loadGameList();
+            } else {
+                this.addMessage('删除失败', 'error');
+            }
+        } catch (error) {
+            console.error('Delete error:', error);
+            this.addMessage('删除时发生错误', 'error');
         } finally {
             this.setLoading(false);
         }

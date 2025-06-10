@@ -81,6 +81,9 @@ class ContentGenerator:
         
         # 放置特殊地形
         await self._place_special_terrain(game_map, rooms)
+
+        # 生成地图事件
+        await self._generate_map_events(game_map, rooms)
     
     def _generate_rooms(self, width: int, height: int) -> List[Dict[str, int]]:
         """生成房间列表"""
@@ -335,13 +338,66 @@ class ContentGenerator:
     
     def get_spawn_positions(self, game_map: GameMap, count: int = 1) -> List[Tuple[int, int]]:
         """获取可生成位置"""
-        floor_tiles = [(x, y) for (x, y), tile in game_map.tiles.items() 
+        floor_tiles = [(x, y) for (x, y), tile in game_map.tiles.items()
                       if tile.terrain == TerrainType.FLOOR and not tile.character_id]
-        
+
         if len(floor_tiles) < count:
             return floor_tiles
-        
+
         return random.sample(floor_tiles, count)
+
+    async def _generate_map_events(self, game_map: GameMap, rooms: List[Dict[str, int]]):
+        """为地图生成事件"""
+        floor_tiles = [(x, y) for (x, y), tile in game_map.tiles.items()
+                      if tile.terrain == TerrainType.FLOOR and not tile.character_id]
+
+        if not floor_tiles:
+            return
+
+        # 计算事件数量（基于地图大小）
+        total_tiles = len(floor_tiles)
+        event_count = max(3, total_tiles // 20)  # 每20个地板瓦片至少1个事件
+
+        # 随机选择事件位置
+        event_positions = random.sample(floor_tiles, min(event_count, len(floor_tiles)))
+
+        for x, y in event_positions:
+            tile = game_map.get_tile(x, y)
+            if tile:
+                # 随机选择事件类型
+                event_types = ["combat", "treasure", "story", "trap", "mystery"]
+                event_type = random.choice(event_types)
+
+                # 设置事件属性
+                tile.has_event = True
+                tile.event_type = event_type
+                tile.is_event_hidden = random.choice([True, True, False])  # 2/3概率隐藏
+                tile.event_triggered = False
+
+                # 根据事件类型设置事件数据
+                if event_type == "combat":
+                    tile.event_data = {
+                        "monster_count": random.randint(1, 3),
+                        "difficulty": random.choice(["easy", "medium", "hard"])
+                    }
+                elif event_type == "treasure":
+                    tile.event_data = {
+                        "treasure_type": random.choice(["gold", "item", "magic_item"]),
+                        "value": random.randint(50, 500)
+                    }
+                elif event_type == "story":
+                    tile.event_data = {
+                        "story_type": random.choice(["discovery", "memory", "vision", "encounter"])
+                    }
+                elif event_type == "trap":
+                    tile.event_data = {
+                        "trap_type": random.choice(["damage", "debuff", "teleport"]),
+                        "damage": random.randint(10, 30)
+                    }
+                elif event_type == "mystery":
+                    tile.event_data = {
+                        "mystery_type": random.choice(["puzzle", "riddle", "choice"])
+                    }
 
 
 # 全局内容生成器实例
