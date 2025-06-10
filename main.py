@@ -113,7 +113,8 @@ async def create_new_game(request: NewGameRequest):
         return {
             "success": True,
             "game_id": game_state.id,
-            "message": f"欢迎 {request.player_name}！你的冒险开始了！"
+            "message": f"欢迎 {request.player_name}！你的冒险开始了！",
+            "narrative": game_state.last_narrative
         }
         
     except Exception as e:
@@ -135,7 +136,8 @@ async def load_game(save_id: str):
         return {
             "success": True,
             "game_id": game_state.id,
-            "message": f"游戏已加载：{game_state.player.name}"
+            "message": f"游戏已加载：{game_state.player.name}",
+            "narrative": game_state.last_narrative
         }
         
     except HTTPException:

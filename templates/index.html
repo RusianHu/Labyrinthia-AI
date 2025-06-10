@@ -22,12 +22,25 @@
     </div>
 
     <div class="container">
+        <!-- 全屏加载遮罩 -->
+        <div id="fullscreen-overlay" class="fullscreen-overlay">
+            <div class="overlay-content">
+                <h1 id="overlay-title" class="overlay-title">加载中...</h1>
+                <p id="overlay-subtitle" class="overlay-subtitle">正在准备您的冒险</p>
+                <div class="overlay-spinner"></div>
+                <div class="overlay-progress">
+                    <div id="overlay-progress-bar" class="overlay-progress-bar"></div>
+                </div>
+                <p id="overlay-status" class="overlay-status">初始化游戏世界...</p>
+            </div>
+        </div>
+
         <!-- 主菜单 -->
         <div id="main-menu" class="main-menu">
             <div class="menu-panel elevation-3">
                 <h2>欢迎来到 Labyrinthia AI</h2>
                 <p>一个由人工智能驱动的地下城与龙风格冒险游戏</p>
-                
+
                 <div class="menu-buttons">
                     <button id="btn-new-game" class="btn btn-primary">
                         <i class="material-icons">add</i>
@@ -38,7 +51,7 @@
                         加载游戏
                     </button>
                 </div>
-                
+
                 <!-- 存档列表 -->
                 <div id="saves-list" class="saves-list"></div>
             </div>
@@ -48,11 +61,20 @@
         <div id="game-interface" class="game-layout" style="display: none;">
             <!-- 主游戏区域 -->
             <div class="game-main elevation-2">
+                <!-- 任务面板 -->
+                <div class="panel elevation-2" style="margin-bottom: 15px;">
+                    <h3>
+                        <i class="material-icons">assignment</i>
+                        任务
+                    </h3>
+                    <div id="quest-list" class="quest-list"></div>
+                </div>
+
                 <!-- 地图容器 -->
                 <div class="map-container">
                     <div id="map-grid" class="map-grid"></div>
                 </div>
-                
+
                 <!-- 消息日志 -->
                 <div class="panel" style="margin-top: 15px;">
                     <h3>
@@ -175,14 +197,7 @@
                     <div id="inventory-grid" class="inventory-grid"></div>
                 </div>
 
-                <!-- 任务 -->
-                <div class="panel elevation-2">
-                    <h3>
-                        <i class="material-icons">assignment</i>
-                        任务
-                    </h3>
-                    <div id="quest-list" class="quest-list"></div>
-                </div>
+
             </div>
         </div>
     </div>
@@ -427,7 +442,7 @@
         }
         
         .quest-list {
-            max-height: 200px;
+            max-height: 150px;
             overflow-y: auto;
         }
         

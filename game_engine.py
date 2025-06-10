@@ -265,10 +265,19 @@ class GameEngine:
         # 检查地形
         if target_tile.terrain == TerrainType.WALL:
             return {"success": False, "message": "无法穿过墙壁"}
-        
+
         # 检查是否有其他角色
         if target_tile.character_id and target_tile.character_id != game_state.player.id:
-            return {"success": False, "message": "该位置已被占据"}
+            # 检查是否是怪物，如果是则提示攻击
+            monster = None
+            for m in game_state.monsters:
+                if m.id == target_tile.character_id:
+                    monster = m
+                    break
+            if monster:
+                return {"success": False, "message": f"该位置有 {monster.name}，请使用攻击命令"}
+            else:
+                return {"success": False, "message": "该位置已被占据"}
         
         # 执行移动
         old_tile = game_state.current_map.get_tile(current_x, current_y)
@@ -322,52 +331,60 @@ class GameEngine:
     async def _handle_attack(self, game_state: GameState, parameters: Dict[str, Any]) -> Dict[str, Any]:
         """处理攻击行动"""
         target_id = parameters.get("target_id", "")
-        
+
         # 查找目标怪物
         target_monster = None
         for monster in game_state.monsters:
             if monster.id == target_id:
                 target_monster = monster
                 break
-        
+
         if not target_monster:
             return {"success": False, "message": "目标未找到"}
-        
-        # 检查距离
+
+        # 检查距离和视线
         player_x, player_y = game_state.player.position
         monster_x, monster_y = target_monster.position
-        distance = abs(player_x - monster_x) + abs(monster_y - monster_y)
-        
-        if distance > 1:
-            return {"success": False, "message": "目标距离太远"}
-        
+
+        # 检查攻击距离（包括对角线）
+        dx = abs(player_x - monster_x)
+        dy = abs(player_y - monster_y)
+        max_distance = max(dx, dy)  # 切比雪夫距离，允许对角线攻击
+
+        if max_distance > 1:
+            return {"success": False, "message": "目标距离太远，无法攻击"}
+
+        # 检查视线（简单实现：检查是否有墙壁阻挡）
+        if not self._has_line_of_sight(game_state.current_map, player_x, player_y, monster_x, monster_y):
+            return {"success": False, "message": "视线被阻挡，无法攻击"}
+
         # 计算伤害
         damage = self._calculate_damage(game_state.player, target_monster)
         target_monster.stats.hp -= damage
-        
+
         events = [f"对 {target_monster.name} 造成了 {damage} 点伤害"]
-        
+
         # 检查怪物是否死亡
         if target_monster.stats.hp <= 0:
             events.append(f"{target_monster.name} 被击败了！")
-            
+
             # 获得经验
             exp_gain = int(target_monster.challenge_rating * 100)
             game_state.player.stats.experience += exp_gain
             events.append(f"获得了 {exp_gain} 点经验")
-            
+
             # 检查升级
             if self._check_level_up(game_state.player):
                 events.append("恭喜升级！")
-            
+
             # 移除怪物
             game_state.monsters.remove(target_monster)
-            
+
             # 清除地图上的怪物标记
             tile = game_state.current_map.get_tile(monster_x, monster_y)
             if tile:
                 tile.character_id = None
-        
+
         return {
             "success": True,
             "message": f"攻击了 {target_monster.name}",
@@ -399,6 +416,39 @@ class GameEngine:
             character.stats.mp = character.stats.max_mp
             return True
         return False
+
+    def _has_line_of_sight(self, game_map: "GameMap", x1: int, y1: int, x2: int, y2: int) -> bool:
+        """检查两点之间是否有视线（简单实现）"""
+        # 对于相邻格子，直接返回True
+        if abs(x2 - x1) <= 1 and abs(y2 - y1) <= 1:
+            return True
+
+        # 使用简单的直线算法检查路径上是否有墙壁
+        dx = abs(x2 - x1)
+        dy = abs(y2 - y1)
+
+        x, y = x1, y1
+        x_inc = 1 if x1 < x2 else -1
+        y_inc = 1 if y1 < y2 else -1
+
+        error = dx - dy
+
+        while x != x2 or y != y2:
+            # 检查当前位置是否有墙壁（跳过起点和终点）
+            if (x != x1 or y != y1) and (x != x2 or y != y2):
+                tile = game_map.get_tile(x, y)
+                if tile and tile.terrain == TerrainType.WALL:
+                    return False
+
+            error2 = 2 * error
+            if error2 > -dy:
+                error -= dy
+                x += x_inc
+            if error2 < dx:
+                error += dx
+                y += y_inc
+
+        return True
     
     async def _handle_use_item(self, game_state: GameState, parameters: Dict[str, Any]) -> Dict[str, Any]:
         """处理使用物品行动"""

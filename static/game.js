@@ -9,6 +9,8 @@ class LabyrinthiaGame {
         this.debugMode = false;
         this.lastLLMRequest = null;
         this.lastLLMResponse = null;
+        this.hoveredTile = null;
+        this.highlightedTiles = [];
 
         this.init();
         this.initializeDebugMode();
@@ -172,9 +174,15 @@ class LabyrinthiaGame {
     
     async performAction(action, parameters = {}) {
         if (this.isLoading || !this.gameId) return;
-        
+
         this.setLoading(true);
-        
+
+        // 检查是否需要显示LLM遮罩（特殊地形或事件触发时）
+        const needsLLMOverlay = this.shouldShowLLMOverlay(action, parameters);
+        if (needsLLMOverlay) {
+            this.showLLMOverlay(action);
+        }
+
         try {
             const requestData = {
                 game_id: this.gameId,
@@ -217,18 +225,18 @@ class LabyrinthiaGame {
             if (result.success) {
                 // 更新游戏状态
                 await this.refreshGameState();
-                
+
                 // 添加消息
                 if (result.message) {
                     this.addMessage(result.message, 'action');
                 }
-                
+
                 if (result.events) {
                     result.events.forEach(event => {
                         this.addMessage(event, 'system');
                     });
                 }
-                
+
                 if (result.narrative) {
                     this.addMessage(result.narrative, 'narrative');
                 }
@@ -239,6 +247,10 @@ class LabyrinthiaGame {
             console.error('Action error:', error);
             this.addMessage('网络错误，请重试', 'error');
         } finally {
+            // 隐藏LLM遮罩
+            if (needsLLMOverlay) {
+                this.hideLLMOverlay();
+            }
             this.setLoading(false);
         }
     }
@@ -321,10 +333,17 @@ class LabyrinthiaGame {
                 // 添加悬停事件
                 tile.addEventListener('mouseenter', (e) => {
                     this.showTileTooltip(e, tileData, x, y);
+                    this.handleTileHover(x, y, tileData, true);
                 });
 
                 tile.addEventListener('mouseleave', () => {
                     this.hideTileTooltip();
+                    this.handleTileHover(x, y, tileData, false);
+                });
+
+                // 添加点击移动事件
+                tile.addEventListener('click', () => {
+                    this.handleTileClick(x, y, tileData);
                 });
                 
                 if (tileData) {
@@ -420,6 +439,94 @@ class LabyrinthiaGame {
     
     async attackMonster(monsterId) {
         await this.performAction('attack', { target_id: monsterId });
+    }
+
+    handleTileClick(x, y, tileData) {
+        if (this.isLoading) return;
+
+        const player = this.gameState.player;
+        const playerX = player.position[0];
+        const playerY = player.position[1];
+
+        // 检查是否点击了怪物
+        if (tileData.character_id && tileData.character_id !== player.id) {
+            const monster = this.gameState.monsters.find(m => m.id === tileData.character_id);
+            if (monster) {
+                // 检查攻击距离
+                const distance = Math.abs(x - playerX) + Math.abs(y - playerY);
+                if (distance <= 1) {
+                    this.attackMonster(monster.id);
+                    return;
+                } else {
+                    this.addMessage('目标距离太远，无法攻击', 'error');
+                    return;
+                }
+            }
+        }
+
+        // 检查是否可以移动到该位置
+        if (this.canMoveToTile(x, y, playerX, playerY)) {
+            this.moveToPosition(x, y);
+        }
+    }
+
+    canMoveToTile(targetX, targetY, playerX, playerY, showMessages = true) {
+        // 检查是否为相邻格子（包括对角线）
+        const dx = Math.abs(targetX - playerX);
+        const dy = Math.abs(targetY - playerY);
+
+        if (dx > 1 || dy > 1 || (dx === 0 && dy === 0)) {
+            return false;
+        }
+
+        // 检查目标瓦片
+        const tileKey = `${targetX},${targetY}`;
+        const tileData = this.gameState.current_map.tiles[tileKey];
+
+        if (!tileData) {
+            return false;
+        }
+
+        // 检查地形
+        if (tileData.terrain === 'wall') {
+            if (showMessages) {
+                this.addMessage('无法穿过墙壁', 'error');
+            }
+            return false;
+        }
+
+        // 检查是否有其他角色
+        if (tileData.character_id && tileData.character_id !== this.gameState.player.id) {
+            if (showMessages) {
+                this.addMessage('该位置已被占据', 'error');
+            }
+            return false;
+        }
+
+        return true;
+    }
+
+    async moveToPosition(x, y) {
+        const playerX = this.gameState.player.position[0];
+        const playerY = this.gameState.player.position[1];
+
+        // 计算移动方向
+        const dx = x - playerX;
+        const dy = y - playerY;
+
+        let direction = '';
+        if (dx === 0 && dy === -1) direction = 'north';
+        else if (dx === 0 && dy === 1) direction = 'south';
+        else if (dx === -1 && dy === 0) direction = 'west';
+        else if (dx === 1 && dy === 0) direction = 'east';
+        else if (dx === -1 && dy === -1) direction = 'northwest';
+        else if (dx === 1 && dy === -1) direction = 'northeast';
+        else if (dx === -1 && dy === 1) direction = 'southwest';
+        else if (dx === 1 && dy === 1) direction = 'southeast';
+
+        if (direction) {
+            await this.movePlayer(direction);
+        }
     }
     
     async useItem(itemId) {
@@ -542,12 +649,241 @@ class LabyrinthiaGame {
         loadingElements.forEach(el => {
             el.style.display = loading ? 'inline-block' : 'none';
         });
-        
+
         // 禁用/启用控制按钮
         const controlButtons = document.querySelectorAll('.control-btn, .dir-btn');
         controlButtons.forEach(btn => {
             btn.disabled = loading;
         });
+    }
+
+    showFullscreenOverlay(title, subtitle, status = '') {
+        const overlay = document.getElementById('fullscreen-overlay');
+        const titleEl = document.getElementById('overlay-title');
+        const subtitleEl = document.getElementById('overlay-subtitle');
+        const statusEl = document.getElementById('overlay-status');
+        const progressBar = document.getElementById('overlay-progress-bar');
+
+        if (overlay && titleEl && subtitleEl && statusEl) {
+            titleEl.textContent = title;
+            subtitleEl.textContent = subtitle;
+            statusEl.textContent = status;
+            progressBar.style.width = '0%';
+            overlay.classList.add('show');
+        }
+    }
+
+    hideFullscreenOverlay() {
+        const overlay = document.getElementById('fullscreen-overlay');
+        if (overlay) {
+            overlay.classList.remove('show');
+        }
+    }
+
+    updateOverlayProgress(progress, status = '') {
+        const progressBar = document.getElementById('overlay-progress-bar');
+        const statusEl = document.getElementById('overlay-status');
+
+        if (progressBar) {
+            progressBar.style.width = `${Math.min(100, Math.max(0, progress))}%`;
+        }
+
+        if (statusEl && status) {
+            statusEl.textContent = status;
+        }
+    }
+
+    showLLMOverlay(action = '思考中') {
+        const titles = {
+            'move': 'AI 正在分析环境',
+            'attack': 'AI 正在计算战斗',
+            'interact': 'AI 正在处理交互',
+            'rest': 'AI 正在恢复状态',
+            'default': 'AI 正在思考'
+        };
+
+        const subtitles = {
+            'move': '分析地形和潜在威胁...',
+            'attack': '计算最佳攻击策略...',
+            'interact': '理解环境中的元素...',
+            'rest': '评估休息的安全性...',
+            'default': '处理您的请求...'
+        };
+
+        const title = titles[action] || titles['default'];
+        const subtitle = subtitles[action] || subtitles['default'];
+
+        this.showFullscreenOverlay(title, subtitle, '正在与AI通信...');
+
+        // 模拟进度更新
+        let progress = 0;
+        const progressInterval = setInterval(() => {
+            progress += Math.random() * 15;
+            if (progress >= 90) {
+                progress = 90;
+                clearInterval(progressInterval);
+            }
+            this.updateOverlayProgress(progress);
+        }, 200);
+
+        // 存储interval以便后续清理
+        this.currentProgressInterval = progressInterval;
+    }
+
+    hideLLMOverlay() {
+        if (this.currentProgressInterval) {
+            clearInterval(this.currentProgressInterval);
+            this.currentProgressInterval = null;
+        }
+
+        // 完成进度条
+        this.updateOverlayProgress(100, '完成！');
+
+        // 延迟隐藏以显示完成状态
+        setTimeout(() => {
+            this.hideFullscreenOverlay();
+        }, 500);
+    }
+
+    shouldShowLLMOverlay(action, parameters) {
+        // 检查是否需要显示LLM遮罩
+        // 主要在以下情况显示：
+        // 1. 移动到特殊地形
+        // 2. 交互行动
+        // 3. 攻击行动
+        // 4. 休息时可能触发事件
+
+        if (action === 'interact') {
+            return true;
+        }
+
+        if (action === 'attack') {
+            return true;
+        }
+
+        if (action === 'move') {
+            // 检查目标位置是否有特殊地形
+            const direction = parameters.direction;
+            if (this.gameState && this.gameState.player) {
+                const player = this.gameState.player;
+                const currentX = player.position[0];
+                const currentY = player.position[1];
+
+                // 计算目标位置
+                const directionMap = {
+                    "north": [0, -1], "south": [0, 1],
+                    "east": [1, 0], "west": [-1, 0],
+                    "northeast": [1, -1], "northwest": [-1, -1],
+                    "southeast": [1, 1], "southwest": [-1, 1]
+                };
+
+                if (direction && directionMap[direction]) {
+                    const [dx, dy] = directionMap[direction];
+                    const targetX = currentX + dx;
+                    const targetY = currentY + dy;
+                    const tileKey = `${targetX},${targetY}`;
+                    const targetTile = this.gameState.current_map.tiles[tileKey];
+
+                    if (targetTile) {
+                        // 特殊地形需要LLM处理
+                        const specialTerrains = ['trap', 'treasure', 'stairs_down', 'stairs_up', 'door'];
+                        if (specialTerrains.includes(targetTile.terrain) || targetTile.has_event) {
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+
+        if (action === 'rest') {
+            // 休息时可能触发随机事件
+            return Math.random() < 0.3; // 30%概率显示遮罩
+        }
+
+        return false;
+    }
+
+    handleTileHover(x, y, tileData, isEntering) {
+        if (!this.gameState || !this.gameState.player) return;
+
+        const player = this.gameState.player;
+        const playerX = player.position[0];
+        const playerY = player.position[1];
+
+        if (isEntering) {
+            // 清除之前的高亮
+            this.clearTileHighlights();
+
+            // 检查是否可以移动到该位置（不显示错误消息）
+            if (this.canMoveToTile(x, y, playerX, playerY, false)) {
+                this.highlightMovableTile(x, y);
+                this.highlightMovementPath(playerX, playerY, x, y);
+            }
+
+            // 检查是否可以攻击该位置的怪物
+            if (tileData && tileData.character_id && tileData.character_id !== player.id) {
+                const monster = this.gameState.monsters.find(m => m.id === tileData.character_id);
+                if (monster) {
+                    const distance = Math.abs(x - playerX) + Math.abs(y - playerY);
+                    if (distance <= 1) {
+                        this.highlightAttackableTile(x, y);
+                    }
+                }
+            }
+
+            this.hoveredTile = { x, y };
+        } else {
+            // 鼠标离开时清除高亮
+            this.clearTileHighlights();
+            this.hoveredTile = null;
+        }
+    }
+
+    highlightMovableTile(x, y) {
+        const tile = document.querySelector(`[data-x="${x}"][data-y="${y}"]`);
+        if (tile) {
+            tile.classList.add('movable');
+            this.highlightedTiles.push({ element: tile, type: 'movable' });
+        }
+    }
+
+    highlightAttackableTile(x, y) {
+        const tile = document.querySelector(`[data-x="${x}"][data-y="${y}"]`);
+        if (tile) {
+            tile.classList.add('attackable');
+            this.highlightedTiles.push({ element: tile, type: 'attackable' });
+        }
+    }
+
+    highlightMovementPath(fromX, fromY, toX, toY) {
+        // 简单的直线路径高亮（可以扩展为更复杂的寻路算法）
+        const dx = toX - fromX;
+        const dy = toY - fromY;
+
+        // 对于相邻瓦片，不需要路径高亮
+        if (Math.abs(dx) <= 1 && Math.abs(dy) <= 1) {
+            return;
+        }
+
+        // 计算路径上的瓦片
+        const steps = Math.max(Math.abs(dx), Math.abs(dy));
+        for (let i = 1; i < steps; i++) {
+            const pathX = Math.round(fromX + (dx * i / steps));
+            const pathY = Math.round(fromY + (dy * i / steps));
+
+            const pathTile = document.querySelector(`[data-x="${pathX}"][data-y="${pathY}"]`);
+            if (pathTile) {
+                pathTile.classList.add('path-highlight');
+                this.highlightedTiles.push({ element: pathTile, type: 'path' });
+            }
+        }
+    }
+
+    clearTileHighlights() {
+        this.highlightedTiles.forEach(({ element }) => {
+            element.classList.remove('movable', 'attackable', 'path-highlight');
+        });
+        this.highlightedTiles = [];
     }
     
     async saveGame() {
@@ -604,28 +940,51 @@ class LabyrinthiaGame {
     
     async loadGame(saveId) {
         this.setLoading(true);
+        this.showFullscreenOverlay('加载存档', '正在读取您的冒险进度...', '连接到游戏服务器...');
 
         try {
+            this.updateOverlayProgress(20, '验证存档文件...');
+
             const response = await fetch(`/api/load/${saveId}`, {
                 method: 'POST'
             });
 
+            this.updateOverlayProgress(50, '解析游戏数据...');
             const result = await response.json();
 
             if (result.success) {
+                this.updateOverlayProgress(70, '重建游戏世界...');
                 this.gameId = result.game_id;
+
+                this.updateOverlayProgress(85, '加载角色状态...');
                 await this.refreshGameState();
+
+                this.updateOverlayProgress(95, '准备游戏界面...');
                 this.addMessage('游戏已加载', 'success');
+
+                // 显示叙述文本
+                if (result.narrative) {
+                    this.addMessage(result.narrative, 'narrative');
+                }
+
+                this.updateOverlayProgress(100, '加载完成！');
+
+                // 延迟一下显示完成状态
+                await new Promise(resolve => setTimeout(resolve, 800));
 
                 // 隐藏主菜单，显示游戏界面
                 document.getElementById('main-menu').style.display = 'none';
                 document.getElementById('game-interface').style.display = 'block';
+
+                this.hideFullscreenOverlay();
             } else {
                 this.addMessage('加载失败', 'error');
+                this.hideFullscreenOverlay();
             }
         } catch (error) {
             console.error('Load error:', error);
             this.addMessage('加载时发生错误', 'error');
+            this.hideFullscreenOverlay();
         } finally {
             this.setLoading(false);
         }
@@ -668,15 +1027,18 @@ class LabyrinthiaGame {
     async createNewGame() {
         const playerName = document.getElementById('player-name-input').value.trim();
         const characterClass = document.getElementById('character-class-select').value;
-        
+
         if (!playerName) {
             alert('请输入角色名称');
             return;
         }
-        
+
         this.setLoading(true);
-        
+        this.showFullscreenOverlay('创建新游戏', '正在为您生成独特的冒险世界...', '初始化AI系统...');
+
         try {
+            this.updateOverlayProgress(15, '创建角色档案...');
+
             const response = await fetch('/api/new-game', {
                 method: 'POST',
                 headers: {
@@ -687,24 +1049,44 @@ class LabyrinthiaGame {
                     character_class: characterClass
                 })
             });
-            
+
+            this.updateOverlayProgress(40, 'AI正在生成地下城...');
             const result = await response.json();
-            
+
             if (result.success) {
+                this.updateOverlayProgress(65, '构建游戏世界...');
                 this.gameId = result.game_id;
+
+                this.updateOverlayProgress(80, '加载角色数据...');
                 await this.refreshGameState();
+
+                this.updateOverlayProgress(90, '生成开场故事...');
                 this.addMessage('新游戏开始！', 'success');
-                
+
+                // 显示叙述文本
+                if (result.narrative) {
+                    this.addMessage(result.narrative, 'narrative');
+                }
+
+                this.updateOverlayProgress(100, '准备就绪！');
+
+                // 延迟显示完成状态
+                await new Promise(resolve => setTimeout(resolve, 1000));
+
                 // 隐藏模态框和主菜单，显示游戏界面
                 document.getElementById('new-game-modal').style.display = 'none';
                 document.getElementById('main-menu').style.display = 'none';
                 document.getElementById('game-interface').style.display = 'block';
+
+                this.hideFullscreenOverlay();
             } else {
                 this.addMessage('创建游戏失败', 'error');
+                this.hideFullscreenOverlay();
             }
         } catch (error) {
             console.error('Create game error:', error);
             this.addMessage('创建游戏时发生错误', 'error');
+            this.hideFullscreenOverlay();
         } finally {
             this.setLoading(false);
         }
