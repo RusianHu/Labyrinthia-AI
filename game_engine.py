@@ -17,6 +17,7 @@ from data_models import (
 from content_generator import content_generator
 from llm_service import llm_service
 from data_manager import data_manager
+from progress_manager import progress_manager, ProgressEventType, ProgressContext
 
 
 logger = logging.getLogger(__name__)
@@ -416,6 +417,12 @@ class GameEngine:
             if tile:
                 tile.character_id = None
 
+            # 触发战斗胜利进度事件
+            await self._trigger_progress_event(
+                game_state, ProgressEventType.COMBAT_VICTORY,
+                {"monster_name": target_monster.name, "challenge_rating": target_monster.challenge_rating}
+            )
+
         return {
             "success": True,
             "message": f"攻击了 {target_monster.name}",
@@ -736,24 +743,34 @@ class GameEngine:
         treasure_type = event_data.get("treasure_type", "gold")
         value = event_data.get("value", 100)
 
+        result_message = ""
+
         if treasure_type == "gold":
             # 添加金币逻辑（这里简化处理）
-            return f"发现了 {value} 金币！"
+            result_message = f"发现了 {value} 金币！"
         elif treasure_type == "item":
             # 生成随机物品
             items = await content_generator.generate_random_items(1, game_state.player.stats.level)
             if items:
                 game_state.player.inventory.extend(items)
-                return f"发现了 {items[0].name}！"
+                result_message = f"发现了 {items[0].name}！"
         elif treasure_type == "magic_item":
             # 生成魔法物品
             items = await content_generator.generate_random_items(1, game_state.player.stats.level)
             if items:
                 items[0].rarity = "rare"  # 设为稀有
                 game_state.player.inventory.extend(items)
-                return f"发现了稀有物品 {items[0].name}！"
+                result_message = f"发现了稀有物品 {items[0].name}！"
+        else:
+            result_message = "发现了一些有价值的东西！"
 
-        return "发现了一些有价值的东西！"
+        # 触发宝藏发现进度事件
+        await self._trigger_progress_event(
+            game_state, ProgressEventType.TREASURE_FOUND,
+            {"treasure_type": treasure_type, "value": value}
+        )
+
+        return result_message
 
     async def _handle_story_event(self, game_state: GameState, tile: MapTile) -> str:
         """处理故事事件"""
@@ -772,10 +789,18 @@ class GameEngine:
 
         try:
             story_text = await llm_service.generate_text(prompt)
-            return story_text or "你发现了一些古老的痕迹..."
+            result_message = story_text or "你发现了一些古老的痕迹..."
         except Exception as e:
             logger.error(f"Error generating story event: {e}")
-            return "你发现了一些古老的痕迹..."
+            result_message = "你发现了一些古老的痕迹..."
+
+        # 触发故事事件进度
+        await self._trigger_progress_event(
+            game_state, ProgressEventType.STORY_EVENT,
+            {"story_type": story_type, "location": (tile.x, tile.y)}
+        )
+
+        return result_message
 
     async def _handle_trap_event(self, game_state: GameState, tile: MapTile) -> str:
         """处理陷阱事件"""
@@ -892,8 +917,10 @@ class GameEngine:
                 tile.character_id = monster.id
             game_state.monsters.append(monster)
 
-        # 更新任务进度
-        await self._update_quest_progress(game_state, "map_transition", new_depth)
+        # 使用新的进程管理器更新任务进度
+        await self._trigger_progress_event(
+            game_state, ProgressEventType.MAP_TRANSITION, new_depth
+        )
 
         return f"进入了{new_map.name}"
 
@@ -925,91 +952,51 @@ class GameEngine:
                 tile.is_explored = True
                 tile.is_visible = True
 
-        # 更新任务进度
-        await self._update_quest_progress(game_state, "map_transition", new_depth)
+        # 使用新的进程管理器更新任务进度
+        await self._trigger_progress_event(
+            game_state, ProgressEventType.MAP_TRANSITION, new_depth
+        )
 
         return f"返回到了{new_map.name}"
 
-    async def _update_quest_progress(self, game_state: GameState, event_type: str, context: Any = None):
-        """更新任务进度"""
-        if not game_state.quests:
-            return
-
-        active_quest = None
-        for quest in game_state.quests:
-            if quest.is_active and not quest.is_completed:
-                active_quest = quest
-                break
-
-        if not active_quest:
-            return
-
-        # 计算基于系数的进度增量
-        progress_increment = 0.0
-        if event_type == "map_transition" and context:
-            # 根据配置的进度系数计算进度
-            current_depth = context
-            progress_increment = (current_depth / config.game.max_quest_floors) * 100.0
-            # 确保不超过100%
-            new_progress = min(100.0, progress_increment)
-        else:
-            # 其他事件类型的小幅进度增加
-            progress_increment = 5.0
-            new_progress = min(100.0, active_quest.progress_percentage + progress_increment)
-
-        # 使用LLM更新任务进度和故事内容
-        prompt = f"""
-        当前任务状态：
-        - 标题：{active_quest.title}
-        - 描述：{active_quest.description}
-        - 当前进度：{active_quest.progress_percentage}%
-        - 计算的新进度：{new_progress}%
-        - 故事背景：{active_quest.story_context}
-
-        事件类型：{event_type}
-        事件上下文：{context}
-        玩家等级：{game_state.player.stats.level}
-        当前地图深度：{game_state.current_map.depth}
-
-        进度控制说明：
-        - 进度百分比已根据系数计算为 {new_progress}%
-        - 最大楼层数：{config.game.max_quest_floors}
-        - 当前楼层：{context if event_type == "map_transition" else game_state.current_map.depth}
-
-        请更新任务内容，返回JSON格式：
-        {{
-            "story_context": "更新的故事背景，反映当前进度",
-            "llm_notes": "LLM的内部笔记，用于控制节奏",
-            "should_complete": 是否应该完成任务(true/false，当进度达到100%时),
-            "new_objectives": ["如果需要，更新的目标列表"]
-        }}
-
-        注意：进度百分比由系统控制，你只需要更新故事内容。当进度达到100%时，任务应该完成。
-        """
-
+    async def _trigger_progress_event(self, game_state: GameState, event_type: ProgressEventType, context_data: Any = None):
+        """触发进度事件"""
         try:
-            result = await llm_service._async_generate_json(prompt)
-            if result:
-                # 使用计算的进度值，而不是LLM返回的
-                active_quest.progress_percentage = new_progress
-                active_quest.story_context = result.get("story_context", active_quest.story_context)
-                active_quest.llm_notes = result.get("llm_notes", active_quest.llm_notes)
+            # 创建进度上下文
+            progress_context = ProgressContext(
+                event_type=event_type,
+                game_state=game_state,
+                context_data=context_data
+            )
 
-                # 检查是否应该完成任务
-                if new_progress >= 100.0 or result.get("should_complete", False):
-                    active_quest.is_completed = True
-                    active_quest.is_active = False
-                    active_quest.progress_percentage = 100.0
-                    # 给予经验奖励
-                    game_state.player.stats.experience += active_quest.experience_reward
-                    game_state.pending_events.append(f"任务完成：{active_quest.title}！获得 {active_quest.experience_reward} 经验值！")
+            # 使用进程管理器处理事件
+            result = await progress_manager.process_event(progress_context)
 
-                if result.get("new_objectives"):
-                    active_quest.objectives = result["new_objectives"]
-                    active_quest.completed_objectives = [False] * len(active_quest.objectives)
+            if result.get("success"):
+                logger.info(f"Progress event processed: {event_type.value}, increment: {result.get('progress_increment', 0):.1f}%")
+
+                # 如果有叙述更新，添加到待显示事件
+                if result.get("story_update"):
+                    game_state.pending_events.append(result["story_update"])
+            else:
+                logger.warning(f"Failed to process progress event: {result.get('message', 'Unknown error')}")
 
         except Exception as e:
-            logger.error(f"Failed to update quest progress: {e}")
+            logger.error(f"Error triggering progress event {event_type.value}: {e}")
+
+    async def _update_quest_progress(self, game_state: GameState, event_type: str, context: Any = None):
+        """更新任务进度 - 保留兼容性的包装方法"""
+        # 将旧的事件类型映射到新的枚举
+        event_mapping = {
+            "map_transition": ProgressEventType.MAP_TRANSITION,
+            "combat_victory": ProgressEventType.COMBAT_VICTORY,
+            "treasure_found": ProgressEventType.TREASURE_FOUND,
+            "story_event": ProgressEventType.STORY_EVENT,
+            "exploration": ProgressEventType.EXPLORATION
+        }
+
+        progress_event_type = event_mapping.get(event_type, ProgressEventType.CUSTOM_EVENT)
+        await self._trigger_progress_event(game_state, progress_event_type, context)
 
     async def _process_monster_turns(self, game_state: GameState) -> bool:
         """处理怪物回合，返回是否有怪物事件发生"""

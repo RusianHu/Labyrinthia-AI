@@ -1100,7 +1100,7 @@ class LabyrinthiaGame {
         }
 
         this.setLoading(true);
-        this.showFullscreenOverlay('创建新游戏', '正在为您生成独特的冒险世界...', '初始化AI系统...');
+        this.showFullscreenOverlay('创建新游戏', '正在为您生成独特的冒险世界（一般等15s即可）...', '初始化AI系统...');
 
         try {
             this.updateOverlayProgress(15, '创建角色档案...');

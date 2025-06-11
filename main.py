@@ -19,6 +19,7 @@ from config import config
 from game_engine import game_engine
 from data_manager import data_manager
 from llm_service import llm_service
+from progress_manager import progress_manager
 
 
 # 配置日志
@@ -73,7 +74,7 @@ async def lifespan(app: FastAPI):
 # 创建FastAPI应用
 app = FastAPI(
     title="Labyrinthia AI",
-    description="AI驱动的DnD风格地牢冒险游戏",
+    description="老司机地牢",
     version="1.0.0",
     lifespan=lifespan
 )
@@ -296,6 +297,55 @@ async def transition_map(game_id: str, transition_data: Dict[str, Any]):
         raise HTTPException(status_code=500, detail=f"地图切换失败: {str(e)}")
 
 
+@app.get("/api/game/{game_id}/progress")
+async def get_progress_summary(game_id: str):
+    """获取游戏进度摘要"""
+    try:
+        if game_id not in game_engine.active_games:
+            raise HTTPException(status_code=404, detail="游戏未找到")
+
+        game_state = game_engine.active_games[game_id]
+        summary = progress_manager.get_progress_summary(game_state)
+
+        return {
+            "success": True,
+            "progress_summary": summary
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get progress summary: {e}")
+        raise HTTPException(status_code=500, detail=f"获取进度摘要失败: {str(e)}")
+
+
+@app.get("/api/progress/history")
+async def get_progress_history(limit: int = 10):
+    """获取进度历史记录"""
+    try:
+        history = progress_manager.progress_history[-limit:] if limit > 0 else progress_manager.progress_history
+
+        # 转换为可序列化的格式
+        serialized_history = []
+        for event in history:
+            serialized_history.append({
+                "event_type": event.event_type.value,
+                "timestamp": event.timestamp.isoformat(),
+                "context_data": event.context_data,
+                "metadata": event.metadata
+            })
+
+        return {
+            "success": True,
+            "history": serialized_history,
+            "total_events": len(progress_manager.progress_history)
+        }
+
+    except Exception as e:
+        logger.error(f"Failed to get progress history: {e}")
+        raise HTTPException(status_code=500, detail=f"获取进度历史失败: {str(e)}")
+
+
 @app.get("/api/health")
 async def health_check():
     """健康检查"""
@@ -303,7 +353,8 @@ async def health_check():
         "status": "healthy",
         "active_games": len(game_engine.active_games),
         "llm_provider": config.llm.provider.value,
-        "version": config.game.version
+        "version": config.game.version,
+        "progress_events_count": len(progress_manager.progress_history)
     }
 
 
