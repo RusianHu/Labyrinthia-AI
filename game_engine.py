@@ -247,7 +247,13 @@ class GameEngine:
         # 普通移动且没有事件发生时不生成叙述
         if action == "move":
             events = result.get("events", [])
-            # 只有当移动触发了事件时才生成叙述
+            # 检查是否只是楼梯提示事件（不需要LLM交互）
+            if len(events) == 1:
+                event_text = events[0]
+                # 楼梯事件只是提示，不需要LLM交互
+                if ("楼梯" in event_text and ("下一层" in event_text or "上一层" in event_text)):
+                    return False
+            # 只有当移动触发了真正需要LLM处理的事件时才生成叙述
             return len(events) > 0
 
         # 其他行动都生成叙述

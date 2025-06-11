@@ -228,8 +228,11 @@ class LabyrinthiaGame {
             if (result.success) {
                 // 检查后端是否指示需要LLM遮罩（用于怪物攻击等情况）
                 const backendNeedsLLMOverlay = result.llm_interaction_required;
+                let showedBackendOverlay = false;
+
                 if (backendNeedsLLMOverlay && !needsLLMOverlay) {
                     this.showLLMOverlay('处理中');
+                    showedBackendOverlay = true;
                 }
 
                 // 更新游戏状态
@@ -257,8 +260,8 @@ class LabyrinthiaGame {
                     this.handleGameOver(result.game_over_reason);
                 }
 
-                // 如果后端指示需要LLM遮罩，也要隐藏它
-                if (backendNeedsLLMOverlay && !needsLLMOverlay) {
+                // 如果显示了后端指示的LLM遮罩，现在隐藏它
+                if (showedBackendOverlay) {
                     this.hideLLMOverlay();
                 }
             } else {
