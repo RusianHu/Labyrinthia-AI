@@ -19,6 +19,9 @@ from llm_service import llm_service
 from data_manager import data_manager
 from progress_manager import progress_manager, ProgressEventType, ProgressContext
 from item_effect_processor import item_effect_processor
+from llm_interaction_manager import (
+    llm_interaction_manager, InteractionType, InteractionContext
+)
 
 
 logger = logging.getLogger(__name__)
@@ -248,9 +251,20 @@ class GameEngine:
                 # 添加LLM交互标识到结果中
                 result["llm_interaction_required"] = llm_interaction_required
 
-                # 只有特殊行动或有事件发生时才生成叙述文本
+                # 使用LLM交互管理器生成上下文相关的叙述
                 if should_generate_narrative and not game_state.is_game_over:
-                    narrative = await llm_service.generate_narrative(game_state, action)
+                    # 创建交互上下文
+                    interaction_context = self._create_interaction_context(
+                        action, result, monster_events_occurred
+                    )
+
+                    # 添加上下文到管理器
+                    llm_interaction_manager.add_context(interaction_context)
+
+                    # 生成上下文相关的叙述
+                    narrative = await llm_interaction_manager.generate_contextual_narrative(
+                        game_state, interaction_context
+                    )
                     result["narrative"] = narrative
 
         except Exception as e:
@@ -258,6 +272,76 @@ class GameEngine:
             result = {"success": False, "message": f"处理行动时发生错误: {str(e)}"}
 
         return result
+
+    def _create_interaction_context(self, action: str, result: Dict[str, Any],
+                                  monster_events_occurred: bool) -> InteractionContext:
+        """创建LLM交互上下文"""
+        events = result.get("events", [])
+
+        # 根据行动类型确定交互类型
+        if action == "move":
+            interaction_type = InteractionType.MOVEMENT
+            movement_data = {
+                "new_position": result.get("new_position"),
+                "events_triggered": len(events) > 0
+            }
+            return InteractionContext(
+                interaction_type=interaction_type,
+                primary_action=f"移动到 {result.get('new_position', '未知位置')}",
+                events=events,
+                movement_data=movement_data
+            )
+
+        elif action == "attack":
+            interaction_type = InteractionType.COMBAT_ATTACK
+            combat_data = {
+                "type": "player_attack",
+                "damage": result.get("damage", 0),
+                "target": result.get("message", "").replace("攻击了 ", ""),
+                "successful": result.get("success", False)
+            }
+            return InteractionContext(
+                interaction_type=interaction_type,
+                primary_action=result.get("message", "发动攻击"),
+                events=events,
+                combat_data=combat_data
+            )
+
+        elif action == "use_item":
+            interaction_type = InteractionType.ITEM_USE
+            item_data = {
+                "item_name": result.get("item_name", "未知物品"),
+                "effects": result.get("effects", []),
+                "consumed": result.get("item_consumed", False)
+            }
+            return InteractionContext(
+                interaction_type=interaction_type,
+                primary_action=result.get("message", "使用物品"),
+                events=events,
+                item_data=item_data
+            )
+
+        # 如果有怪物事件发生，创建防御上下文
+        elif monster_events_occurred:
+            interaction_type = InteractionType.COMBAT_DEFENSE
+            combat_data = {
+                "type": "monster_attack",
+                "events": events
+            }
+            return InteractionContext(
+                interaction_type=interaction_type,
+                primary_action="遭受攻击",
+                events=events,
+                combat_data=combat_data
+            )
+
+        else:
+            # 默认探索类型
+            return InteractionContext(
+                interaction_type=InteractionType.EXPLORATION,
+                primary_action=result.get("message", action),
+                events=events
+            )
 
     def _should_generate_narrative(self, action: str, result: Dict[str, Any]) -> bool:
         """判断是否应该生成叙述文本"""
@@ -1236,6 +1320,7 @@ class GameEngine:
     async def _process_monster_turns(self, game_state: GameState) -> bool:
         """处理怪物回合，返回是否有怪物事件发生"""
         combat_events = []
+        combat_data_list = []
 
         for monster in game_state.monsters[:]:  # 使用切片避免修改列表时的问题
             if not monster.stats.is_alive():
@@ -1255,6 +1340,17 @@ class GameEngine:
                 combat_events.append(f"{monster.name} 攻击了你，造成 {damage} 点伤害！")
                 logger.info(f"{monster.name} 攻击玩家造成 {damage} 点伤害")
 
+                # 记录战斗数据用于LLM上下文
+                combat_data_list.append({
+                    "type": "monster_attack",
+                    "attacker": monster.name,
+                    "damage": damage,
+                    "player_hp_remaining": game_state.player.stats.hp,
+                    "player_hp_max": game_state.player.stats.max_hp,
+                    "monster_position": monster.position,
+                    "distance": distance
+                })
+
                 # 检查玩家是否死亡
                 if game_state.player.stats.hp <= 0:
                     combat_events.append("你被击败了！游戏结束！")
@@ -1271,6 +1367,21 @@ class GameEngine:
             if not hasattr(game_state, 'pending_events'):
                 game_state.pending_events = []
             game_state.pending_events.extend(combat_events)
+
+            # 如果有战斗事件，创建防御交互上下文并添加到LLM管理器
+            if combat_data_list:
+                defense_context = InteractionContext(
+                    interaction_type=InteractionType.COMBAT_DEFENSE,
+                    primary_action="遭受怪物攻击",
+                    events=combat_events,
+                    combat_data={
+                        "type": "monster_attacks",
+                        "attacks": combat_data_list,
+                        "total_damage": sum(data["damage"] for data in combat_data_list),
+                        "attackers": [data["attacker"] for data in combat_data_list]
+                    }
+                )
+                llm_interaction_manager.add_context(defense_context)
 
         # 返回是否有怪物事件发生（主要是攻击事件）
         return len(combat_events) > 0

@@ -100,6 +100,22 @@ async def index(request: Request):
     return templates.TemplateResponse("index.html", {"request": request})
 
 
+@app.get("/test-effects", response_class=HTMLResponse)
+async def test_effects(request: Request):
+    """特效测试页面"""
+    with open("test_effects.html", "r", encoding="utf-8") as f:
+        content = f.read()
+    return HTMLResponse(content=content)
+
+
+@app.get("/test-progress", response_class=HTMLResponse)
+async def test_progress(request: Request):
+    """进度条测试页面"""
+    with open("test_progress_bar.html", "r", encoding="utf-8") as f:
+        content = f.read()
+    return HTMLResponse(content=content)
+
+
 @app.post("/api/new-game")
 async def create_new_game(request: NewGameRequest):
     """创建新游戏"""
@@ -210,23 +226,7 @@ async def list_saves():
         raise HTTPException(status_code=500, detail=f"获取存档列表失败: {str(e)}")
 
 
-@app.get("/api/config")
-async def get_config():
-    """获取游戏配置"""
-    try:
-        return {
-            "game_name": config.game.game_name,
-            "version": config.game.version,
-            "debug_mode": config.game.debug_mode,
-            "show_quest_progress": config.game.show_quest_progress,
-            "quest_progress_multiplier": config.game.quest_progress_multiplier,
-            "max_quest_floors": config.game.max_quest_floors,
-            "max_player_level": config.game.max_player_level,
-            "default_map_size": config.game.default_map_size
-        }
-    except Exception as e:
-        logger.error(f"Error getting config: {e}")
-        raise HTTPException(status_code=500, detail="获取配置失败")
+
 
 
 @app.delete("/api/save/{save_id}")
@@ -247,19 +247,52 @@ async def delete_save(save_id: str):
         raise HTTPException(status_code=500, detail=f"删除存档失败: {str(e)}")
 
 
+@app.get("/api/config")
+async def get_config():
+    """获取游戏配置"""
+    try:
+        return {
+            "success": True,
+            "config": {
+                "game": {
+                    "debug_mode": config.game.debug_mode,
+                    "show_llm_debug": config.game.show_llm_debug,
+                    "show_quest_progress": config.game.show_quest_progress,
+                    "version": config.game.version,
+                    "game_name": config.game.game_name,
+                    "quest_progress_multiplier": config.game.quest_progress_multiplier,
+                    "max_quest_floors": config.game.max_quest_floors
+                },
+                "llm": {
+                    "provider": config.llm.provider.value,
+                    "model_name": config.llm.model_name,
+                    "temperature": config.llm.temperature,
+                    "max_output_tokens": config.llm.max_output_tokens
+                },
+                "web": {
+                    "host": config.web.host,
+                    "port": config.web.port
+                }
+            }
+        }
+    except Exception as e:
+        logger.error(f"Failed to get config: {e}")
+        raise HTTPException(status_code=500, detail=f"获取配置失败: {str(e)}")
+
+
 @app.post("/api/config")
 async def update_config(updates: Dict[str, Any]):
     """更新游戏配置（仅调试模式）"""
     if not config.game.debug_mode:
         raise HTTPException(status_code=403, detail="仅在调试模式下可用")
-    
+
     try:
         for section, values in updates.items():
             if hasattr(config, section):
                 config.update_config(section, **values)
-        
+
         return {"success": True, "message": "配置已更新"}
-        
+
     except Exception as e:
         logger.error(f"Failed to update config: {e}")
         raise HTTPException(status_code=500, detail=f"更新配置失败: {str(e)}")

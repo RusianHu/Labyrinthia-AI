@@ -8,6 +8,7 @@ import asyncio
 import logging
 from typing import List, Dict, Optional, Tuple, Any
 from dataclasses import asdict
+from enum import Enum
 
 from config import config
 from data_models import (
@@ -18,6 +19,77 @@ from llm_service import llm_service
 
 
 logger = logging.getLogger(__name__)
+
+
+class LLMInteractionType(Enum):
+    """LLM交互类型"""
+    MOVEMENT = "movement"
+    COMBAT_ATTACK = "combat_attack"
+    COMBAT_DEFENSE = "combat_defense"
+    ITEM_USE = "item_use"
+    EVENT_TRIGGER = "event_trigger"
+    MAP_TRANSITION = "map_transition"
+    QUEST_PROGRESS = "quest_progress"
+    EXPLORATION = "exploration"
+
+
+class GameContext:
+    """游戏上下文信息类"""
+
+    def __init__(self):
+        self.recent_events: List[str] = []
+        self.combat_events: List[str] = []
+        self.movement_history: List[Tuple[int, int]] = []
+        self.triggered_events: List[Dict[str, Any]] = []
+        self.item_interactions: List[Dict[str, Any]] = []
+        self.quest_updates: List[Dict[str, Any]] = []
+
+    def add_event(self, event: str, event_type: str = "general"):
+        """添加事件到上下文"""
+        self.recent_events.append(f"[{event_type}] {event}")
+
+        # 根据事件类型分类存储
+        if event_type == "combat":
+            self.combat_events.append(event)
+        elif event_type == "item":
+            self.item_interactions.append({"event": event, "timestamp": len(self.recent_events)})
+        elif event_type == "quest":
+            self.quest_updates.append({"event": event, "timestamp": len(self.recent_events)})
+
+        # 保持事件列表不过长
+        if len(self.recent_events) > 20:
+            self.recent_events = self.recent_events[-15:]
+
+    def add_movement(self, position: Tuple[int, int]):
+        """添加移动历史"""
+        self.movement_history.append(position)
+        if len(self.movement_history) > 10:
+            self.movement_history = self.movement_history[-8:]
+
+    def get_context_summary(self) -> str:
+        """获取上下文摘要"""
+        summary_parts = []
+
+        if self.recent_events:
+            recent = self.recent_events[-5:]  # 最近5个事件
+            summary_parts.append(f"最近事件: {'; '.join(recent)}")
+
+        if self.combat_events:
+            recent_combat = self.combat_events[-3:]  # 最近3个战斗事件
+            summary_parts.append(f"战斗情况: {'; '.join(recent_combat)}")
+
+        if self.movement_history:
+            recent_moves = self.movement_history[-3:]  # 最近3次移动
+            summary_parts.append(f"移动轨迹: {' -> '.join([f'({x},{y})' for x, y in recent_moves])}")
+
+        return " | ".join(summary_parts) if summary_parts else "无特殊事件"
+
+    def clear_old_events(self):
+        """清理旧事件"""
+        # 保留最近的重要事件
+        self.recent_events = self.recent_events[-10:]
+        self.combat_events = self.combat_events[-5:]
+        self.movement_history = self.movement_history[-5:]
 
 
 class ContentGenerator:

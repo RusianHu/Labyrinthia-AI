@@ -40,17 +40,11 @@ class LabyrinthiaGame {
     async checkDebugMode() {
         try {
             const response = await fetch('/api/config');
-            const config = await response.json();
+            const result = await response.json();
+            const config = result.config || result; // 兼容新旧格式
             this.debugMode = config.game?.show_llm_debug || false;
 
-            const debugFab = document.getElementById('debug-fab');
-            if (debugFab) {
-                if (this.debugMode) {
-                    debugFab.classList.remove('hidden');
-                } else {
-                    debugFab.classList.add('hidden');
-                }
-            }
+            this.updateDebugFabVisibility();
         } catch (error) {
             console.error('Failed to check debug mode:', error);
         }
@@ -313,10 +307,31 @@ class LabyrinthiaGame {
     async loadConfig() {
         try {
             const response = await fetch('/api/config');
-            this.config = await response.json();
+            const result = await response.json();
+            this.config = result.config || result; // 兼容新旧格式
+
+            // 更新调试模式状态
+            this.debugMode = this.config.game?.show_llm_debug || false;
+            this.updateDebugFabVisibility();
         } catch (error) {
             console.error('Failed to load config:', error);
-            this.config = { debug_mode: false }; // 默认配置
+            this.config = {
+                game: {
+                    debug_mode: false,
+                    show_llm_debug: false
+                }
+            }; // 默认配置
+        }
+    }
+
+    updateDebugFabVisibility() {
+        const debugFab = document.getElementById('debug-fab');
+        if (debugFab) {
+            if (this.debugMode) {
+                debugFab.classList.remove('hidden');
+            } else {
+                debugFab.classList.add('hidden');
+            }
         }
     }
     
@@ -328,10 +343,105 @@ class LabyrinthiaGame {
         this.updateInventory();
         this.updateQuests();
         this.updateControlPanel();
+        this.processPendingEffects();
     }
 
     renderGame() {
         this.updateUI();
+    }
+
+    processPendingEffects() {
+        if (!this.gameState || !this.gameState.pending_effects) return;
+
+        // 处理所有待显示的特效
+        this.gameState.pending_effects.forEach(effect => {
+            this.triggerEffect(effect);
+        });
+
+        // 清空已处理的特效
+        this.gameState.pending_effects = [];
+    }
+
+    triggerEffect(effect) {
+        switch (effect.type) {
+            case 'quest_completion':
+                this.showQuestCompletionEffect(effect);
+                break;
+            default:
+                console.log('Unknown effect type:', effect.type);
+        }
+    }
+
+    showQuestCompletionEffect(effect) {
+        // 创建任务完成特效容器
+        const effectContainer = document.createElement('div');
+        effectContainer.className = 'quest-completion-effect';
+        effectContainer.innerHTML = `
+            <div class="quest-completion-content">
+                <div class="quest-completion-icon">🎉</div>
+                <div class="quest-completion-title">任务完成！</div>
+                <div class="quest-completion-quest-name">${effect.quest_title}</div>
+                <div class="quest-completion-reward">获得 ${effect.experience_reward} 经验值</div>
+                <div class="quest-completion-particles">
+                    <div class="particle"></div>
+                    <div class="particle"></div>
+                    <div class="particle"></div>
+                    <div class="particle"></div>
+                    <div class="particle"></div>
+                    <div class="particle"></div>
+                    <div class="particle"></div>
+                    <div class="particle"></div>
+                </div>
+            </div>
+        `;
+
+        // 添加到页面
+        document.body.appendChild(effectContainer);
+
+        // 播放音效（如果有的话）
+        this.playQuestCompletionSound();
+
+        // 自动移除特效
+        setTimeout(() => {
+            effectContainer.classList.add('fade-out');
+            setTimeout(() => {
+                if (effectContainer.parentNode) {
+                    effectContainer.parentNode.removeChild(effectContainer);
+                }
+            }, 1000);
+        }, 4000);
+
+        // 添加消息到日志
+        this.addMessage(effect.message, 'success');
+    }
+
+    playQuestCompletionSound() {
+        // 可以在这里添加音效播放逻辑
+        // 例如使用 Web Audio API 或者 HTML5 Audio
+        try {
+            // 创建一个简单的成功音效
+            if (typeof AudioContext !== 'undefined') {
+                const audioContext = new AudioContext();
+                const oscillator = audioContext.createOscillator();
+                const gainNode = audioContext.createGain();
+
+                oscillator.connect(gainNode);
+                gainNode.connect(audioContext.destination);
+
+                oscillator.frequency.setValueAtTime(523.25, audioContext.currentTime); // C5
+                oscillator.frequency.setValueAtTime(659.25, audioContext.currentTime + 0.1); // E5
+                oscillator.frequency.setValueAtTime(783.99, audioContext.currentTime + 0.2); // G5
+
+                gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.5);
+
+                oscillator.start(audioContext.currentTime);
+                oscillator.stop(audioContext.currentTime + 0.5);
+            }
+        } catch (error) {
+            // 音效播放失败时静默处理
+            console.log('Audio playback not supported or failed');
+        }
     }
     
     updateCharacterStats() {
@@ -507,7 +617,11 @@ class LabyrinthiaGame {
             `;
 
             // 根据配置显示进度百分比
-            if (this.config && this.config.show_quest_progress && quest.progress_percentage !== undefined) {
+            const showProgress = this.config &&
+                                (this.config.show_quest_progress ||
+                                 (this.config.game && this.config.game.show_quest_progress));
+
+            if (showProgress && quest.progress_percentage !== undefined) {
                 questHTML += `
                     <div class="quest-progress">
                         <div class="progress-bar-small">

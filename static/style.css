@@ -908,6 +908,216 @@ body {
     to { transform: translateX(0); }
 }
 
+/* 任务完成特效 */
+.quest-completion-effect {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    background: radial-gradient(circle at center, rgba(94, 53, 177, 0.9), rgba(0, 0, 0, 0.8));
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 10000;
+    animation: questCompletionFadeIn 0.8s ease-out;
+}
+
+.quest-completion-effect.fade-out {
+    animation: questCompletionFadeOut 1s ease-in forwards;
+}
+
+.quest-completion-content {
+    text-align: center;
+    color: white;
+    position: relative;
+    animation: questCompletionBounce 1s ease-out;
+}
+
+.quest-completion-icon {
+    font-size: 6rem;
+    margin-bottom: 1rem;
+    animation: questCompletionIconSpin 2s ease-out;
+    text-shadow: 0 0 30px rgba(255, 255, 255, 0.8);
+}
+
+.quest-completion-title {
+    font-size: 3rem;
+    font-weight: bold;
+    margin-bottom: 1rem;
+    background: linear-gradient(45deg, #ffd700, #ffed4e, #ffd700);
+    background-size: 200% 200%;
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+    animation: questCompletionGoldShimmer 2s ease-in-out infinite;
+    text-shadow: 0 0 20px rgba(255, 215, 0, 0.5);
+}
+
+.quest-completion-quest-name {
+    font-size: 1.5rem;
+    margin-bottom: 1rem;
+    color: #e1bee7;
+    font-weight: 600;
+    text-shadow: 0 0 10px rgba(225, 190, 231, 0.5);
+}
+
+.quest-completion-reward {
+    font-size: 1.2rem;
+    color: #81c784;
+    font-weight: 500;
+    text-shadow: 0 0 10px rgba(129, 199, 132, 0.5);
+}
+
+/* 粒子效果 */
+.quest-completion-particles {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 400px;
+    height: 400px;
+    pointer-events: none;
+}
+
+.quest-completion-particles .particle {
+    position: absolute;
+    width: 8px;
+    height: 8px;
+    background: radial-gradient(circle, #ffd700, #ffed4e);
+    border-radius: 50%;
+    animation: questCompletionParticle 3s ease-out infinite;
+    box-shadow: 0 0 10px rgba(255, 215, 0, 0.8);
+}
+
+.quest-completion-particles .particle:nth-child(1) {
+    top: 10%;
+    left: 20%;
+    animation-delay: 0s;
+}
+
+.quest-completion-particles .particle:nth-child(2) {
+    top: 20%;
+    left: 80%;
+    animation-delay: 0.2s;
+}
+
+.quest-completion-particles .particle:nth-child(3) {
+    top: 80%;
+    left: 10%;
+    animation-delay: 0.4s;
+}
+
+.quest-completion-particles .particle:nth-child(4) {
+    top: 70%;
+    left: 90%;
+    animation-delay: 0.6s;
+}
+
+.quest-completion-particles .particle:nth-child(5) {
+    top: 50%;
+    left: 5%;
+    animation-delay: 0.8s;
+}
+
+.quest-completion-particles .particle:nth-child(6) {
+    top: 30%;
+    left: 95%;
+    animation-delay: 1s;
+}
+
+.quest-completion-particles .particle:nth-child(7) {
+    top: 90%;
+    left: 50%;
+    animation-delay: 1.2s;
+}
+
+.quest-completion-particles .particle:nth-child(8) {
+    top: 5%;
+    left: 50%;
+    animation-delay: 1.4s;
+}
+
+/* 动画关键帧 */
+@keyframes questCompletionFadeIn {
+    0% {
+        opacity: 0;
+        transform: scale(0.8);
+    }
+    100% {
+        opacity: 1;
+        transform: scale(1);
+    }
+}
+
+@keyframes questCompletionFadeOut {
+    0% {
+        opacity: 1;
+        transform: scale(1);
+    }
+    100% {
+        opacity: 0;
+        transform: scale(1.1);
+    }
+}
+
+@keyframes questCompletionBounce {
+    0% {
+        transform: scale(0.3) translateY(100px);
+        opacity: 0;
+    }
+    50% {
+        transform: scale(1.1) translateY(-20px);
+        opacity: 1;
+    }
+    100% {
+        transform: scale(1) translateY(0);
+        opacity: 1;
+    }
+}
+
+@keyframes questCompletionIconSpin {
+    0% {
+        transform: rotate(0deg) scale(0.5);
+        opacity: 0;
+    }
+    50% {
+        transform: rotate(180deg) scale(1.2);
+        opacity: 1;
+    }
+    100% {
+        transform: rotate(360deg) scale(1);
+        opacity: 1;
+    }
+}
+
+@keyframes questCompletionGoldShimmer {
+    0% {
+        background-position: 0% 50%;
+    }
+    50% {
+        background-position: 100% 50%;
+    }
+    100% {
+        background-position: 0% 50%;
+    }
+}
+
+@keyframes questCompletionParticle {
+    0% {
+        transform: translateY(0) scale(0);
+        opacity: 1;
+    }
+    50% {
+        transform: translateY(-100px) scale(1);
+        opacity: 1;
+    }
+    100% {
+        transform: translateY(-200px) scale(0);
+        opacity: 0;
+    }
+}
+
 /* FAB 浮动操作按钮 */
 .fab {
     position: fixed;

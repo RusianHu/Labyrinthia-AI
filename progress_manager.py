@@ -278,15 +278,34 @@ class ProgressManager:
         quest.is_completed = True
         quest.is_active = False
         quest.progress_percentage = 100.0
-        
+
         # 给予经验奖励
         game_state.player.stats.experience += quest.experience_reward
-        
-        # 添加完成事件
+
+        # 添加完成事件和特效标记
         completion_message = f"任务完成：{quest.title}！获得 {quest.experience_reward} 经验值！"
         game_state.pending_events.append(completion_message)
-        
+
+        # 添加任务完成特效标记
+        quest_completion_effect = {
+            "type": "quest_completion",
+            "quest_title": quest.title,
+            "experience_reward": quest.experience_reward,
+            "message": completion_message,
+            "timestamp": self._get_current_timestamp()
+        }
+
+        # 将特效信息添加到游戏状态中，供前端使用
+        if not hasattr(game_state, 'pending_effects'):
+            game_state.pending_effects = []
+        game_state.pending_effects.append(quest_completion_effect)
+
         logger.info(f"Quest completed: {quest.title}")
+
+    def _get_current_timestamp(self) -> str:
+        """获取当前时间戳"""
+        from datetime import datetime
+        return datetime.now().isoformat()
     
     async def _execute_event_handlers(self, context: ProgressContext):
         """执行事件处理器"""

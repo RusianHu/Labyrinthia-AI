@@ -399,6 +399,7 @@ class GameState:
     is_game_over: bool = False  # 游戏是否结束
     game_over_reason: str = ""  # 游戏结束原因
     pending_events: List[str] = field(default_factory=list)  # 待显示的事件
+    pending_effects: List[Dict[str, Any]] = field(default_factory=list)  # 待显示的特效
     created_at: datetime = field(default_factory=datetime.now)
     last_saved: datetime = field(default_factory=datetime.now)
     # 新增：地图切换控制
@@ -417,6 +418,7 @@ class GameState:
             "is_game_over": self.is_game_over,
             "game_over_reason": self.game_over_reason,
             "pending_events": self.pending_events,
+            "pending_effects": self.pending_effects,
             "created_at": self.created_at.isoformat(),
             "last_saved": self.last_saved.isoformat(),
             "pending_map_transition": self.pending_map_transition
