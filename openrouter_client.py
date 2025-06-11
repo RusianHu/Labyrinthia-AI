@@ -175,7 +175,13 @@ class OpenRouterClient:
         result = self._chat(messages, model=model, **params)
         content = result["choices"][0]["message"]["content"]
         try:
-            return json.loads(content)
+            parsed_json = json.loads(content)
+            if not isinstance(parsed_json, dict):
+                raise ChatError(
+                    f"Model did not return a JSON object (dict). Got {type(parsed_json).__name__} instead. "
+                    f"Raw response: {content}"
+                )
+            return parsed_json
         except json.JSONDecodeError as exc:
             raise ChatError(
                 "Model did not return valid JSON. Raw response: " + content
@@ -209,7 +215,13 @@ class OpenRouterClient:
         self._history.append(assistant_msg)
 
         try:
-            return json.loads(content)
+            parsed_json = json.loads(content)
+            if not isinstance(parsed_json, dict):
+                raise ChatError(
+                    f"Model did not return a JSON object (dict). Got {type(parsed_json).__name__} instead. "
+                    f"Raw response: {content}"
+                )
+            return parsed_json
         except json.JSONDecodeError as exc:
             raise ChatError(
                 "Model did not return valid JSON. Raw response: " + content
