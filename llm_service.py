@@ -10,6 +10,7 @@ from typing import Dict, List, Optional, Any, Union
 from concurrent.futures import ThreadPoolExecutor
 
 from gemini_api import GeminiAPI
+from openrouter_client import OpenRouterClient, ChatError
 from config import config, LLMProvider
 from data_models import Character, Monster, GameMap, Quest, GameState, Item
 
@@ -42,6 +43,14 @@ class LLMService:
                 default_timeout=config.llm.timeout,
                 proxies=proxies
             )
+        elif self.provider == LLMProvider.OPENROUTER:
+            self.client = OpenRouterClient(
+                api_key=config.llm.api_key,
+                base_url=config.llm.openrouter_base_url,
+                default_model=config.llm.model_name,
+                timeout=config.llm.timeout,
+                proxies=proxies
+            )
         else:
             raise NotImplementedError(f"LLM provider {self.provider} not implemented yet")
     
@@ -63,34 +72,50 @@ class LLMService:
                 # 合并用户提供的配置
                 generation_config.update(kwargs.get("generation_config", {}))
                 
-                response = self.client.single_turn(
-                    model=config.llm.model_name,
-                    text=prompt,
-                    generation_config=generation_config
-                )
+                # 根据提供商调用不同的客户端
+                if self.provider == LLMProvider.GEMINI:
+                    response = self.client.single_turn(
+                        model=config.llm.model_name,
+                        text=prompt,
+                        generation_config=generation_config
+                    )
+                    
+                    # 提取生成的文本
+                    if response.get("candidates") and response["candidates"][0].get("content"):
+                        parts = response["candidates"][0]["content"].get("parts", [])
+                        if parts and parts[0].get("text"):
+                            return parts[0]["text"]
+
+                    # 检查是否因为其他原因（如MAX_TOKENS）导致没有文本内容
+                    if response.get("candidates"):
+                        candidate = response["candidates"][0]
+                        finish_reason = candidate.get("finishReason", "")
+                        if finish_reason in ["MAX_TOKENS", "STOP"]:
+                            logger.warning(f"LLM response finished with reason: {finish_reason}")
+                            # 尝试从content中获取任何可用文本
+                            content = candidate.get("content", {})
+                            if content.get("parts"):
+                                for part in content["parts"]:
+                                    if part.get("text"):
+                                        return part["text"]
+
+                    logger.warning("LLM response format unexpected")
+                    return ""
                 
-                # 提取生成的文本
-                if response.get("candidates") and response["candidates"][0].get("content"):
-                    parts = response["candidates"][0]["content"].get("parts", [])
-                    if parts and parts[0].get("text"):
-                        return parts[0]["text"]
+                elif self.provider == LLMProvider.OPENROUTER:
+                    # OpenRouter API使用 `max_tokens` 而不是 `max_output_tokens`
+                    if "max_output_tokens" in generation_config:
+                        generation_config["max_tokens"] = generation_config.pop("max_output_tokens")
+                    
+                    return self.client.chat_once(
+                        prompt=prompt,
+                        model=config.llm.model_name,
+                        **generation_config
+                    )
 
-                # 检查是否因为其他原因（如MAX_TOKENS）导致没有文本内容
-                if response.get("candidates"):
-                    candidate = response["candidates"][0]
-                    finish_reason = candidate.get("finishReason", "")
-                    if finish_reason in ["MAX_TOKENS", "STOP"]:
-                        logger.warning(f"LLM response finished with reason: {finish_reason}")
-                        # 尝试从content中获取任何可用文本
-                        content = candidate.get("content", {})
-                        if content.get("parts"):
-                            for part in content["parts"]:
-                                if part.get("text"):
-                                    return part["text"]
-
-                logger.warning("LLM response format unexpected")
+            except ChatError as e:
+                logger.error(f"LLM generation error (OpenRouter): {e}")
                 return ""
-                
             except Exception as e:
                 logger.error(f"LLM generation error: {e}")
                 return ""
@@ -115,26 +140,43 @@ class LLMService:
                 # 合并用户提供的配置
                 generation_config.update(kwargs.get("generation_config", {}))
                 
-                response = self.client.single_turn_json(
-                    model=config.llm.model_name,
-                    text=prompt,
-                    schema=schema,
-                    generation_config=generation_config
-                )
-                
-                # 提取生成的JSON
-                if response.get("candidates") and response["candidates"][0].get("content"):
-                    parts = response["candidates"][0]["content"].get("parts", [])
-                    if parts and parts[0].get("text"):
-                        try:
-                            return json.loads(parts[0]["text"])
-                        except json.JSONDecodeError as e:
-                            logger.error(f"Failed to parse JSON response: {e}")
-                            return {}
-                
-                logger.warning("LLM JSON response format unexpected")
+                # 根据提供商调用不同的客户端
+                if self.provider == LLMProvider.GEMINI:
+                    response = self.client.single_turn_json(
+                        model=config.llm.model_name,
+                        text=prompt,
+                        schema=schema,
+                        generation_config=generation_config
+                    )
+                    
+                    # 提取生成的JSON
+                    if response.get("candidates") and response["candidates"][0].get("content"):
+                        parts = response["candidates"][0]["content"].get("parts", [])
+                        if parts and parts[0].get("text"):
+                            try:
+                                return json.loads(parts[0]["text"])
+                            except json.JSONDecodeError as e:
+                                logger.error(f"Failed to parse JSON response: {e}")
+                                return {}
+                    
+                    logger.warning("LLM JSON response format unexpected")
+                    return {}
+
+                elif self.provider == LLMProvider.OPENROUTER:
+                    # OpenRouter API使用 `max_tokens` 而不是 `max_output_tokens`
+                    if "max_output_tokens" in generation_config:
+                        generation_config["max_tokens"] = generation_config.pop("max_output_tokens")
+
+                    return self.client.chat_json_once(
+                        prompt=prompt,
+                        model=config.llm.model_name,
+                        schema=schema,
+                        **generation_config
+                    )
+                    
+            except ChatError as e:
+                logger.error(f"LLM JSON generation error (OpenRouter): {e}")
                 return {}
-                
             except Exception as e:
                 logger.error(f"LLM JSON generation error: {e}")
                 return {}
