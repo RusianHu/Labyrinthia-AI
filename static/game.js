@@ -337,33 +337,39 @@ class LabyrinthiaGame {
     updateCharacterStats() {
         const player = this.gameState.player;
         const stats = player.stats;
-        
+
         // 更新基础信息
         document.getElementById('player-name').textContent = player.name;
         document.getElementById('player-level').textContent = stats.level;
         document.getElementById('player-class').textContent = player.character_class;
-        
+
         // 更新生命值
         document.getElementById('hp-current').textContent = stats.hp;
         document.getElementById('hp-max').textContent = stats.max_hp;
         const hpPercent = (stats.hp / stats.max_hp) * 100;
         document.getElementById('hp-bar').style.width = `${hpPercent}%`;
-        
+
         // 更新法力值
         document.getElementById('mp-current').textContent = stats.mp;
         document.getElementById('mp-max').textContent = stats.max_mp;
         const mpPercent = (stats.mp / stats.max_mp) * 100;
         document.getElementById('mp-bar').style.width = `${mpPercent}%`;
-        
+
         // 更新经验值
         const expNeeded = stats.level * 1000;
         const expPercent = (stats.experience / expNeeded) * 100;
         document.getElementById('exp-bar').style.width = `${expPercent}%`;
         document.getElementById('exp-text').textContent = `${stats.experience}/${expNeeded}`;
-        
+
         // 更新位置
-        document.getElementById('player-position').textContent = 
+        document.getElementById('player-position').textContent =
             `(${player.position[0]}, ${player.position[1]})`;
+
+        // 更新楼层信息
+        if (this.gameState.current_map) {
+            document.getElementById('player-floor').textContent = this.gameState.current_map.depth || 1;
+            document.getElementById('current-map-name').textContent = this.gameState.current_map.name || '未知区域';
+        }
     }
     
     updateMap() {

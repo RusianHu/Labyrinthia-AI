@@ -276,6 +276,56 @@ class GameMap:
 
 
 @dataclass
+class QuestEvent:
+    """任务专属事件"""
+    id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    event_type: str = ""  # combat, treasure, story, boss, etc.
+    name: str = ""
+    description: str = ""
+    trigger_condition: str = ""  # 触发条件描述
+    progress_value: float = 0.0  # 完成此事件获得的进度值
+    is_mandatory: bool = True  # 是否为必须完成的事件
+    location_hint: str = ""  # 位置提示（如"第2层的深处"）
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "id": self.id,
+            "event_type": self.event_type,
+            "name": self.name,
+            "description": self.description,
+            "trigger_condition": self.trigger_condition,
+            "progress_value": self.progress_value,
+            "is_mandatory": self.is_mandatory,
+            "location_hint": self.location_hint
+        }
+
+
+@dataclass
+class QuestMonster:
+    """任务专属怪物"""
+    id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    name: str = ""
+    description: str = ""
+    challenge_rating: float = 1.0
+    is_boss: bool = False
+    progress_value: float = 0.0  # 击败此怪物获得的进度值
+    spawn_condition: str = ""  # 生成条件描述
+    location_hint: str = ""  # 位置提示
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "id": self.id,
+            "name": self.name,
+            "description": self.description,
+            "challenge_rating": self.challenge_rating,
+            "is_boss": self.is_boss,
+            "progress_value": self.progress_value,
+            "spawn_condition": self.spawn_condition,
+            "location_hint": self.location_hint
+        }
+
+
+@dataclass
 class Quest:
     """任务"""
     id: str = field(default_factory=lambda: str(uuid.uuid4()))
@@ -291,6 +341,13 @@ class Quest:
     progress_percentage: float = 0.0  # 隐藏的进度百分比（0-100）
     story_context: str = ""  # 故事背景上下文
     llm_notes: str = ""  # LLM的内部笔记，用于控制节奏
+
+    # 任务专属内容
+    quest_type: str = "exploration"  # 任务类型：exploration, combat, story, rescue, etc.
+    target_floors: List[int] = field(default_factory=list)  # 目标楼层
+    map_themes: List[str] = field(default_factory=list)  # 地图主题建议
+    special_events: List[QuestEvent] = field(default_factory=list)  # 专属事件
+    special_monsters: List[QuestMonster] = field(default_factory=list)  # 专属怪物
     
     def complete_objective(self, index: int):
         """完成指定目标"""
@@ -312,7 +369,12 @@ class Quest:
             "is_active": self.is_active,
             "progress_percentage": self.progress_percentage,
             "story_context": self.story_context,
-            "llm_notes": self.llm_notes
+            "llm_notes": self.llm_notes,
+            "quest_type": self.quest_type,
+            "target_floors": self.target_floors,
+            "map_themes": self.map_themes,
+            "special_events": [event.to_dict() for event in self.special_events],
+            "special_monsters": [monster.to_dict() for monster in self.special_monsters]
         }
 
 
@@ -358,5 +420,5 @@ class GameState:
 __all__ = [
     "CharacterClass", "CreatureType", "DamageType", "TerrainType",
     "Ability", "Stats", "Item", "Spell", "Character", "Monster",
-    "MapTile", "GameMap", "Quest", "GameState"
+    "MapTile", "GameMap", "QuestEvent", "QuestMonster", "Quest", "GameState"
 ]

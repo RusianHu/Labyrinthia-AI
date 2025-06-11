@@ -26,23 +26,40 @@ class ContentGenerator:
     def __init__(self):
         self.cache = {}  # 简单的内存缓存
     
-    async def generate_dungeon_map(self, width: int = 20, height: int = 20, 
-                                 depth: int = 1, theme: str = "classic") -> GameMap:
+    async def generate_dungeon_map(self, width: int = 20, height: int = 20,
+                                 depth: int = 1, theme: str = "classic",
+                                 quest_context: Optional[Dict[str, Any]] = None) -> GameMap:
         """生成地下城地图"""
         game_map = GameMap()
         game_map.width = width
         game_map.height = height
         game_map.depth = depth
         
+        # 构建任务相关的提示信息
+        quest_info = ""
+        if quest_context:
+            quest_info = f"""
+
+        当前任务信息：
+        - 任务类型：{quest_context.get('quest_type', 'exploration')}
+        - 任务标题：{quest_context.get('title', '未知任务')}
+        - 目标楼层：{quest_context.get('target_floors', [depth])}
+        - 建议主题：{quest_context.get('map_themes', [theme])}
+        - 专属事件：{len(quest_context.get('special_events', []))}个
+        - 专属怪物：{len(quest_context.get('special_monsters', []))}个
+
+        请根据任务信息调整地图的名称和描述，使其与任务背景相符。
+        """
+
         # 使用LLM生成地图名称和描述
         map_prompt = f"""
         为一个{width}x{height}的地下城第{depth}层生成名称和描述。
-        主题：{theme}
-        
+        基础主题：{theme}{quest_info}
+
         请返回JSON格式：
         {{
-            "name": "地图名称",
-            "description": "地图描述"
+            "name": "地图名称（中文，体现主题和任务特色）",
+            "description": "地图描述（详细描述环境、氛围和可能的挑战）"
         }}
         """
         
@@ -57,11 +74,11 @@ class ContentGenerator:
             game_map.description = "一个神秘的地下城层"
         
         # 生成基础地图结构
-        await self._generate_map_layout(game_map)
-        
+        await self._generate_map_layout(game_map, quest_context)
+
         return game_map
     
-    async def _generate_map_layout(self, game_map: GameMap):
+    async def _generate_map_layout(self, game_map: GameMap, quest_context: Optional[Dict[str, Any]] = None):
         """生成地图布局"""
         # 初始化所有瓦片为墙壁
         for x in range(game_map.width):
@@ -83,7 +100,7 @@ class ContentGenerator:
         await self._place_special_terrain(game_map, rooms)
 
         # 生成地图事件
-        await self._generate_map_events(game_map, rooms)
+        await self._generate_map_events(game_map, rooms, quest_context)
     
     def _generate_rooms(self, width: int, height: int) -> List[Dict[str, int]]:
         """生成房间列表"""
@@ -304,17 +321,51 @@ class ContentGenerator:
         {{
             "quests": [
                 {{
-                    "title": "任务标题",
+                    "title": "任务标题（中文）",
                     "description": "任务描述（简短，适合2层地下城）",
                     "objectives": ["探索第一层", "进入第二层", "完成最终目标"],
                     "experience_reward": 500,
                     "story_context": "故事背景描述",
-                    "progress_percentage": 0
+                    "progress_percentage": 0,
+                    "quest_type": "exploration",
+                    "target_floors": [1, 2],
+                    "map_themes": ["地下城", "古老遗迹"],
+                    "special_events": [
+                        {{
+                            "event_type": "story",
+                            "name": "关键发现",
+                            "description": "发现任务相关的重要线索",
+                            "trigger_condition": "探索特定区域",
+                            "progress_value": 25.0,
+                            "is_mandatory": true,
+                            "location_hint": "第1层的深处"
+                        }},
+                        {{
+                            "event_type": "combat",
+                            "name": "守护者战斗",
+                            "description": "与任务目标的守护者战斗",
+                            "trigger_condition": "接近任务目标",
+                            "progress_value": 40.0,
+                            "is_mandatory": true,
+                            "location_hint": "第2层"
+                        }}
+                    ],
+                    "special_monsters": [
+                        {{
+                            "name": "任务守护者",
+                            "description": "保护任务目标的强大怪物",
+                            "challenge_rating": {player_level + 0.5},
+                            "is_boss": true,
+                            "progress_value": 30.0,
+                            "spawn_condition": "玩家接近任务目标时",
+                            "location_hint": "第2层的核心区域"
+                        }}
+                    ]
                 }}
             ]
         }}
 
-        开发阶段：任务应该在2个地图层内完成，目标简洁明确。
+        开发阶段：任务应该在2个地图层内完成，目标简洁明确。请确保专属事件和怪物与任务主题相符。
         """
         
         try:
@@ -330,6 +381,37 @@ class ContentGenerator:
                     quest.story_context = quest_data.get("story_context", "")
                     quest.progress_percentage = quest_data.get("progress_percentage", 0.0)
 
+                    # 新增：任务专属内容
+                    quest.quest_type = quest_data.get("quest_type", "exploration")
+                    quest.target_floors = quest_data.get("target_floors", [1, 2])
+                    quest.map_themes = quest_data.get("map_themes", ["地下城"])
+
+                    # 处理专属事件
+                    from data_models import QuestEvent
+                    for event_data in quest_data.get("special_events", []):
+                        event = QuestEvent()
+                        event.event_type = event_data.get("event_type", "story")
+                        event.name = event_data.get("name", "")
+                        event.description = event_data.get("description", "")
+                        event.trigger_condition = event_data.get("trigger_condition", "")
+                        event.progress_value = event_data.get("progress_value", 0.0)
+                        event.is_mandatory = event_data.get("is_mandatory", True)
+                        event.location_hint = event_data.get("location_hint", "")
+                        quest.special_events.append(event)
+
+                    # 处理专属怪物
+                    from data_models import QuestMonster
+                    for monster_data in quest_data.get("special_monsters", []):
+                        monster = QuestMonster()
+                        monster.name = monster_data.get("name", "")
+                        monster.description = monster_data.get("description", "")
+                        monster.challenge_rating = monster_data.get("challenge_rating", 1.0)
+                        monster.is_boss = monster_data.get("is_boss", False)
+                        monster.progress_value = monster_data.get("progress_value", 0.0)
+                        monster.spawn_condition = monster_data.get("spawn_condition", "")
+                        monster.location_hint = monster_data.get("location_hint", "")
+                        quest.special_monsters.append(monster)
+
                     # 第一个任务设为激活状态
                     if i == 0:
                         quest.is_active = True
@@ -337,7 +419,7 @@ class ContentGenerator:
                     quests.append(quest)
         except Exception as e:
             logger.error(f"Failed to generate quest chain: {e}")
-        
+
         return quests
     
     def get_spawn_positions(self, game_map: GameMap, count: int = 1) -> List[Tuple[int, int]]:
@@ -350,7 +432,7 @@ class ContentGenerator:
 
         return random.sample(floor_tiles, count)
 
-    async def _generate_map_events(self, game_map: GameMap, rooms: List[Dict[str, int]]):
+    async def _generate_map_events(self, game_map: GameMap, rooms: List[Dict[str, int]], quest_context: Optional[Dict[str, Any]] = None):
         """为地图生成事件"""
         floor_tiles = [(x, y) for (x, y), tile in game_map.tiles.items()
                       if tile.terrain == TerrainType.FLOOR and not tile.character_id]
@@ -358,25 +440,59 @@ class ContentGenerator:
         if not floor_tiles:
             return
 
-        # 计算事件数量（基于地图大小）
+        # 首先放置任务专属事件
+        quest_events_placed = 0
+        if quest_context and quest_context.get('special_events'):
+            special_events = quest_context['special_events']
+            current_depth = game_map.depth
+
+            # 筛选适合当前楼层的专属事件
+            suitable_events = [
+                event for event in special_events
+                if not event.get('location_hint') or str(current_depth) in event.get('location_hint', '')
+            ]
+
+            # 放置专属事件
+            for event_data in suitable_events[:min(len(suitable_events), len(floor_tiles) // 4)]:
+                if floor_tiles:
+                    x, y = random.choice(floor_tiles)
+                    floor_tiles.remove((x, y))
+
+                    tile = game_map.get_tile(x, y)
+                    if tile:
+                        tile.has_event = True
+                        tile.event_type = event_data.get('event_type', 'story')
+                        tile.is_event_hidden = True  # 任务事件通常隐藏
+                        tile.event_triggered = False
+                        tile.event_data = {
+                            'quest_event_id': event_data.get('id'),
+                            'name': event_data.get('name'),
+                            'description': event_data.get('description'),
+                            'progress_value': event_data.get('progress_value', 0.0),
+                            'is_mandatory': event_data.get('is_mandatory', True)
+                        }
+                        quest_events_placed += 1
+
+        # 计算普通事件数量（基于地图大小，减去已放置的任务事件）
         total_tiles = len(floor_tiles)
-        event_count = max(3, total_tiles // 20)  # 每20个地板瓦片至少1个事件
+        normal_event_count = max(2, total_tiles // 20) - quest_events_placed
 
-        # 随机选择事件位置
-        event_positions = random.sample(floor_tiles, min(event_count, len(floor_tiles)))
+        if normal_event_count > 0 and floor_tiles:
+            # 随机选择普通事件位置
+            event_positions = random.sample(floor_tiles, min(normal_event_count, len(floor_tiles)))
 
-        for x, y in event_positions:
-            tile = game_map.get_tile(x, y)
-            if tile:
-                # 随机选择事件类型
-                event_types = ["combat", "treasure", "story", "trap", "mystery"]
-                event_type = random.choice(event_types)
+            for x, y in event_positions:
+                tile = game_map.get_tile(x, y)
+                if tile:
+                    # 随机选择事件类型
+                    event_types = ["combat", "treasure", "story", "trap", "mystery"]
+                    event_type = random.choice(event_types)
 
-                # 设置事件属性
-                tile.has_event = True
-                tile.event_type = event_type
-                tile.is_event_hidden = random.choice([True, True, False])  # 2/3概率隐藏
-                tile.event_triggered = False
+                    # 设置事件属性
+                    tile.has_event = True
+                    tile.event_type = event_type
+                    tile.is_event_hidden = random.choice([True, True, False])  # 2/3概率隐藏
+                    tile.event_triggered = False
 
                 # 根据事件类型设置事件数据
                 if event_type == "combat":

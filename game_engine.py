@@ -38,12 +38,25 @@ class GameEngine:
         # 创建玩家角色
         game_state.player = await self._create_player_character(player_name, character_class)
         
-        # 生成初始地图
+        # 生成初始任务
+        initial_quests = await content_generator.generate_quest_chain(
+            game_state.player.stats.level, 1
+        )
+        game_state.quests.extend(initial_quests)
+
+        # 获取当前活跃任务的上下文
+        quest_context = None
+        active_quest = next((q for q in game_state.quests if q.is_active), None)
+        if active_quest:
+            quest_context = active_quest.to_dict()
+
+        # 生成初始地图（考虑任务上下文）
         game_state.current_map = await content_generator.generate_dungeon_map(
             width=config.game.default_map_size[0],
             height=config.game.default_map_size[1],
             depth=1,
-            theme="新手地下城"
+            theme="新手地下城",
+            quest_context=quest_context
         )
         
         # 设置玩家初始位置
@@ -74,11 +87,7 @@ class GameEngine:
                 tile.character_id = monster.id
             game_state.monsters.append(monster)
         
-        # 生成初始任务
-        initial_quests = await content_generator.generate_quest_chain(
-            game_state.player.stats.level, 1
-        )
-        game_state.quests.extend(initial_quests)
+
 
         # 生成开场叙述
         try:
@@ -818,28 +827,74 @@ class GameEngine:
         event_data = tile.event_data
         story_type = event_data.get("story_type", "discovery")
 
-        # 使用LLM生成故事内容
-        prompt = f"""
-        为玩家生成一个{story_type}类型的故事事件。
-        玩家当前位置：({tile.x}, {tile.y})
-        玩家等级：{game_state.player.stats.level}
-        地图：{game_state.current_map.name}
+        # 检查是否是任务专属事件
+        quest_event_id = event_data.get("quest_event_id")
+        is_quest_event = quest_event_id is not None
 
-        请生成一个简短但有趣的故事描述（50-100字）。
-        """
+        if is_quest_event:
+            # 处理任务专属事件
+            event_name = event_data.get("name", "任务事件")
+            event_description = event_data.get("description", "")
+            progress_value = event_data.get("progress_value", 0.0)
+            is_mandatory = event_data.get("is_mandatory", True)
 
-        try:
-            story_text = await llm_service.generate_text(prompt)
-            result_message = story_text or "你发现了一些古老的痕迹..."
-        except Exception as e:
-            logger.error(f"Error generating story event: {e}")
-            result_message = "你发现了一些古老的痕迹..."
+            # 使用更详细的提示生成任务相关的故事内容
+            prompt = f"""
+            为玩家生成一个任务相关的故事事件。
 
-        # 触发故事事件进度
-        await self._trigger_progress_event(
-            game_state, ProgressEventType.STORY_EVENT,
-            {"story_type": story_type, "location": (tile.x, tile.y)}
-        )
+            事件信息：
+            - 事件名称：{event_name}
+            - 事件描述：{event_description}
+            - 是否必须：{is_mandatory}
+
+            玩家当前位置：({tile.x}, {tile.y})
+            玩家等级：{game_state.player.stats.level}
+            地图：{game_state.current_map.name}
+
+            请生成一个与任务相关的生动故事描述（100-150字），体现事件的重要性。
+            """
+
+            try:
+                story_text = await llm_service.generate_text(prompt)
+                result_message = story_text or f"你发现了重要的线索：{event_name}"
+            except Exception as e:
+                logger.error(f"Error generating quest story event: {e}")
+                result_message = f"你发现了重要的线索：{event_name}"
+
+            # 触发任务专属事件进度（使用更高的进度值）
+            await self._trigger_progress_event(
+                game_state, ProgressEventType.STORY_EVENT,
+                {
+                    "story_type": "quest_event",
+                    "quest_event_id": quest_event_id,
+                    "progress_value": progress_value,
+                    "location": (tile.x, tile.y)
+                }
+            )
+
+        else:
+            # 处理普通故事事件
+            prompt = f"""
+            为玩家生成一个{story_type}类型的故事事件。
+            玩家当前位置：({tile.x}, {tile.y})
+            玩家等级：{game_state.player.stats.level}
+            地图：{game_state.current_map.name}
+
+            请生成一个简短但有趣的故事描述（50-100字）。
+            """
+
+            try:
+                story_text = await llm_service.generate_text(prompt)
+                result_message = story_text or "你发现了一些古老的痕迹..."
+            except Exception as e:
+                logger.error(f"Error generating story event: {e}")
+                result_message = "你发现了一些古老的痕迹..."
+
+            # 触发普通故事事件进度
+            await self._trigger_progress_event(
+                game_state, ProgressEventType.STORY_EVENT,
+                {"story_type": story_type, "location": (tile.x, tile.y)}
+            )
 
         return result_message
 
@@ -925,11 +980,18 @@ class GameEngine:
         if new_depth > 2:
             return "你已经到达了地下城的最深处！"
 
+        # 获取当前活跃任务的上下文
+        quest_context = None
+        active_quest = next((q for q in game_state.quests if q.is_active), None)
+        if active_quest:
+            quest_context = active_quest.to_dict()
+
         new_map = await content_generator.generate_dungeon_map(
             width=game_state.current_map.width,
             height=game_state.current_map.height,
             depth=new_depth,
-            theme=f"地下城第{new_depth}层"
+            theme=f"地下城第{new_depth}层",
+            quest_context=quest_context
         )
 
         # 更新游戏状态
@@ -972,13 +1034,20 @@ class GameEngine:
         if new_depth < 1:
             return "你已经回到了地面！"
 
+        # 获取当前活跃任务的上下文
+        quest_context = None
+        active_quest = next((q for q in game_state.quests if q.is_active), None)
+        if active_quest:
+            quest_context = active_quest.to_dict()
+
         # 这里可以实现返回上一层的逻辑
         # 简化实现：重新生成上一层
         new_map = await content_generator.generate_dungeon_map(
             width=game_state.current_map.width,
             height=game_state.current_map.height,
             depth=new_depth,
-            theme=f"地下城第{new_depth}层"
+            theme=f"地下城第{new_depth}层",
+            quest_context=quest_context
         )
 
         game_state.current_map = new_map
