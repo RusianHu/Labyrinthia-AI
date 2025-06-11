@@ -166,17 +166,18 @@ class DataManager:
         monster = Monster()
         
         # 复制Character的属性
-        character_data = {k: v for k, v in data.items() if k not in ["challenge_rating", "behavior", "loot_table"]}
+        character_data = {k: v for k, v in data.items() if k not in ["challenge_rating", "behavior", "loot_table", "attack_range"]}
         character = self._dict_to_character(character_data)
-        
-        for attr in ["id", "name", "description", "character_class", "creature_type", 
+
+        for attr in ["id", "name", "description", "character_class", "creature_type",
                      "abilities", "stats", "inventory", "spells", "position"]:
             setattr(monster, attr, getattr(character, attr))
-        
+
         # Monster特有属性
         monster.challenge_rating = data.get("challenge_rating", 1.0)
         monster.behavior = data.get("behavior", "aggressive")
         monster.loot_table = data.get("loot_table", [])
+        monster.attack_range = data.get("attack_range", 1)
         
         return monster
     

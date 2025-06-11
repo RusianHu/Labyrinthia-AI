@@ -204,6 +204,8 @@ class GameEngine:
                 result = await self._handle_attack(game_state, parameters)
             elif action == "use_item":
                 result = await self._handle_use_item(game_state, parameters)
+            elif action == "drop_item":
+                result = await self._handle_drop_item(game_state, parameters)
             elif action == "cast_spell":
                 result = await self._handle_cast_spell(game_state, parameters)
             elif action == "interact":
@@ -335,6 +337,8 @@ class GameEngine:
             events.append(await self._trigger_trap(game_state))
         elif target_tile.terrain == TerrainType.TREASURE:
             events.append(await self._find_treasure(game_state))
+            # 宝藏被发现后变为地板
+            target_tile.terrain = TerrainType.FLOOR
         elif target_tile.terrain == TerrainType.STAIRS_DOWN:
             # 不自动切换地图，而是设置待切换状态
             game_state.pending_map_transition = "stairs_down"
@@ -554,6 +558,57 @@ class GameEngine:
                 "success": False,
                 "message": f"使用{item.name}时发生错误",
                 "events": [f"物品使用失败: {str(e)}"]
+            }
+
+    async def _handle_drop_item(self, game_state: GameState, parameters: Dict[str, Any]) -> Dict[str, Any]:
+        """处理丢弃物品行动"""
+        item_id = parameters.get("item_id", "")
+
+        # 查找物品
+        item = None
+        for inv_item in game_state.player.inventory:
+            if inv_item.id == item_id:
+                item = inv_item
+                break
+
+        if not item:
+            return {"success": False, "message": "物品未找到"}
+
+        try:
+            # 从玩家背包中移除物品
+            game_state.player.inventory.remove(item)
+
+            # 将物品放置到当前位置的地图瓦片上
+            player_x, player_y = game_state.player.position
+            current_tile = game_state.current_map.get_tile(player_x, player_y)
+
+            if current_tile:
+                # 确保瓦片有items列表
+                if not hasattr(current_tile, 'items') or current_tile.items is None:
+                    current_tile.items = []
+
+                # 将物品添加到地图瓦片
+                current_tile.items.append(item)
+
+                return {
+                    "success": True,
+                    "message": f"丢弃了 {item.name}",
+                    "events": [f"你将 {item.name} 丢弃在了地上"]
+                }
+            else:
+                # 如果无法获取当前瓦片，直接移除物品
+                return {
+                    "success": True,
+                    "message": f"丢弃了 {item.name}",
+                    "events": [f"你丢弃了 {item.name}"]
+                }
+
+        except Exception as e:
+            logger.error(f"处理物品丢弃时出错: {e}")
+            return {
+                "success": False,
+                "message": f"丢弃{item.name}时发生错误",
+                "events": [f"物品丢弃失败: {str(e)}"]
             }
 
     async def _handle_cast_spell(self, game_state: GameState, parameters: Dict[str, Any]) -> Dict[str, Any]:
@@ -960,16 +1015,27 @@ class GameEngine:
 
     async def _find_treasure(self, game_state: GameState) -> str:
         """发现宝藏"""
-        treasure_items = await content_generator.generate_random_items(
-            count=random.randint(1, 2),
-            item_level=game_state.player.stats.level
-        )
+        # 使用LLM生成宝藏物品，与交互系统保持一致
+        pickup_context = f"玩家在{game_state.current_map.name}的宝藏箱中发现了物品"
+        treasure_item = await llm_service.generate_item_on_pickup(game_state, pickup_context)
 
-        for item in treasure_items:
-            game_state.player.inventory.append(item)
+        if treasure_item:
+            game_state.player.inventory.append(treasure_item)
+            # 返回详细的宝藏发现描述，包含物品名称和描述
+            return f"发现了宝藏：{treasure_item.name}！{treasure_item.description}"
+        else:
+            # 如果LLM生成失败，回退到原有逻辑
+            treasure_items = await content_generator.generate_random_items(
+                count=1,
+                item_level=game_state.player.stats.level
+            )
 
-        item_names = [item.name for item in treasure_items]
-        return f"发现了宝藏：{', '.join(item_names)}"
+            if treasure_items:
+                item = treasure_items[0]
+                game_state.player.inventory.append(item)
+                return f"发现了宝藏：{item.name}"
+            else:
+                return "发现了一个空的宝藏箱..."
 
     async def _descend_stairs(self, game_state: GameState) -> str:
         """下楼梯"""
@@ -1119,9 +1185,11 @@ class GameEngine:
             # 简单的AI：如果玩家在攻击范围内就攻击，否则移动靠近
             player_x, player_y = game_state.player.position
             monster_x, monster_y = monster.position
-            distance = abs(player_x - monster_x) + abs(monster_y - monster_y)
+            distance = max(abs(player_x - monster_x), abs(player_y - monster_y))  # 切比雪夫距离
 
-            if distance == 1:
+            # 检查怪物的攻击范围
+            monster_attack_range = getattr(monster, 'attack_range', 1)
+            if distance <= monster_attack_range:
                 # 攻击玩家
                 damage = self._calculate_damage(monster, game_state.player)
                 game_state.player.stats.hp -= damage

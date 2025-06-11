@@ -246,6 +246,16 @@ class LLMService:
 
             monster.challenge_rating = challenge_rating
             monster.behavior = "aggressive"  # 默认行为
+
+            # 根据挑战等级随机设置攻击范围，高等级怪物更可能有远程攻击
+            import random
+            if challenge_rating >= 2.0 and random.random() < 0.3:  # 30%概率远程攻击
+                monster.attack_range = random.randint(2, 4)
+            elif challenge_rating >= 1.0 and random.random() < 0.15:  # 15%概率远程攻击
+                monster.attack_range = random.randint(2, 3)
+            else:
+                monster.attack_range = 1  # 默认近战
+
             return monster
 
         return None

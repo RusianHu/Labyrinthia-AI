@@ -533,9 +533,9 @@ class LabyrinthiaGame {
         if (tileData.character_id && tileData.character_id !== player.id) {
             const monster = this.gameState.monsters.find(m => m.id === tileData.character_id);
             if (monster) {
-                // 检查攻击距离
-                const distance = Math.abs(x - playerX) + Math.abs(y - playerY);
-                if (distance <= 1) {
+                // 检查攻击距离（使用切比雪夫距离，允许对角线攻击）
+                const distance = Math.max(Math.abs(x - playerX), Math.abs(y - playerY));
+                if (distance <= 1) {  // 玩家只能近战攻击
                     this.attackMonster(monster.id);
                     return;
                 } else {
@@ -616,6 +616,7 @@ class LabyrinthiaGame {
         const descriptionElement = document.getElementById('item-use-description');
         const usageElement = document.getElementById('item-use-usage');
         const confirmButton = document.getElementById('confirm-use-item');
+        const dropButton = document.getElementById('drop-item');
         const cancelButton = document.getElementById('cancel-use-item');
 
         // 填充物品信息
@@ -627,6 +628,11 @@ class LabyrinthiaGame {
         confirmButton.onclick = () => {
             this.hideItemUseDialog();
             this.useItem(item.id);
+        };
+
+        dropButton.onclick = () => {
+            this.hideItemUseDialog();
+            this.dropItem(item.id);
         };
 
         cancelButton.onclick = () => {
@@ -644,6 +650,10 @@ class LabyrinthiaGame {
 
     async useItem(itemId) {
         await this.performAction('use_item', { item_id: itemId });
+    }
+
+    async dropItem(itemId) {
+        await this.performAction('drop_item', { item_id: itemId });
     }
 
     showTileTooltip(event, tileData, x, y) {
@@ -691,6 +701,13 @@ class LabyrinthiaGame {
                         tooltipText += `生命值: ${monster.stats.hp}/${monster.stats.max_hp}\n`;
                         if (monster.challenge_rating) {
                             tooltipText += `挑战等级: ${monster.challenge_rating}\n`;
+                        }
+                        // 显示攻击范围信息
+                        const attackRange = monster.attack_range || 1;
+                        if (attackRange > 1) {
+                            tooltipText += `攻击范围: ${attackRange} (远程攻击)\n`;
+                        } else {
+                            tooltipText += `攻击范围: ${attackRange} (近战攻击)\n`;
                         }
                     }
                 }
@@ -957,8 +974,8 @@ class LabyrinthiaGame {
             if (tileData && tileData.character_id && tileData.character_id !== player.id) {
                 const monster = this.gameState.monsters.find(m => m.id === tileData.character_id);
                 if (monster) {
-                    const distance = Math.abs(x - playerX) + Math.abs(y - playerY);
-                    if (distance <= 1) {
+                    const distance = Math.max(Math.abs(x - playerX), Math.abs(y - playerY));
+                    if (distance <= 1) {  // 玩家只能近战攻击
                         this.highlightAttackableTile(x, y);
                     }
                 }
@@ -1342,7 +1359,7 @@ class LabyrinthiaGame {
         if (this.isLoading || !this.gameId) return;
 
         this.setLoading(true);
-        this.showPartialOverlay('地图切换', '正在进入新区域...', '准备新的冒险...');
+        this.showPartialOverlay('地图切换', '正在进入新区域...', '准备继续你的冒险...');
 
         try {
             const response = await fetch(`/api/game/${this.gameId}/transition`, {

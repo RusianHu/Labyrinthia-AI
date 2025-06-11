@@ -195,13 +195,15 @@ class Monster(Character):
     challenge_rating: float = 1.0
     behavior: str = "aggressive"  # aggressive, defensive, neutral, flee
     loot_table: List[str] = field(default_factory=list)
+    attack_range: int = 1  # 攻击范围，1为近战，>1为远程攻击
     
     def to_dict(self) -> Dict[str, Any]:
         data = super().to_dict()
         data.update({
             "challenge_rating": self.challenge_rating,
             "behavior": self.behavior,
-            "loot_table": self.loot_table
+            "loot_table": self.loot_table,
+            "attack_range": self.attack_range
         })
         return data
 
