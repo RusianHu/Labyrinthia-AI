@@ -18,6 +18,7 @@ from content_generator import content_generator
 from llm_service import llm_service
 from data_manager import data_manager
 from progress_manager import progress_manager, ProgressEventType, ProgressContext
+from item_effect_processor import item_effect_processor
 
 
 logger = logging.getLogger(__name__)
@@ -502,39 +503,49 @@ class GameEngine:
         if not item:
             return {"success": False, "message": "物品未找到"}
 
-        events = []
+        try:
+            # 使用LLM处理物品使用效果
+            llm_response = await llm_service.process_item_usage(game_state, item)
 
-        # 根据物品类型处理
-        if item.item_type == "consumable":
-            # 消耗品效果
-            if "healing" in item.properties:
-                heal_amount = item.properties["healing"]
-                game_state.player.stats.hp = min(
-                    game_state.player.stats.max_hp,
-                    game_state.player.stats.hp + heal_amount
-                )
-                events.append(f"恢复了 {heal_amount} 点生命值")
+            # 使用效果处理器处理LLM返回的结果
+            effect_result = item_effect_processor.process_llm_response(
+                llm_response, game_state, item
+            )
 
-            if "mana" in item.properties:
-                mana_amount = item.properties["mana"]
-                game_state.player.stats.mp = min(
-                    game_state.player.stats.max_mp,
-                    game_state.player.stats.mp + mana_amount
-                )
-                events.append(f"恢复了 {mana_amount} 点法力值")
+            # 处理位置变化（传送效果）
+            if effect_result.position_change:
+                new_x, new_y = effect_result.position_change
+                old_tile = game_state.current_map.get_tile(*game_state.player.position)
+                if old_tile:
+                    old_tile.character_id = None
 
-            # 移除消耗品
-            game_state.player.inventory.remove(item)
-            events.append(f"使用了 {item.name}")
+                new_tile = game_state.current_map.get_tile(new_x, new_y)
+                if new_tile:
+                    new_tile.character_id = game_state.player.id
+                    new_tile.is_explored = True
+                    new_tile.is_visible = True
+                    game_state.player.position = (new_x, new_y)
+                    self._update_visibility(game_state, new_x, new_y)
+                    effect_result.events.append(f"传送到了位置 ({new_x}, {new_y})")
 
-        else:
-            events.append(f"无法使用 {item.name}")
+            # 移除消耗的物品
+            if effect_result.item_consumed:
+                game_state.player.inventory.remove(item)
 
-        return {
-            "success": True,
-            "message": f"使用了 {item.name}",
-            "events": events
-        }
+            return {
+                "success": effect_result.success,
+                "message": effect_result.message,
+                "events": effect_result.events,
+                "llm_interaction_required": True  # 物品使用总是需要LLM交互
+            }
+
+        except Exception as e:
+            logger.error(f"处理物品使用时出错: {e}")
+            return {
+                "success": False,
+                "message": f"使用{item.name}时发生错误",
+                "events": [f"物品使用失败: {str(e)}"]
+            }
 
     async def _handle_cast_spell(self, game_state: GameState, parameters: Dict[str, Any]) -> Dict[str, Any]:
         """处理施法行动"""
@@ -600,21 +611,50 @@ class GameEngine:
             events.append("打开了门")
             tile.terrain = TerrainType.FLOOR
         elif tile.terrain == TerrainType.TREASURE:
-            # 生成宝藏
-            treasure_items = await content_generator.generate_random_items(
-                count=random.randint(1, 3),
-                item_level=game_state.player.stats.level
-            )
-            for item in treasure_items:
-                game_state.player.inventory.append(item)
-                events.append(f"获得了 {item.name}")
+            # 使用LLM生成宝藏物品
+            pickup_context = f"玩家在{game_state.current_map.name}的宝藏箱中发现了物品"
+            treasure_item = await llm_service.generate_item_on_pickup(game_state, pickup_context)
+
+            if treasure_item:
+                game_state.player.inventory.append(treasure_item)
+                events.append(f"从宝藏中获得了 {treasure_item.name}！")
+                events.append(treasure_item.description)
+            else:
+                events.append("宝藏箱是空的...")
+
             tile.terrain = TerrainType.FLOOR
+
         elif tile.items:
-            # 拾取物品
+            # 拾取地图上的物品
+            items_to_remove = []
             for item in tile.items:
-                game_state.player.inventory.append(item)
-                events.append(f"拾取了 {item.name}")
-            tile.items.clear()
+                # 检查是否已经被拾取过
+                if item.id not in tile.items_collected:
+                    # 如果物品不是LLM生成的，使用LLM重新生成
+                    if not item.llm_generated:
+                        pickup_context = f"玩家在{game_state.current_map.name}的地面上发现了{item.name}"
+                        new_item = await llm_service.generate_item_on_pickup(game_state, pickup_context)
+                        if new_item:
+                            game_state.player.inventory.append(new_item)
+                            events.append(f"拾取了 {new_item.name}")
+                            events.append(new_item.description)
+                        else:
+                            # 如果LLM生成失败，使用原物品
+                            game_state.player.inventory.append(item)
+                            events.append(f"拾取了 {item.name}")
+                    else:
+                        # 直接拾取LLM生成的物品
+                        game_state.player.inventory.append(item)
+                        events.append(f"拾取了 {item.name}")
+                        events.append(item.description)
+
+                    # 标记为已拾取
+                    tile.items_collected.append(item.id)
+                    items_to_remove.append(item)
+
+            # 移除已拾取的物品
+            for item in items_to_remove:
+                tile.items.remove(item)
 
         if not events:
             events.append("这里没有可以交互的东西")
@@ -622,7 +662,8 @@ class GameEngine:
         return {
             "success": True,
             "message": "进行了交互",
-            "events": events
+            "events": events,
+            "llm_interaction_required": len(events) > 1  # 如果有物品拾取则需要LLM交互
         }
 
     async def transition_map(self, game_state: GameState, transition_type: str) -> Dict[str, Any]:

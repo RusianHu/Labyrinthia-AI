@@ -178,12 +178,21 @@ class LabyrinthiaGame {
     async performAction(action, parameters = {}) {
         if (this.isLoading || !this.gameId) return;
 
-        this.setLoading(true);
+        // 检查是否需要显示特定的LLM遮罩（特殊地形或事件触发时）
+        const needsSpecificLLMOverlay = this.shouldShowLLMOverlay(action, parameters);
 
-        // 检查是否需要显示LLM遮罩（特殊地形或事件触发时）
-        const needsLLMOverlay = this.shouldShowLLMOverlay(action, parameters);
-        if (needsLLMOverlay) {
+        // 如果需要特定的LLM遮罩，先显示它，然后再设置loading
+        if (needsSpecificLLMOverlay) {
             this.showLLMOverlay(action);
+            this.isLoading = true;
+            // 禁用控制按钮但不显示通用的loading indicator
+            const controlButtons = document.querySelectorAll('.control-btn, .dir-btn');
+            controlButtons.forEach(btn => {
+                btn.disabled = true;
+            });
+        } else {
+            // 普通情况，使用标准的loading（会自动显示遮罩）
+            this.setLoading(true);
         }
 
         try {
@@ -230,7 +239,7 @@ class LabyrinthiaGame {
                 const backendNeedsLLMOverlay = result.llm_interaction_required;
                 let showedBackendOverlay = false;
 
-                if (backendNeedsLLMOverlay && !needsLLMOverlay) {
+                if (backendNeedsLLMOverlay && !needsSpecificLLMOverlay) {
                     this.showLLMOverlay('处理中');
                     showedBackendOverlay = true;
                 }
@@ -271,11 +280,19 @@ class LabyrinthiaGame {
             console.error('Action error:', error);
             this.addMessage('网络错误，请重试', 'error');
         } finally {
-            // 隐藏LLM遮罩
-            if (needsLLMOverlay) {
+            // 隐藏特定的LLM遮罩
+            if (needsSpecificLLMOverlay) {
                 this.hideLLMOverlay();
+                // 重新启用控制按钮
+                const controlButtons = document.querySelectorAll('.control-btn, .dir-btn');
+                controlButtons.forEach(btn => {
+                    btn.disabled = false;
+                });
+                this.isLoading = false;
+            } else {
+                // 普通情况，使用标准的setLoading(false)
+                this.setLoading(false);
             }
-            this.setLoading(false);
         }
     }
     
@@ -428,26 +445,26 @@ class LabyrinthiaGame {
     updateInventory() {
         const inventoryGrid = document.getElementById('inventory-grid');
         const inventory = this.gameState.player.inventory;
-        
+
         inventoryGrid.innerHTML = '';
-        
+
         // 创建物品栏格子（4x4）
         for (let i = 0; i < 16; i++) {
             const slot = document.createElement('div');
             slot.className = 'inventory-slot';
             slot.dataset.slot = i;
-            
+
             if (i < inventory.length) {
                 const item = inventory[i];
                 slot.classList.add('has-item');
                 slot.title = `${item.name}\n${item.description}`;
                 slot.textContent = item.name.charAt(0).toUpperCase();
-                
+
                 slot.addEventListener('click', () => {
-                    this.useItem(item.id);
+                    this.showItemUseDialog(item);
                 });
             }
-            
+
             inventoryGrid.appendChild(slot);
         }
     }
@@ -587,6 +604,38 @@ class LabyrinthiaGame {
         }
     }
     
+    showItemUseDialog(item) {
+        const dialog = document.getElementById('item-use-dialog');
+        const nameElement = document.getElementById('item-use-name');
+        const descriptionElement = document.getElementById('item-use-description');
+        const usageElement = document.getElementById('item-use-usage');
+        const confirmButton = document.getElementById('confirm-use-item');
+        const cancelButton = document.getElementById('cancel-use-item');
+
+        // 填充物品信息
+        nameElement.textContent = item.name;
+        descriptionElement.textContent = item.description;
+        usageElement.textContent = item.usage_description || '使用方法未知';
+
+        // 设置按钮事件
+        confirmButton.onclick = () => {
+            this.hideItemUseDialog();
+            this.useItem(item.id);
+        };
+
+        cancelButton.onclick = () => {
+            this.hideItemUseDialog();
+        };
+
+        // 显示对话框
+        dialog.style.display = 'flex';
+    }
+
+    hideItemUseDialog() {
+        const dialog = document.getElementById('item-use-dialog');
+        dialog.style.display = 'none';
+    }
+
     async useItem(itemId) {
         await this.performAction('use_item', { item_id: itemId });
     }
@@ -720,6 +769,18 @@ class LabyrinthiaGame {
         controlButtons.forEach(btn => {
             btn.disabled = loading;
         });
+
+        // 当显示"处理中..."时，自动显示LLM遮罩
+        if (loading) {
+            // 检查是否已经有遮罩显示，避免重复显示
+            const existingOverlay = document.getElementById('partial-overlay');
+            if (!existingOverlay || existingOverlay.style.display === 'none') {
+                this.showLLMOverlay('处理中');
+            }
+        } else {
+            // 当loading结束时，隐藏LLM遮罩
+            this.hideLLMOverlay();
+        }
     }
 
     showFullscreenOverlay(title, subtitle, status = '') {
@@ -1100,7 +1161,7 @@ class LabyrinthiaGame {
         }
 
         this.setLoading(true);
-        this.showFullscreenOverlay('创建新游戏', '正在为您生成独特的冒险世界（一般等15s即可）...', '初始化AI系统...');
+        this.showFullscreenOverlay('创建新游戏', '正在为您生成独特的冒险世界（一般等20s即可）...', '初始化AI系统...');
 
         try {
             this.updateOverlayProgress(15, '创建角色档案...');

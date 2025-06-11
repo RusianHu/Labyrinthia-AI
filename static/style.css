@@ -57,7 +57,8 @@ body {
     display: grid;
     grid-template-columns: 1fr 300px;
     gap: 20px;
-    height: calc(100vh - 140px);
+    min-height: calc(100vh - 140px);
+    height: auto; /* 允许高度自动调整 */
 }
 
 /* 主游戏区域 */
@@ -67,16 +68,27 @@ body {
     padding: 20px;
     display: flex;
     flex-direction: column;
+    overflow-y: auto;
+    min-height: 0; /* 允许flex子项收缩 */
+}
+
+/* 任务面板特殊样式 */
+.quest-panel {
+    flex: 0 0 auto; /* 不收缩，不扩展，自动高度 */
+    margin-bottom: 15px;
+    padding: 20px;
+    max-height: none; /* 移除高度限制 */
 }
 
 /* 地图容器 */
 .map-container {
-    flex: 1;
+    flex: 1 1 auto; /* 可以扩展和收缩，占用剩余空间 */
     background: #2c3e50;
     border-radius: 8px;
     padding: 10px;
     overflow: auto;
     position: relative;
+    min-height: 300px; /* 最小高度确保地图可见 */
 }
 
 .map-grid {
@@ -479,6 +491,62 @@ body {
     color: #e1bee7;
     font-size: 0.9rem;
     margin: 0;
+}
+
+/* 任务列表样式 */
+.quest-list {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    width: 100%;
+    overflow: visible; /* 确保内容可见 */
+}
+
+.quest-item {
+    background: rgba(94, 53, 177, 0.05);
+    border: 1px solid rgba(94, 53, 177, 0.2);
+    border-radius: 8px;
+    padding: 15px;
+    transition: all 0.3s ease;
+}
+
+.quest-item:hover {
+    background: rgba(94, 53, 177, 0.1);
+    border-color: rgba(94, 53, 177, 0.4);
+    transform: translateY(-1px);
+    box-shadow: 0 2px 8px rgba(94, 53, 177, 0.2);
+}
+
+.quest-item h4 {
+    color: #5e35b1;
+    margin: 0 0 8px 0;
+    font-size: 1.1rem;
+    font-weight: 600;
+}
+
+.quest-item p {
+    color: #666;
+    margin: 0 0 12px 0;
+    line-height: 1.4;
+    font-size: 0.95rem;
+}
+
+.quest-objectives {
+    margin-top: 10px;
+}
+
+.objective {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 0;
+    font-size: 0.9rem;
+    color: #555;
+}
+
+.objective.completed {
+    color: #4caf50;
+    text-decoration: line-through;
 }
 
 /* 任务进度条样式 */

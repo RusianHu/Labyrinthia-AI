@@ -108,7 +108,11 @@ class Item:
     weight: float = 0.0
     rarity: str = "common"  # common, uncommon, rare, epic, legendary
     properties: Dict[str, Any] = field(default_factory=dict)
-    
+    # 新增字段
+    usage_description: str = ""  # 使用说明
+    llm_generated: bool = False  # 是否由LLM生成
+    generation_context: str = ""  # 生成时的上下文
+
     def to_dict(self) -> Dict[str, Any]:
         return {
             "id": self.id,
@@ -118,7 +122,10 @@ class Item:
             "value": self.value,
             "weight": self.weight,
             "rarity": self.rarity,
-            "properties": self.properties
+            "properties": self.properties,
+            "usage_description": self.usage_description,
+            "llm_generated": self.llm_generated,
+            "generation_context": self.generation_context
         }
 
 
@@ -215,6 +222,8 @@ class MapTile:
     event_data: Dict[str, Any] = field(default_factory=dict)  # 事件数据
     is_event_hidden: bool = True  # 事件是否隐藏
     event_triggered: bool = False  # 事件是否已触发
+    # 物品相关字段
+    items_collected: List[str] = field(default_factory=list)  # 已收集的物品ID列表
     
     def to_dict(self) -> Dict[str, Any]:
         return {

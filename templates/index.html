@@ -62,7 +62,7 @@
             <!-- 主游戏区域 -->
             <div class="game-main elevation-2">
                 <!-- 任务面板 -->
-                <div class="panel elevation-2" style="margin-bottom: 15px;">
+                <div class="panel elevation-2 quest-panel">
                     <h3>
                         <i class="material-icons">assignment</i>
                         任务
@@ -195,6 +195,22 @@
                         物品栏
                     </h3>
                     <div id="inventory-grid" class="inventory-grid"></div>
+                </div>
+
+                <!-- 物品使用确认对话框 -->
+                <div id="item-use-dialog" class="dialog-overlay" style="display: none;">
+                    <div class="dialog">
+                        <h3>使用物品</h3>
+                        <div id="item-use-content">
+                            <div id="item-use-name" class="item-name"></div>
+                            <div id="item-use-description" class="item-description"></div>
+                            <div id="item-use-usage" class="item-usage"></div>
+                        </div>
+                        <div class="dialog-buttons">
+                            <button id="confirm-use-item" class="btn btn-primary">确认使用</button>
+                            <button id="cancel-use-item" class="btn btn-secondary">取消</button>
+                        </div>
+                    </div>
                 </div>
 
 
@@ -470,6 +486,67 @@
         .objective.completed {
             color: #27ae60;
             text-decoration: line-through;
+        }
+
+        /* 物品使用对话框样式 */
+        .dialog-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.7);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+        }
+
+        .dialog {
+            background: white;
+            border-radius: 12px;
+            padding: 24px;
+            max-width: 500px;
+            width: 90%;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+        }
+
+        .dialog h3 {
+            margin-top: 0;
+            color: #5e35b1;
+            text-align: center;
+        }
+
+        .item-name {
+            font-size: 1.2rem;
+            font-weight: bold;
+            color: #5e35b1;
+            margin-bottom: 10px;
+        }
+
+        .item-description {
+            color: #666;
+            margin-bottom: 15px;
+            line-height: 1.5;
+        }
+
+        .item-usage {
+            background: rgba(94, 53, 177, 0.1);
+            padding: 12px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            border-left: 4px solid #5e35b1;
+        }
+
+        .dialog-buttons {
+            display: flex;
+            gap: 12px;
+            justify-content: center;
+        }
+
+        .dialog-buttons .btn {
+            flex: 1;
+            max-width: 120px;
         }
     </style>
 </body>

@@ -191,6 +191,10 @@ class DataManager:
         item.weight = data.get("weight", 0.0)
         item.rarity = data.get("rarity", "common")
         item.properties = data.get("properties", {})
+        # 新增字段
+        item.usage_description = data.get("usage_description", "")
+        item.llm_generated = data.get("llm_generated", False)
+        item.generation_context = data.get("generation_context", "")
         return item
     
     def _dict_to_spell(self, data: Dict[str, Any]) -> Spell:

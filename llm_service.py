@@ -11,7 +11,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 from gemini_api import GeminiAPI
 from config import config, LLMProvider
-from data_models import Character, Monster, GameMap, Quest, GameState
+from data_models import Character, Monster, GameMap, Quest, GameState, Item
 
 
 logger = logging.getLogger(__name__)
@@ -370,6 +370,254 @@ class LLMService:
         """
 
         return await self._async_generate(prompt)
+
+    async def generate_item_on_pickup(self, game_state: GameState,
+                                    pickup_context: str = "") -> Optional[Item]:
+        """在拾取时生成物品"""
+        player = game_state.player
+        current_map = game_state.current_map
+
+        prompt = f"""
+        为一个DnD风格的冒险游戏生成一个物品，玩家刚刚在地图上发现了它。
+
+        玩家信息：
+        - 名称：{player.name}
+        - 职业：{player.character_class.value}
+        - 等级：{player.stats.level}
+        - 当前位置：{player.position}
+
+        地图信息：
+        - 地图名称：{current_map.name}
+        - 地图描述：{current_map.description}
+        - 地图深度：{current_map.depth}层
+
+        拾取上下文：{pickup_context}
+
+        请生成一个适合当前情况的物品，要求：
+        1. 必须有中文名称
+        2. 详细的功能和使用场景介绍
+        3. 物品类型要合理（weapon/armor/consumable/misc）
+        4. 稀有度要符合地图深度和玩家等级
+        5. 使用说明要清晰明确
+
+        请返回JSON格式：
+        {{
+            "name": "物品的中文名称",
+            "description": "物品的详细描述，包括外观和背景故事",
+            "item_type": "物品类型（weapon/armor/consumable/misc）",
+            "rarity": "稀有度（common/uncommon/rare/epic/legendary）",
+            "value": 物品价值（金币）,
+            "weight": 物品重量,
+            "usage_description": "详细的使用说明和效果描述",
+            "damage": "武器伤害（如果是武器，否则留空）",
+            "armor_class": "护甲等级（如果是护甲，否则留空）",
+            "healing": 治疗量（如果是治疗物品，否则为0）,
+            "mana_restore": 法力恢复量（如果恢复法力，否则为0）,
+            "special_effect": "特殊效果描述（如果有特殊效果）"
+        }}
+        """
+
+        schema = {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string"},
+                "description": {"type": "string"},
+                "item_type": {"type": "string", "enum": ["weapon", "armor", "consumable", "misc"]},
+                "rarity": {"type": "string", "enum": ["common", "uncommon", "rare", "epic", "legendary"]},
+                "value": {"type": "integer", "minimum": 0},
+                "weight": {"type": "number", "minimum": 0},
+                "usage_description": {"type": "string"},
+                "damage": {"type": "string"},
+                "armor_class": {"type": "string"},
+                "healing": {"type": "integer"},
+                "mana_restore": {"type": "integer"},
+                "special_effect": {"type": "string"}
+            },
+            "required": ["name", "description", "item_type", "rarity", "value", "weight", "usage_description"]
+        }
+
+        try:
+            result = await self._async_generate_json(prompt, schema)
+            if result:
+                item = Item()
+                item.name = result.get("name", "神秘物品")
+                item.description = result.get("description", "一个神秘的物品")
+                item.item_type = result.get("item_type", "misc")
+                item.rarity = result.get("rarity", "common")
+                item.value = result.get("value", 10)
+                item.weight = result.get("weight", 1.0)
+                item.usage_description = result.get("usage_description", "使用方法未知")
+                # 构建properties字典
+                properties = {}
+                if result.get("damage"):
+                    properties["damage"] = result["damage"]
+                if result.get("armor_class"):
+                    properties["armor_class"] = result["armor_class"]
+                if result.get("healing"):
+                    properties["healing"] = result["healing"]
+                if result.get("mana_restore"):
+                    properties["mana_restore"] = result["mana_restore"]
+                if result.get("special_effect"):
+                    properties["special_effect"] = result["special_effect"]
+
+                item.properties = properties
+                item.llm_generated = True
+                item.generation_context = pickup_context
+
+                return item
+        except Exception as e:
+            logger.error(f"生成物品失败: {e}")
+
+        return None
+
+    async def process_item_usage(self, game_state: GameState, item: Item) -> Dict[str, Any]:
+        """处理物品使用，返回效果数据"""
+        player = game_state.player
+        current_map = game_state.current_map
+
+        # 构建地图状态信息
+        map_info = {
+            "name": current_map.name,
+            "description": current_map.description,
+            "depth": current_map.depth,
+            "player_position": player.position,
+            "nearby_terrain": self._get_nearby_terrain(game_state, player.position[0], player.position[1])
+        }
+
+        prompt = f"""
+        玩家正在使用一个物品，请根据物品属性和当前游戏状态，生成使用效果。
+
+        物品信息：
+        - 名称：{item.name}
+        - 描述：{item.description}
+        - 类型：{item.item_type}
+        - 稀有度：{item.rarity}
+        - 使用说明：{item.usage_description}
+        - 属性：{item.properties}
+
+        玩家信息：
+        - 名称：{player.name}
+        - 职业：{player.character_class.value}
+        - 等级：{player.stats.level}
+        - 生命值：{player.stats.hp}/{player.stats.max_hp}
+        - 法力值：{player.stats.mp}/{player.stats.max_mp}
+        - 护甲等级：{player.stats.ac}
+        - 经验值：{player.stats.experience}
+        - 当前位置：{player.position}
+
+        地图信息：{map_info}
+
+        请根据物品的特性和当前情况，生成合理的使用效果。可以包括：
+        - 属性变化（生命值、法力值、经验值等）
+        - 传送效果
+        - 地图变化
+        - 特殊效果
+
+        请返回JSON格式：
+        {{
+            "message": "使用物品后的描述信息",
+            "events": ["事件描述1", "事件描述2"],
+            "item_consumed": true,
+            "effects": {{
+                "stat_changes": {{
+                    "hp": 变化量,
+                    "mp": 变化量,
+                    "experience": 变化量
+                }},
+                "teleport": {{
+                    "type": "random/specific/stairs",
+                    "x": 目标x坐标（如果是specific）,
+                    "y": 目标y坐标（如果是specific）
+                }},
+                "map_changes": [
+                    {{
+                        "x": x坐标,
+                        "y": y坐标,
+                        "terrain": "新地形类型"
+                    }}
+                ],
+                "special_effects": ["reveal_map", "heal_full", "level_up"]
+            }}
+        }}
+        """
+
+        # 定义物品使用效果的JSON schema
+        schema = {
+            "type": "object",
+            "properties": {
+                "message": {"type": "string"},
+                "events": {
+                    "type": "array",
+                    "items": {"type": "string"}
+                },
+                "item_consumed": {"type": "boolean"},
+                "effects": {
+                    "type": "object",
+                    "properties": {
+                        "stat_changes": {
+                            "type": "object",
+                            "properties": {
+                                "hp": {"type": "integer"},
+                                "mp": {"type": "integer"},
+                                "experience": {"type": "integer"},
+                                "max_hp": {"type": "integer"},
+                                "max_mp": {"type": "integer"}
+                            }
+                        },
+                        "teleport": {
+                            "type": "object",
+                            "properties": {
+                                "type": {"type": "string", "enum": ["random", "specific", "stairs"]},
+                                "x": {"type": "integer"},
+                                "y": {"type": "integer"}
+                            }
+                        },
+                        "map_changes": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "x": {"type": "integer"},
+                                    "y": {"type": "integer"},
+                                    "terrain": {"type": "string"}
+                                }
+                            }
+                        },
+                        "special_effects": {
+                            "type": "array",
+                            "items": {"type": "string"}
+                        }
+                    }
+                }
+            },
+            "required": ["message", "events", "item_consumed", "effects"]
+        }
+
+        try:
+            result = await self._async_generate_json(prompt, schema)
+            logger.info(f"物品使用LLM响应: {result}")
+            return result or {}
+        except Exception as e:
+            logger.error(f"处理物品使用失败: {e}")
+            return {
+                "message": f"使用{item.name}时发生了意外",
+                "events": ["物品使用失败"],
+                "item_consumed": False,
+                "effects": {}
+            }
+
+    def _get_nearby_terrain(self, game_state: GameState, x: int, y: int, radius: int = 2) -> List[str]:
+        """获取周围地形信息"""
+        terrain_list = []
+        for dy in range(-radius, radius + 1):
+            for dx in range(-radius, radius + 1):
+                nx, ny = x + dx, y + dy
+                if (0 <= nx < game_state.current_map.width and
+                    0 <= ny < game_state.current_map.height):
+                    tile = game_state.current_map.get_tile(nx, ny)
+                    if tile:
+                        terrain_list.append(f"({nx},{ny}):{tile.terrain.value}")
+        return terrain_list
 
     def close(self):
         """关闭服务"""
