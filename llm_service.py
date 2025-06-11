@@ -49,7 +49,9 @@ class LLMService:
                 base_url=config.llm.openrouter_base_url,
                 default_model=config.llm.model_name,
                 timeout=config.llm.timeout,
-                proxies=proxies
+                proxies=proxies,
+                referer="https://github.com/Labyrinthia-AI/Labyrinthia-AI", # 使用一个有效的URL作为Referer
+                title=config.game.game_name
             )
         else:
             raise NotImplementedError(f"LLM provider {self.provider} not implemented yet")
@@ -154,7 +156,12 @@ class LLMService:
                         parts = response["candidates"][0]["content"].get("parts", [])
                         if parts and parts[0].get("text"):
                             try:
-                                return json.loads(parts[0]["text"])
+                                parsed_json = json.loads(parts[0]["text"])
+                                if isinstance(parsed_json, dict):
+                                    return parsed_json
+                                else:
+                                    logger.warning(f"LLM returned a non-dict JSON: {type(parsed_json)}")
+                                    return {}
                             except json.JSONDecodeError as e:
                                 logger.error(f"Failed to parse JSON response: {e}")
                                 return {}
