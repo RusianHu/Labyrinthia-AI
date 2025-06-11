@@ -74,12 +74,16 @@ class GameEngine:
         monsters = await content_generator.generate_encounter_monsters(
             game_state.player.stats.level, "easy"
         )
-        
+
+        # 生成任务专属怪物
+        quest_monsters = await self._generate_quest_monsters(game_state, game_state.current_map)
+        monsters.extend(quest_monsters)
+
         # 为怪物分配位置
         monster_positions = content_generator.get_spawn_positions(
             game_state.current_map, len(monsters)
         )
-        
+
         for monster, position in zip(monsters, monster_positions):
             monster.position = position
             tile = game_state.current_map.get_tile(*position)
@@ -1042,9 +1046,10 @@ class GameEngine:
         # 生成新的地图层
         new_depth = game_state.current_map.depth + 1
 
-        # 开发阶段：限制为2层
-        if new_depth > 2:
-            return "你已经到达了地下城的最深处！"
+        # 检查是否超过最大楼层限制
+        max_floors = config.game.max_quest_floors
+        if new_depth > max_floors:
+            return f"你已经到达了地下城的最深处（第{max_floors}层）！"
 
         # 获取当前活跃任务的上下文
         quest_context = None
@@ -1077,6 +1082,10 @@ class GameEngine:
         monsters = await content_generator.generate_encounter_monsters(
             game_state.player.stats.level, "medium"
         )
+
+        # 生成任务专属怪物（如果有活跃任务）
+        quest_monsters = await self._generate_quest_monsters(game_state, new_map)
+        monsters.extend(quest_monsters)
 
         monster_positions = content_generator.get_spawn_positions(new_map, len(monsters))
         for monster, position in zip(monsters, monster_positions):
@@ -1134,6 +1143,56 @@ class GameEngine:
         )
 
         return f"返回到了{new_map.name}"
+
+    async def _generate_quest_monsters(self, game_state: GameState, game_map: GameMap) -> List[Monster]:
+        """生成任务专属怪物"""
+        quest_monsters = []
+
+        # 获取当前活跃任务
+        active_quest = next((q for q in game_state.quests if q.is_active), None)
+        if not active_quest or not active_quest.special_monsters:
+            return quest_monsters
+
+        current_depth = game_map.depth
+
+        # 筛选适合当前楼层的专属怪物
+        suitable_monsters = [
+            monster_data for monster_data in active_quest.special_monsters
+            if not monster_data.location_hint or str(current_depth) in monster_data.location_hint
+        ]
+
+        for monster_data in suitable_monsters:
+            try:
+                # 使用LLM生成具体的怪物实例
+                context = f"""
+                根据任务专属怪物模板生成具体怪物：
+                - 名称：{monster_data.name}
+                - 描述：{monster_data.description}
+                - 挑战等级：{monster_data.challenge_rating}
+                - 是否为Boss：{monster_data.is_boss}
+                - 生成条件：{monster_data.spawn_condition}
+                - 位置提示：{monster_data.location_hint}
+
+                请生成一个符合这些要求的怪物，确保其能力与挑战等级相符。
+                """
+
+                monster = await llm_service.generate_monster(
+                    monster_data.challenge_rating, context
+                )
+
+                if monster:
+                    # 设置任务相关属性
+                    monster.name = monster_data.name  # 确保名称匹配
+                    monster.is_boss = monster_data.is_boss
+                    monster.quest_monster_id = monster_data.id if hasattr(monster_data, 'id') else None
+                    quest_monsters.append(monster)
+
+                    logger.info(f"Generated quest monster: {monster.name} (CR: {monster_data.challenge_rating})")
+
+            except Exception as e:
+                logger.error(f"Failed to generate quest monster {monster_data.name}: {e}")
+
+        return quest_monsters
 
     async def _trigger_progress_event(self, game_state: GameState, event_type: ProgressEventType, context_data: Any = None):
         """触发进度事件"""

@@ -38,17 +38,28 @@ class ContentGenerator:
         # 构建任务相关的提示信息
         quest_info = ""
         if quest_context:
+            special_events = quest_context.get('special_events', [])
+            special_monsters = quest_context.get('special_monsters', [])
+
             quest_info = f"""
 
         当前任务信息：
         - 任务类型：{quest_context.get('quest_type', 'exploration')}
         - 任务标题：{quest_context.get('title', '未知任务')}
+        - 任务描述：{quest_context.get('description', '探索地下城')}
         - 目标楼层：{quest_context.get('target_floors', [depth])}
         - 建议主题：{quest_context.get('map_themes', [theme])}
-        - 专属事件：{len(quest_context.get('special_events', []))}个
-        - 专属怪物：{len(quest_context.get('special_monsters', []))}个
+        - 当前楼层：第{depth}层（共{config.game.max_quest_floors}层）
+        - 专属事件：{len(special_events)}个
+        - 专属怪物：{len(special_monsters)}个
+        - 故事背景：{quest_context.get('story_context', '神秘的地下城探索')}
 
-        请根据任务信息调整地图的名称和描述，使其与任务背景相符。
+        楼层定位：
+        {'- 这是起始层，应该相对安全，适合新手探索' if depth == 1 else ''}
+        {'- 这是中间层，难度适中，包含重要的任务元素' if 1 < depth < config.game.max_quest_floors else ''}
+        {'- 这是最终层，应该包含任务的高潮和结局' if depth == config.game.max_quest_floors else ''}
+
+        请根据任务信息和楼层定位调整地图的名称和描述，使其与任务背景和当前进度相符。
         """
 
         # 使用LLM生成地图名称和描述
@@ -105,23 +116,60 @@ class ContentGenerator:
     def _generate_rooms(self, width: int, height: int) -> List[Dict[str, int]]:
         """生成房间列表"""
         rooms = []
-        max_rooms = min(10, (width * height) // 50)
-        
+
+        # 确保地图足够大才生成房间
+        if width < 6 or height < 6:
+            # 对于小地图，创建一个简单的房间
+            room = {
+                "x": 1, "y": 1,
+                "width": width - 2, "height": height - 2
+            }
+            rooms.append(room)
+            return rooms
+
+        max_rooms = min(10, max(1, (width * height) // 50))
+
         for _ in range(max_rooms):
-            room_width = random.randint(4, 8)
-            room_height = random.randint(4, 8)
-            x = random.randint(1, width - room_width - 1)
-            y = random.randint(1, height - room_height - 1)
-            
+            # 根据地图大小调整房间尺寸
+            max_room_width = min(8, width - 3)
+            max_room_height = min(8, height - 3)
+            min_room_size = min(3, max_room_width - 1, max_room_height - 1)
+
+            if min_room_size < 3:
+                min_room_size = 3
+                max_room_width = max(min_room_size, max_room_width)
+                max_room_height = max(min_room_size, max_room_height)
+
+            room_width = random.randint(min_room_size, max_room_width)
+            room_height = random.randint(min_room_size, max_room_height)
+
+            # 确保房间能放在地图内
+            max_x = width - room_width - 1
+            max_y = height - room_height - 1
+
+            if max_x < 1 or max_y < 1:
+                continue
+
+            x = random.randint(1, max_x)
+            y = random.randint(1, max_y)
+
             new_room = {
-                "x": x, "y": y, 
+                "x": x, "y": y,
                 "width": room_width, "height": room_height
             }
-            
+
             # 检查是否与现有房间重叠
             if not any(self._rooms_overlap(new_room, existing) for existing in rooms):
                 rooms.append(new_room)
-        
+
+        # 确保至少有一个房间
+        if not rooms:
+            room = {
+                "x": 1, "y": 1,
+                "width": min(4, width - 2), "height": min(4, height - 2)
+            }
+            rooms.append(room)
+
         return rooms
     
     def _rooms_overlap(self, room1: Dict[str, int], room2: Dict[str, int]) -> bool:
@@ -169,16 +217,21 @@ class ContentGenerator:
         """放置特殊地形"""
         if not rooms:
             return
-        
-        # 在第一个房间放置上楼梯
-        first_room = rooms[0]
-        stairs_x = first_room["x"] + first_room["width"] // 2
-        stairs_y = first_room["y"] + first_room["height"] // 2
-        if (stairs_x, stairs_y) in game_map.tiles:
-            game_map.tiles[(stairs_x, stairs_y)].terrain = TerrainType.STAIRS_UP
-        
-        # 在最后一个房间放置下楼梯
-        if len(rooms) > 1:
+
+        # 根据楼层深度智能放置楼梯
+        current_depth = game_map.depth
+        max_floors = config.game.max_quest_floors
+
+        # 只有非第一层才放置上楼梯
+        if current_depth > 1:
+            first_room = rooms[0]
+            stairs_x = first_room["x"] + first_room["width"] // 2
+            stairs_y = first_room["y"] + first_room["height"] // 2
+            if (stairs_x, stairs_y) in game_map.tiles:
+                game_map.tiles[(stairs_x, stairs_y)].terrain = TerrainType.STAIRS_UP
+
+        # 只有非最后一层才放置下楼梯
+        if current_depth < max_floors and len(rooms) > 1:
             last_room = rooms[-1]
             stairs_x = last_room["x"] + last_room["width"] // 2
             stairs_y = last_room["y"] + last_room["height"] // 2
@@ -314,58 +367,92 @@ class ContentGenerator:
         quests = []
 
         # 生成主线任务（开发阶段简化为单个任务）
+        max_floors = config.game.max_quest_floors
         main_quest_prompt = f"""
-        为等级{player_level}的玩家生成1个DnD风格的主线任务，适合在2层地下城中完成。
+        为等级{player_level}的玩家生成1个DnD风格的主线任务，适合在{max_floors}层地下城中完成。
+
+        任务设计要求：
+        1. 任务目标明确，有清晰的故事线
+        2. 每层都有相应的子目标和挑战
+        3. 专属事件和怪物要与任务主题紧密相关
+        4. 进度分配合理，确保玩家能在{max_floors}层内完成任务
 
         请返回JSON格式：
         {{
             "quests": [
                 {{
-                    "title": "任务标题（中文）",
-                    "description": "任务描述（简短，适合2层地下城）",
-                    "objectives": ["探索第一层", "进入第二层", "完成最终目标"],
-                    "experience_reward": 500,
-                    "story_context": "故事背景描述",
+                    "title": "任务标题（中文，简洁有力）",
+                    "description": "任务描述（详细说明任务背景和目标，适合{max_floors}层地下城）",
+                    "objectives": ["第1层：初步探索和准备", "第2层：深入调查", "第{max_floors}层：完成最终目标"],
+                    "experience_reward": {500 + player_level * 50},
+                    "story_context": "详细的故事背景，包括任务起因、目标和意义",
                     "progress_percentage": 0,
                     "quest_type": "exploration",
-                    "target_floors": [1, 2],
-                    "map_themes": ["地下城", "古老遗迹"],
+                    "target_floors": {list(range(1, max_floors + 1))},
+                    "map_themes": ["地下城", "古老遗迹", "神秘洞穴"],
                     "special_events": [
                         {{
+                            "id": "event_1",
                             "event_type": "story",
-                            "name": "关键发现",
-                            "description": "发现任务相关的重要线索",
+                            "name": "关键线索发现",
+                            "description": "发现与任务目标相关的重要线索或古老文献",
                             "trigger_condition": "探索特定区域",
-                            "progress_value": 25.0,
+                            "progress_value": 15.0,
                             "is_mandatory": true,
-                            "location_hint": "第1层的深处"
+                            "location_hint": "第1层"
                         }},
                         {{
-                            "event_type": "combat",
-                            "name": "守护者战斗",
-                            "description": "与任务目标的守护者战斗",
-                            "trigger_condition": "接近任务目标",
-                            "progress_value": 40.0,
+                            "id": "event_2",
+                            "event_type": "mystery",
+                            "name": "古老机关",
+                            "description": "需要解开的古老机关或谜题，阻挡前进道路",
+                            "trigger_condition": "接近关键区域",
+                            "progress_value": 20.0,
                             "is_mandatory": true,
                             "location_hint": "第2层"
+                        }},
+                        {{
+                            "id": "event_3",
+                            "event_type": "combat",
+                            "name": "最终对决",
+                            "description": "与任务最终boss的决战",
+                            "trigger_condition": "到达任务目标位置",
+                            "progress_value": 35.0,
+                            "is_mandatory": true,
+                            "location_hint": "第{max_floors}层"
                         }}
                     ],
                     "special_monsters": [
                         {{
-                            "name": "任务守护者",
-                            "description": "保护任务目标的强大怪物",
-                            "challenge_rating": {player_level + 0.5},
+                            "id": "monster_1",
+                            "name": "守护哨兵",
+                            "description": "保护入口的古老守护者",
+                            "challenge_rating": {player_level * 0.8},
+                            "is_boss": false,
+                            "progress_value": 10.0,
+                            "spawn_condition": "进入特定区域时",
+                            "location_hint": "第1层的关键通道"
+                        }},
+                        {{
+                            "id": "monster_2",
+                            "name": "任务终极Boss",
+                            "description": "任务的最终敌人，拥有强大力量",
+                            "challenge_rating": {player_level + 1.0},
                             "is_boss": true,
                             "progress_value": 30.0,
                             "spawn_condition": "玩家接近任务目标时",
-                            "location_hint": "第2层的核心区域"
+                            "location_hint": "第{max_floors}层的核心区域"
                         }}
                     ]
                 }}
             ]
         }}
 
-        开发阶段：任务应该在2个地图层内完成，目标简洁明确。请确保专属事件和怪物与任务主题相符。
+        重要提示：
+        - 确保任务内容丰富但不过于复杂
+        - 专属事件和怪物的进度值总和应该合理分配
+        - 每个楼层都应该有相应的挑战和奖励
+        - 任务描述要生动有趣，符合DnD风格
         """
         
         try:

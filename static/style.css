@@ -756,6 +756,95 @@ body {
     box-shadow: 0 0 8px rgba(255, 193, 7, 0.6);
 }
 
+/* 任务事件高亮样式 */
+.map-tile.quest-event {
+    background-color: rgba(156, 39, 176, 0.3) !important;
+    border: 2px solid #9c27b0;
+    box-shadow: 0 0 12px rgba(156, 39, 176, 0.7);
+    animation: quest-pulse 2s infinite;
+}
+
+.map-tile.quest-event::after {
+    content: "⭐";
+    position: absolute;
+    top: 2px;
+    right: 2px;
+    font-size: 10px;
+    color: #9c27b0;
+    text-shadow: 0 0 3px rgba(156, 39, 176, 0.8);
+}
+
+/* 任务怪物高亮样式 */
+.character-monster.quest-monster {
+    background-color: #e91e63 !important;
+    border: 2px solid #ad1457;
+    box-shadow: 0 0 15px rgba(233, 30, 99, 0.8);
+    animation: quest-monster-pulse 1.5s infinite;
+}
+
+.character-monster.quest-monster::after {
+    content: "👑";
+    position: absolute;
+    top: -2px;
+    right: -2px;
+    font-size: 8px;
+    text-shadow: 0 0 3px rgba(233, 30, 99, 0.9);
+}
+
+/* 任务Boss特殊样式 */
+.character-monster.quest-boss {
+    background-color: #f44336 !important;
+    border: 3px solid #d32f2f;
+    box-shadow: 0 0 20px rgba(244, 67, 54, 0.9);
+    animation: boss-pulse 1s infinite;
+    transform: scale(1.1);
+}
+
+.character-monster.quest-boss::after {
+    content: "💀";
+    position: absolute;
+    top: -3px;
+    right: -3px;
+    font-size: 10px;
+    text-shadow: 0 0 5px rgba(244, 67, 54, 1);
+}
+
+/* 动画效果 */
+@keyframes quest-pulse {
+    0%, 100% {
+        box-shadow: 0 0 12px rgba(156, 39, 176, 0.7);
+        border-color: #9c27b0;
+    }
+    50% {
+        box-shadow: 0 0 20px rgba(156, 39, 176, 0.9);
+        border-color: #7b1fa2;
+    }
+}
+
+@keyframes quest-monster-pulse {
+    0%, 100% {
+        box-shadow: 0 0 15px rgba(233, 30, 99, 0.8);
+        border-color: #ad1457;
+    }
+    50% {
+        box-shadow: 0 0 25px rgba(233, 30, 99, 1);
+        border-color: #880e4f;
+    }
+}
+
+@keyframes boss-pulse {
+    0%, 100% {
+        box-shadow: 0 0 20px rgba(244, 67, 54, 0.9);
+        border-color: #d32f2f;
+        transform: scale(1.1);
+    }
+    50% {
+        box-shadow: 0 0 30px rgba(244, 67, 54, 1);
+        border-color: #b71c1c;
+        transform: scale(1.15);
+    }
+}
+
 @keyframes pulse-green {
     0%, 100% {
         box-shadow: 0 0 10px rgba(76, 175, 80, 0.5);

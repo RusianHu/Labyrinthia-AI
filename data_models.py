@@ -196,14 +196,19 @@ class Monster(Character):
     behavior: str = "aggressive"  # aggressive, defensive, neutral, flee
     loot_table: List[str] = field(default_factory=list)
     attack_range: int = 1  # 攻击范围，1为近战，>1为远程攻击
-    
+    # 任务相关属性
+    is_boss: bool = False  # 是否为Boss
+    quest_monster_id: Optional[str] = None  # 关联的任务怪物ID
+
     def to_dict(self) -> Dict[str, Any]:
         data = super().to_dict()
         data.update({
             "challenge_rating": self.challenge_rating,
             "behavior": self.behavior,
             "loot_table": self.loot_table,
-            "attack_range": self.attack_range
+            "attack_range": self.attack_range,
+            "is_boss": self.is_boss,
+            "quest_monster_id": self.quest_monster_id
         })
         return data
 

@@ -411,16 +411,21 @@ class LabyrinthiaGame {
                 if (tileData) {
                     // 设置地形样式
                     tile.classList.add(`terrain-${tileData.terrain}`);
-                    
+
                     // 设置可见性
                     if (tileData.is_explored) {
                         tile.classList.add('tile-explored');
                     } else {
                         tile.classList.add('tile-unexplored');
                     }
-                    
+
                     if (tileData.is_visible) {
                         tile.classList.add('tile-visible');
+                    }
+
+                    // 检查是否为任务事件
+                    if (tileData.has_event && tileData.event_data && tileData.event_data.quest_event_id) {
+                        tile.classList.add('quest-event');
                     }
                     
                     // 添加角色
@@ -434,6 +439,16 @@ class LabyrinthiaGame {
                         if (monster) {
                             const monsterIcon = document.createElement('div');
                             monsterIcon.className = 'character-monster';
+
+                            // 检查是否为任务怪物
+                            if (this.isQuestMonster(monster)) {
+                                if (monster.is_boss) {
+                                    monsterIcon.classList.add('quest-boss');
+                                } else {
+                                    monsterIcon.classList.add('quest-monster');
+                                }
+                            }
+
                             monsterIcon.title = monster.name;
                             monsterIcon.addEventListener('click', () => {
                                 this.attackMonster(monster.id);
@@ -520,6 +535,26 @@ class LabyrinthiaGame {
     
     async attackMonster(monsterId) {
         await this.performAction('attack', { target_id: monsterId });
+    }
+
+    isQuestMonster(monster) {
+        // 检查怪物是否为任务相关怪物
+        if (!this.gameState.quests || this.gameState.quests.length === 0) {
+            return false;
+        }
+
+        // 查找活跃任务
+        const activeQuest = this.gameState.quests.find(q => q.is_active && !q.is_completed);
+        if (!activeQuest || !activeQuest.special_monsters) {
+            return false;
+        }
+
+        // 检查怪物名称是否匹配任务专属怪物
+        return activeQuest.special_monsters.some(questMonster =>
+            monster.name === questMonster.name ||
+            monster.name.includes(questMonster.name) ||
+            questMonster.name.includes(monster.name)
+        );
     }
 
     handleTileClick(x, y, tileData) {
@@ -697,17 +732,38 @@ class LabyrinthiaGame {
                 } else {
                     const monster = this.gameState.monsters.find(m => m.id === tileData.character_id);
                     if (monster) {
-                        tooltipText += `怪物: ${monster.name}\n`;
+                        // 检查是否为任务怪物
+                        const isQuestMonster = this.isQuestMonster(monster);
+
+                        if (isQuestMonster) {
+                            if (monster.is_boss) {
+                                tooltipText += `任务Boss: ${monster.name} 👑\n`;
+                            } else {
+                                tooltipText += `任务怪物: ${monster.name} ⭐\n`;
+                            }
+                        } else {
+                            tooltipText += `怪物: ${monster.name}\n`;
+                        }
+
                         tooltipText += `生命值: ${monster.stats.hp}/${monster.stats.max_hp}\n`;
                         if (monster.challenge_rating) {
                             tooltipText += `挑战等级: ${monster.challenge_rating}\n`;
                         }
+
                         // 显示攻击范围信息
                         const attackRange = monster.attack_range || 1;
                         if (attackRange > 1) {
                             tooltipText += `攻击范围: ${attackRange} (远程攻击)\n`;
                         } else {
                             tooltipText += `攻击范围: ${attackRange} (近战攻击)\n`;
+                        }
+
+                        // 如果是任务怪物，显示额外信息
+                        if (isQuestMonster) {
+                            tooltipText += `类型: 任务相关敌人\n`;
+                            if (monster.is_boss) {
+                                tooltipText += `警告: 强大的Boss敌人！\n`;
+                            }
                         }
                     }
                 }
@@ -727,10 +783,24 @@ class LabyrinthiaGame {
                     'trap': '陷阱',
                     'mystery': '神秘'
                 };
-                tooltipText += `事件: ${eventNames[tileData.event_type] || tileData.event_type}\n`;
+
+                // 检查是否为任务事件
+                if (tileData.event_data && tileData.event_data.quest_event_id) {
+                    tooltipText += `任务事件: ${tileData.event_data.name || '特殊事件'}\n`;
+                    if (tileData.event_data.description) {
+                        tooltipText += `描述: ${tileData.event_data.description}\n`;
+                    }
+                    if (tileData.event_data.is_mandatory) {
+                        tooltipText += '类型: 必要任务事件\n';
+                    }
+                } else {
+                    tooltipText += `事件: ${eventNames[tileData.event_type] || tileData.event_type}\n`;
+                }
 
                 if (tileData.event_triggered) {
-                    tooltipText += '(已触发)\n';
+                    tooltipText += '状态: 已触发\n';
+                } else {
+                    tooltipText += '状态: 未触发\n';
                 }
             }
         } else {
