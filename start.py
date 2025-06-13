@@ -19,7 +19,9 @@ def check_dependencies():
         'uvicorn',
         'jinja2',
         'requests',
-        'pydantic'
+        'pydantic',
+        'loguru',
+        'PyMuPDF'  # 用户提到已安装的PDF处理库
     ]
     
     missing_packages = []
