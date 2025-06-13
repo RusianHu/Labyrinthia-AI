@@ -1,47 +1,17 @@
-# Labyrinthia AI - 项目依赖
-
-# ===== 核心Web框架 =====
-fastapi>=0.104.0
-uvicorn[standard]>=0.24.0
-
-# ===== 模板引擎 =====
-jinja2>=3.1.0
-
-# ===== HTTP客户端和网络 =====
-requests>=2.31.0
-httpx>=0.25.0  # 现代异步HTTP客户端，FastAPI推荐
-
-# ===== 数据验证和序列化 =====
-pydantic>=2.0.0
-
-# ===== 日志系统 =====
-loguru>=0.7.0
-
-# ===== 异步和并发处理 =====
-# 注意：asyncio是Python标准库，concurrent.futures也是标准库
-
-# ===== 数据处理和类型支持 =====
-# 注意：dataclasses, enum, typing, pathlib, datetime都是Python标准库
-
-# ===== 开发和测试工具 =====
-pytest>=7.4.0
-pytest-asyncio>=0.21.0
-pytest-httpx>=0.21.0  # 用于测试异步HTTP请求
-
-# ===== 代码质量工具 =====
-black>=23.0.0
-flake8>=6.0.0
-isort>=5.12.0  # 导入排序工具
-
-# ===== 类型检查 =====
-mypy>=1.5.0
-types-requests>=2.31.0  # requests的类型存根
-
-# ===== 安全和加密 =====
-cryptography>=41.0.0  # 用于安全功能
-
-# ===== 配置和环境管理 =====
-python-dotenv>=1.0.0  # 环境变量管理
-
-# ===== 性能监控和调试 =====
-psutil>=5.9.0  # 系统资源监控
+fastapi==0.115.0
+uvicorn[standard]==0.32.0
+Jinja2==3.1.4
+requests==2.32.3
+httpx==0.27.2
+pydantic==2.9.2
+loguru==0.7.2
+# 开发依赖
+pytest==8.3.3
+pytest-asyncio==0.24.0
+pytest-httpx==0.32.0
+black==24.10.0
+flake8==7.1.1
+isort==5.13.2
+mypy==1.13.0
+types-requests==2.32.0.20241016
+python-dotenv==1.0.1
