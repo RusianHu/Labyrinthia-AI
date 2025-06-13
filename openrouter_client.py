@@ -66,6 +66,7 @@ class OpenRouterClient:
     backoff_factor: float = 0.5
     proxies: Optional[Dict[str, str]] = None
     _history: List[Dict[str, Any]] = field(default_factory=list, init=False)
+    last_request_payload: Optional[Dict[str, Any]] = field(default=None, init=False)
     _session: requests.Session = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
@@ -269,12 +270,14 @@ class OpenRouterClient:
         stream: bool = False,
         **params: Any,
     ) -> Dict[str, Any]:
-        return {
+        payload = {
             "model": model or self.default_model,
             "messages": messages,
             "stream": stream,
             **params,
         }
+        self.last_request_payload = payload
+        return payload
 
     def _post(self, path: str, payload: Dict[str, Any], *, stream: bool = False) -> requests.Response:
         url = f"{self.base_url}{path}"

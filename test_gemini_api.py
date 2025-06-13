@@ -49,10 +49,15 @@ def test_gemini_connection(client: GeminiAPI):
         test_prompt = "Hello, Gemini. Please respond with 'OK' if you can hear me."
         print(f"发送测试提示: '{test_prompt}'")
         
+        # 构建测试用的generation_config
+        test_generation_config = {}
+        if config.llm.use_generation_params:
+            test_generation_config["temperature"] = 0.1  # 测试用低温度确保一致性
+
         response = client.single_turn(
             model=config.llm.model_name,
             text=test_prompt,
-            generation_config={"temperature": 0.1}
+            generation_config=test_generation_config
         )
 
         print("\nAPI 响应:")

@@ -55,6 +55,7 @@ class GeminiAPI:
         self.api_version = api_version
         self.default_timeout = default_timeout
         self.proxies = proxies or {}
+        self.last_request_payload: Optional[dict] = None
 
     # ---------------------------------------------------------------------
     # Low‑level helpers
@@ -65,6 +66,7 @@ class GeminiAPI:
 
     def _post(self, path: str, payload: dict, *, timeout: Optional[int] = None) -> dict:
         """HTTP POST with JSON payload and robust error handling."""
+        self.last_request_payload = payload
         url = self._url(path)
         t = timeout or self.default_timeout
 

@@ -6,7 +6,7 @@ LLM service wrapper for the Labyrinthia AI game
 import asyncio
 import json
 import logging
-from typing import Dict, List, Optional, Any, Union
+from typing import Dict, List, Optional, Any
 from concurrent.futures import ThreadPoolExecutor
 
 from gemini_api import GeminiAPI
@@ -62,15 +62,19 @@ class LLMService:
         
         def _sync_generate():
             try:
-                generation_config = {
-                    "temperature": config.llm.temperature,
-                    "top_p": config.llm.top_p,
-                }
-                
+                generation_config = {}
+
+                # 只有在启用生成参数时才添加temperature和top_p
+                if config.llm.use_generation_params:
+                    generation_config.update({
+                        "temperature": config.llm.temperature,
+                        "top_p": config.llm.top_p,
+                    })
+
                 # 如果设置了max_output_tokens，则添加到配置中
                 if config.llm.max_output_tokens:
                     generation_config["max_output_tokens"] = config.llm.max_output_tokens
-                
+
                 # 合并用户提供的配置
                 generation_config.update(kwargs.get("generation_config", {}))
                 
@@ -130,15 +134,19 @@ class LLMService:
         
         def _sync_generate_json():
             try:
-                generation_config = {
-                    "temperature": config.llm.temperature,
-                    "top_p": config.llm.top_p,
-                }
-                
+                generation_config = {}
+
+                # 只有在启用生成参数时才添加temperature和top_p
+                if config.llm.use_generation_params:
+                    generation_config.update({
+                        "temperature": config.llm.temperature,
+                        "top_p": config.llm.top_p,
+                    })
+
                 # 如果设置了max_output_tokens，则添加到配置中
                 if config.llm.max_output_tokens:
                     generation_config["max_output_tokens"] = config.llm.max_output_tokens
-                
+
                 # 合并用户提供的配置
                 generation_config.update(kwargs.get("generation_config", {}))
                 
@@ -665,6 +673,18 @@ class LLMService:
                 "effects": {}
             }
 
+    def get_last_request_payload(self) -> Optional[Dict[str, Any]]:
+        """获取最后一次发送给LLM的请求报文。
+        
+        注意：在并发请求的环境下，这个方法返回的报文可能不完全准确，
+        因为它只保留了最后一次完成的请求的报文。
+        在串行调用的场景下（例如测试脚本），这是可靠的。
+        """
+        if hasattr(self.client, 'last_request_payload'):
+            # 返回一个深拷贝以防止外部修改
+            import copy
+            return copy.deepcopy(self.client.last_request_payload)
+        return None
     def _get_nearby_terrain(self, game_state: GameState, x: int, y: int, radius: int = 2) -> List[str]:
         """获取周围地形信息"""
         terrain_list = []

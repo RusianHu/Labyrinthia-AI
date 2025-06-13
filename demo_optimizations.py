@@ -7,6 +7,8 @@ Demo script for game optimizations
 import asyncio
 import sys
 import os
+import json
+from llm_service import llm_service
 
 # 添加项目根目录到路径
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -15,6 +17,16 @@ from config import config
 from game_engine import game_engine
 from content_generator import content_generator
 from data_models import GameState, Character
+
+
+def print_last_request():
+    """获取并打印最后一次LLM请求报文"""
+    payload = llm_service.get_last_request_payload()
+    if payload:
+        print("\n" + "-" * 20 + " LLM Request Payload " + "-" * 20)
+        # 使用json.dumps美化输出，并确保非ASCII字符正确显示
+        print(json.dumps(payload, indent=2, ensure_ascii=False))
+        print("-" * 60)
 
 
 async def demo_stair_logic():
@@ -31,6 +43,7 @@ async def demo_stair_logic():
         game_map = await content_generator.generate_dungeon_map(
             width=8, height=8, depth=depth, theme="演示地下城"
         )
+        print_last_request()
         
         stairs_up = 0
         stairs_down = 0
@@ -62,6 +75,7 @@ async def demo_quest_system():
     
     # 生成任务
     quests = await content_generator.generate_quest_chain(player_level=2)
+    print_last_request()
     
     if not quests:
         print("❌ 未能生成任务")
@@ -98,6 +112,7 @@ async def demo_map_generation():
     
     # 生成任务
     quests = await content_generator.generate_quest_chain(player_level=2)
+    print_last_request()
     quest_context = quests[0].to_dict() if quests else None
     
     print(f"\n🏗️  生成带任务上下文的地图...")
@@ -111,6 +126,7 @@ async def demo_map_generation():
             theme="神秘遗迹",
             quest_context=quest_context
         )
+        print_last_request()
         
         print(f"   名称: {game_map.name}")
         print(f"   描述: {game_map.description[:80]}...")
@@ -144,6 +160,7 @@ async def demo_quest_monster_generation():
     
     # 生成任务
     quests = await content_generator.generate_quest_chain(player_level=2)
+    print_last_request()
     if quests:
         game_state.quests = quests
         game_state.quests[0].is_active = True
@@ -159,10 +176,12 @@ async def demo_quest_monster_generation():
         game_map = await content_generator.generate_dungeon_map(
             width=10, height=10, depth=depth, quest_context=quest_context
         )
+        print_last_request()
         game_state.current_map = game_map
         
         # 生成任务怪物
         quest_monsters = await game_engine._generate_quest_monsters(game_state, game_map)
+        print_last_request()
         
         if quest_monsters:
             for monster in quest_monsters:
