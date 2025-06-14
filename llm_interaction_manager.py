@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from data_models import GameState, Monster, Item
 from llm_service import llm_service
 from prompt_manager import prompt_manager
+from config import config
 
 
 logger = logging.getLogger(__name__)
@@ -75,18 +76,63 @@ class LLMInteractionManager:
         self._cleanup_history()
     
     def _cleanup_history(self):
-        """清理历史记录"""
+        """清理历史记录 - 基于数量和token估算的智能清理"""
+        # 基础数量限制
         if len(self.recent_contexts) > 15:
             self.recent_contexts = self.recent_contexts[-10:]
-        
+
         if len(self.combat_history) > 10:
             self.combat_history = self.combat_history[-7:]
-            
+
         if len(self.movement_trail) > 15:
             self.movement_trail = self.movement_trail[-10:]
-            
+
         if len(self.session_events) > 30:
             self.session_events = self.session_events[-20:]
+
+        # Token估算清理
+        self._cleanup_by_token_estimate()
+
+    def _cleanup_by_token_estimate(self):
+        """基于token估算进行清理"""
+        # 估算当前历史记录的token数量
+        estimated_tokens = self._estimate_history_tokens()
+        max_history_tokens = getattr(config.llm, 'max_history_tokens', 2000)
+
+        if estimated_tokens > max_history_tokens:
+            # 逐步减少历史记录直到token数量合理
+            while estimated_tokens > max_history_tokens and len(self.session_events) > 5:
+                # 优先减少会话事件
+                self.session_events = self.session_events[2:]
+                estimated_tokens = self._estimate_history_tokens()
+
+            while estimated_tokens > max_history_tokens and len(self.recent_contexts) > 3:
+                # 然后减少交互上下文
+                self.recent_contexts = self.recent_contexts[1:]
+                estimated_tokens = self._estimate_history_tokens()
+
+    def _estimate_history_tokens(self) -> int:
+        """估算历史记录的token数量"""
+        total_chars = 0
+
+        # 估算会话事件的字符数
+        for event in self.session_events:
+            total_chars += len(str(event))
+
+        # 估算交互上下文的字符数
+        for context in self.recent_contexts:
+            total_chars += len(str(context.events))
+            total_chars += len(context.primary_action)
+
+        # 估算战斗历史的字符数
+        for combat in self.combat_history:
+            total_chars += len(str(combat))
+
+        # 粗略估算：中文约2-3字符=1token，英文约4字符=1token
+        # 使用保守估算：2.5字符=1token
+        estimated_tokens = int(total_chars / 2.5)
+
+        return estimated_tokens
     
     async def generate_contextual_narrative(self, game_state: GameState,
                                           context: InteractionContext) -> str:

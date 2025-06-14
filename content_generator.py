@@ -590,6 +590,45 @@ class ContentGenerator:
 
         return random.sample(floor_tiles, count)
 
+    def find_stairs_position(self, game_map: GameMap, stairs_type: TerrainType) -> Optional[Tuple[int, int]]:
+        """查找指定类型楼梯的位置"""
+        for (x, y), tile in game_map.tiles.items():
+            if tile.terrain == stairs_type:
+                return (x, y)
+        return None
+
+    def get_stairs_spawn_position(self, game_map: GameMap, stairs_type: TerrainType) -> Optional[Tuple[int, int]]:
+        """获取楼梯附近的生成位置"""
+        stairs_pos = self.find_stairs_position(game_map, stairs_type)
+        if not stairs_pos:
+            return None
+
+        stairs_x, stairs_y = stairs_pos
+
+        # 查找楼梯周围的空地板位置
+        for radius in range(1, 4):  # 逐渐扩大搜索范围
+            candidates = []
+            for dx in range(-radius, radius + 1):
+                for dy in range(-radius, radius + 1):
+                    if dx == 0 and dy == 0:  # 跳过楼梯本身
+                        continue
+
+                    x, y = stairs_x + dx, stairs_y + dy
+                    tile = game_map.get_tile(x, y)
+
+                    if (tile and
+                        tile.terrain == TerrainType.FLOOR and
+                        not tile.character_id):
+                        candidates.append((x, y))
+
+            if candidates:
+                # 优先选择距离楼梯最近的位置
+                candidates.sort(key=lambda pos: abs(pos[0] - stairs_x) + abs(pos[1] - stairs_y))
+                return candidates[0]
+
+        # 如果楼梯周围没有空位，返回楼梯位置本身
+        return stairs_pos
+
     async def _generate_map_events(self, game_map: GameMap, rooms: List[Dict[str, int]], quest_context: Optional[Dict[str, Any]] = None):
         """为地图生成事件"""
         floor_tiles = [(x, y) for (x, y), tile in game_map.tiles.items()

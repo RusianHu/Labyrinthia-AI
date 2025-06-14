@@ -1149,15 +1149,20 @@ class GameEngine:
         # 更新游戏状态
         game_state.current_map = new_map
 
-        # 设置玩家位置到新地图的上楼梯处
-        spawn_positions = content_generator.get_spawn_positions(new_map, 1)
-        if spawn_positions:
-            game_state.player.position = spawn_positions[0]
-            tile = new_map.get_tile(*game_state.player.position)
-            if tile:
-                tile.character_id = game_state.player.id
-                tile.is_explored = True
-                tile.is_visible = True
+        # 设置玩家位置到新地图的上楼梯附近
+        # 下楼时，玩家应该出现在新地图的上楼梯附近
+        spawn_position = content_generator.get_stairs_spawn_position(new_map, TerrainType.STAIRS_UP)
+        if not spawn_position:
+            # 如果没有上楼梯或附近没有空位，使用随机位置
+            spawn_positions = content_generator.get_spawn_positions(new_map, 1)
+            spawn_position = spawn_positions[0] if spawn_positions else (1, 1)
+
+        game_state.player.position = spawn_position
+        tile = new_map.get_tile(*game_state.player.position)
+        if tile:
+            tile.character_id = game_state.player.id
+            tile.is_explored = True
+            tile.is_visible = True
 
         # 生成新的怪物
         monsters = await content_generator.generate_encounter_monsters(
@@ -1208,15 +1213,20 @@ class GameEngine:
 
         game_state.current_map = new_map
 
-        # 设置玩家位置
-        spawn_positions = content_generator.get_spawn_positions(new_map, 1)
-        if spawn_positions:
-            game_state.player.position = spawn_positions[0]
-            tile = new_map.get_tile(*game_state.player.position)
-            if tile:
-                tile.character_id = game_state.player.id
-                tile.is_explored = True
-                tile.is_visible = True
+        # 设置玩家位置到新地图的下楼梯附近
+        # 上楼时，玩家应该出现在新地图的下楼梯附近
+        spawn_position = content_generator.get_stairs_spawn_position(new_map, TerrainType.STAIRS_DOWN)
+        if not spawn_position:
+            # 如果没有下楼梯或附近没有空位，使用随机位置
+            spawn_positions = content_generator.get_spawn_positions(new_map, 1)
+            spawn_position = spawn_positions[0] if spawn_positions else (1, 1)
+
+        game_state.player.position = spawn_position
+        tile = new_map.get_tile(*game_state.player.position)
+        if tile:
+            tile.character_id = game_state.player.id
+            tile.is_explored = True
+            tile.is_visible = True
 
         # 使用新的进程管理器更新任务进度
         await self._trigger_progress_event(
