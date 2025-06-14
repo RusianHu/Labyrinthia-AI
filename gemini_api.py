@@ -81,7 +81,28 @@ class GeminiAPI:
             'Upgrade-Insecure-Requests': '1',
         }
 
-        resp = requests.post(url, json=payload, timeout=t, proxies=self.proxies, headers=headers)
+        # 尝试使用编码转换器处理请求
+        try:
+            # 导入编码转换器（延迟导入避免循环依赖）
+            from encoding_utils import encoding_converter
+
+            if encoding_converter.enabled and encoding_converter.force_utf8:
+                # UTF-8强制编码方式：手动序列化JSON
+                json_data = encoding_converter.create_safe_json_payload(payload)
+                headers['Content-Type'] = 'application/json; charset=utf-8'
+                resp = requests.post(url, data=json_data.encode('utf-8'), timeout=t, proxies=self.proxies, headers=headers)
+            else:
+                # 默认方式
+                resp = requests.post(url, json=payload, timeout=t, proxies=self.proxies, headers=headers)
+
+        except ImportError:
+            # 如果编码转换器不可用，使用默认方式
+            resp = requests.post(url, json=payload, timeout=t, proxies=self.proxies, headers=headers)
+        except Exception as e:
+            # 如果编码转换失败，回退到默认方式
+            print(f"Encoding conversion failed, using default method: {e}")
+            resp = requests.post(url, json=payload, timeout=t, proxies=self.proxies, headers=headers)
+
         try:
             resp.raise_for_status()
         except requests.HTTPError as exc:

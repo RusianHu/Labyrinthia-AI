@@ -13,6 +13,7 @@ from gemini_api import GeminiAPI
 from openrouter_client import OpenRouterClient, ChatError
 from config import config, LLMProvider
 from data_models import Character, Monster, GameMap, Quest, GameState, Item
+from encoding_utils import encoding_converter
 
 
 logger = logging.getLogger(__name__)
@@ -55,7 +56,112 @@ class LLMService:
             )
         else:
             raise NotImplementedError(f"LLM provider {self.provider} not implemented yet")
-    
+
+    def _parse_json_response(self, text: str) -> Dict[str, Any]:
+        """
+        健壮的JSON响应解析方法，处理各种编码和格式问题
+
+        Args:
+            text: 原始响应文本
+
+        Returns:
+            解析后的JSON字典，解析失败时返回空字典
+        """
+        if not text or not text.strip():
+            logger.warning("Empty response text for JSON parsing")
+            return {}
+
+        # 清理文本
+        cleaned_text = text.strip()
+
+        # 移除BOM字符
+        if cleaned_text.startswith('\ufeff'):
+            cleaned_text = cleaned_text[1:]
+
+        # 移除markdown代码块标记
+        if cleaned_text.startswith('```json'):
+            cleaned_text = cleaned_text[7:]
+        if cleaned_text.startswith('```'):
+            cleaned_text = cleaned_text[3:]
+        if cleaned_text.endswith('```'):
+            cleaned_text = cleaned_text[:-3]
+
+        cleaned_text = cleaned_text.strip()
+
+        # 尝试多种解析方法
+        parse_attempts = [
+            # 方法1：直接解析
+            lambda: json.loads(cleaned_text),
+            # 方法2：处理可能的列表响应
+            lambda: self._handle_list_response(cleaned_text),
+            # 方法3：使用编码转换器
+            lambda: self._parse_with_encoding_converter(cleaned_text),
+            # 方法4：修复常见JSON格式问题
+            lambda: self._parse_with_json_fixes(cleaned_text),
+        ]
+
+        for i, parse_func in enumerate(parse_attempts, 1):
+            try:
+                result = parse_func()
+                if isinstance(result, dict):
+                    logger.debug(f"JSON parsing succeeded with method {i}")
+                    return result
+                elif isinstance(result, list) and result:
+                    # 如果是列表，尝试返回第一个字典元素
+                    for item in result:
+                        if isinstance(item, dict):
+                            logger.debug(f"JSON parsing succeeded with method {i} (extracted from list)")
+                            return item
+                    logger.warning(f"JSON parsing method {i} returned list without dict elements")
+                else:
+                    logger.warning(f"JSON parsing method {i} returned unexpected type: {type(result)}")
+            except Exception as e:
+                logger.debug(f"JSON parsing method {i} failed: {e}")
+                continue
+
+        # 所有方法都失败
+        logger.error(f"All JSON parsing methods failed for text: {cleaned_text[:200]}...")
+        return {}
+
+    def _handle_list_response(self, text: str) -> Dict[str, Any]:
+        """处理LLM返回列表而非字典的情况"""
+        parsed = json.loads(text)
+        if isinstance(parsed, list) and parsed:
+            # 返回列表中的第一个字典
+            for item in parsed:
+                if isinstance(item, dict):
+                    return item
+        elif isinstance(parsed, dict):
+            return parsed
+        return {}
+
+    def _parse_with_encoding_converter(self, text: str) -> Dict[str, Any]:
+        """使用编码转换器解析"""
+        if encoding_converter.enabled:
+            # 验证编码
+            if not encoding_converter.validate_encoding(text):
+                logger.warning("Invalid encoding detected in response text")
+                return {}
+
+        return json.loads(text)
+
+    def _parse_with_json_fixes(self, text: str) -> Dict[str, Any]:
+        """修复常见的JSON格式问题后解析"""
+        # 修复常见问题
+        fixed_text = text
+
+        # 修复单引号
+        fixed_text = fixed_text.replace("'", '"')
+
+        # 修复尾随逗号
+        import re
+        fixed_text = re.sub(r',(\s*[}\]])', r'\1', fixed_text)
+
+        # 修复未转义的换行符
+        fixed_text = fixed_text.replace('\n', '\\n').replace('\r', '\\r')
+
+        return json.loads(fixed_text)
+
     async def _async_generate(self, prompt: str, **kwargs) -> str:
         """异步生成内容"""
         loop = asyncio.get_event_loop()
@@ -163,17 +269,11 @@ class LLMService:
                     if response.get("candidates") and response["candidates"][0].get("content"):
                         parts = response["candidates"][0]["content"].get("parts", [])
                         if parts and parts[0].get("text"):
-                            try:
-                                parsed_json = json.loads(parts[0]["text"])
-                                if isinstance(parsed_json, dict):
-                                    return parsed_json
-                                else:
-                                    logger.warning(f"LLM returned a non-dict JSON: {type(parsed_json)}")
-                                    return {}
-                            except json.JSONDecodeError as e:
-                                logger.error(f"Failed to parse JSON response: {e}")
-                                return {}
-                    
+                            # 使用健壮的JSON解析方法
+                            parsed_json = self._parse_json_response(parts[0]["text"])
+                            if parsed_json:
+                                return parsed_json
+
                     logger.warning("LLM JSON response format unexpected")
                     return {}
 
