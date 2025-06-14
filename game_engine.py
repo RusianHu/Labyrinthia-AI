@@ -22,6 +22,7 @@ from item_effect_processor import item_effect_processor
 from llm_interaction_manager import (
     llm_interaction_manager, InteractionType, InteractionContext
 )
+from prompt_manager import prompt_manager
 
 
 logger = logging.getLogger(__name__)
@@ -981,23 +982,19 @@ class GameEngine:
             progress_value = event_data.get("progress_value", 0.0)
             is_mandatory = event_data.get("is_mandatory", True)
 
-            # 使用更详细的提示生成任务相关的故事内容
-            prompt = f"""
-            为玩家生成一个任务相关的故事事件。
-
-            事件信息：
-            - 事件名称：{event_name}
-            - 事件描述：{event_description}
-            - 是否必须：{is_mandatory}
-
-            玩家当前位置：({tile.x}, {tile.y})
-            玩家等级：{game_state.player.stats.level}
-            地图：{game_state.current_map.name}
-
-            请生成一个与任务相关的生动故事描述（100-150字），体现事件的重要性。
-            """
-
+            # 使用PromptManager生成任务相关的故事内容
             try:
+                prompt = prompt_manager.format_prompt(
+                    "quest_event_story",
+                    event_name=event_name,
+                    event_description=event_description,
+                    is_mandatory=is_mandatory,
+                    player_x=tile.x,
+                    player_y=tile.y,
+                    player_level=game_state.player.stats.level,
+                    map_name=game_state.current_map.name
+                )
+
                 story_text = await llm_service.generate_text(prompt)
                 result_message = story_text or f"你发现了重要的线索：{event_name}"
             except Exception as e:

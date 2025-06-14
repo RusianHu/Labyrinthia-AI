@@ -1,0 +1,114 @@
+{
+  "templates": {
+    "map_info_generation": {
+      "name": "map_info_generation",
+      "category": "map_generation",
+      "template": "为一个{width}x{height}的地下城第{depth}层生成名称和描述。\n基础主题：{theme}{quest_info}\n\n请返回JSON格式：\n{{\n    \"name\": \"地图名称（中文，体现主题和任务特色）\",\n    \"description\": \"地图描述（详细描述环境、氛围和可能的挑战）\"\n}}",
+      "required_params": ["width", "height", "depth", "theme"],
+      "optional_params": {"quest_info": ""},
+      "description": "生成地图基本信息（名称和描述）",
+      "version": "1.0"
+    },
+    "item_pickup_generation": {
+      "name": "item_pickup_generation", 
+      "category": "item_system",
+      "template": "为一个DnD风格的冒险游戏生成一个物品，玩家刚刚在地图上发现了它。\n\n玩家信息：\n- 名称：{player_name}\n- 职业：{player_class}\n- 等级：{player_level}\n- 当前位置：{player_position}\n\n地图信息：\n- 地图名称：{map_name}\n- 地图描述：{map_description}\n- 地图深度：{map_depth}层\n\n拾取上下文：{pickup_context}\n\n请生成一个适合当前情况的物品，要求：\n1. 必须有中文名称\n2. 详细的功能和使用场景介绍\n3. 物品类型要合理（weapon/armor/consumable/misc）\n4. 稀有度要符合地图深度和玩家等级\n5. 使用说明要清晰明确\n\n请返回JSON格式的物品数据。",
+      "required_params": ["player_name", "player_class", "player_level", "player_position", "map_name", "map_description", "map_depth", "pickup_context"],
+      "optional_params": {},
+      "schema": {
+        "type": "object",
+        "properties": {
+          "name": {"type": "string"},
+          "description": {"type": "string"},
+          "item_type": {"type": "string", "enum": ["weapon", "armor", "consumable", "misc"]},
+          "rarity": {"type": "string", "enum": ["common", "uncommon", "rare", "epic", "legendary"]},
+          "value": {"type": "integer", "minimum": 1},
+          "weight": {"type": "number", "minimum": 0.1},
+          "usage_description": {"type": "string"},
+          "damage": {"type": "integer", "minimum": 0},
+          "armor_class": {"type": "integer", "minimum": 0},
+          "healing": {"type": "integer", "minimum": 0},
+          "mana_restore": {"type": "integer", "minimum": 0}
+        },
+        "required": ["name", "description", "item_type", "rarity", "value", "weight", "usage_description"]
+      },
+      "description": "生成玩家拾取的物品",
+      "version": "1.0"
+    },
+    "quest_generation": {
+      "name": "quest_generation",
+      "category": "quest_system", 
+      "template": "请为等级{player_level}的玩家生成一个DnD风格的任务。\n\n上下文信息：{context}\n\n请返回JSON格式的任务数据，包含：\n- title: 任务标题\n- description: 任务描述\n- objectives: 目标列表（字符串数组）\n- experience_reward: 经验奖励\n\n确保任务适合玩家等级，有趣且具有挑战性。",
+      "required_params": ["player_level"],
+      "optional_params": {"context": ""},
+      "schema": {
+        "type": "object",
+        "properties": {
+          "title": {"type": "string"},
+          "description": {"type": "string"},
+          "objectives": {
+            "type": "array",
+            "items": {"type": "string"}
+          },
+          "experience_reward": {"type": "integer", "minimum": 0}
+        },
+        "required": ["title", "description", "objectives", "experience_reward"]
+      },
+      "description": "生成适合玩家等级的任务",
+      "version": "1.0"
+    },
+    "quest_event_story": {
+      "name": "quest_event_story",
+      "category": "quest_system",
+      "template": "为玩家生成一个任务相关的故事事件。\n\n事件信息：\n- 事件名称：{event_name}\n- 事件描述：{event_description}\n- 是否必须：{is_mandatory}\n\n玩家当前位置：({player_x}, {player_y})\n玩家等级：{player_level}\n地图：{map_name}\n\n请生成一个与任务相关的生动故事描述（100-150字），体现事件的重要性。",
+      "required_params": ["event_name", "event_description", "is_mandatory", "player_x", "player_y", "player_level", "map_name"],
+      "optional_params": {},
+      "description": "生成任务相关的故事事件",
+      "version": "1.0"
+    },
+    "general_narrative": {
+      "name": "general_narrative",
+      "category": "narrative",
+      "template": "玩家信息：\n- 名称：{player_name}\n- 等级：{player_level}\n- 生命值：{player_hp}/{player_max_hp}\n- 位置：{player_position}\n\n当前地图：{map_name}\n回合数：{turn_count}\n\n上下文信息：\n- 最近事件：{recent_events}\n- 战斗情况：{combat_summary}\n- 移动情况：{movement_pattern}\n- 环境状态：{environmental_state}\n- 任务状态：{quest_status}\n\n刚刚发生的事件：{current_events}\n主要行动：{primary_action}\n\n请根据当前情况和上下文信息，生成一段连贯的叙述文本，\n描述行动的结果、环境的变化和玩家的感受。(80-120字)",
+      "required_params": ["player_name", "player_level", "player_hp", "player_max_hp", "player_position", "map_name", "turn_count", "recent_events", "combat_summary", "movement_pattern", "environmental_state", "quest_status", "current_events", "primary_action"],
+      "optional_params": {},
+      "description": "生成通用的游戏叙述文本",
+      "version": "1.0"
+    },
+    "monster_generation": {
+      "name": "monster_generation",
+      "category": "combat_system",
+      "template": "为等级{player_level}的玩家生成一个DnD风格的怪物。\n\n难度要求：{difficulty}\n上下文信息：{context}\n\n请返回JSON格式的怪物数据，包含：\n- name: 怪物名称（中文）\n- description: 怪物描述\n- creature_type: 生物类型\n- stats: 属性数据（hp, attack, defense等）\n- abilities: 特殊能力列表\n\n确保怪物适合玩家等级和指定难度。",
+      "required_params": ["player_level", "difficulty"],
+      "optional_params": {"context": ""},
+      "description": "生成适合玩家等级的怪物",
+      "version": "1.0"
+    },
+    "item_usage_effect": {
+      "name": "item_usage_effect",
+      "category": "item_system",
+      "template": "玩家正在使用一个物品，请根据物品属性和当前游戏状态，生成使用效果。\n\n物品信息：\n- 名称：{item_name}\n- 描述：{item_description}\n- 类型：{item_type}\n- 稀有度：{item_rarity}\n- 使用说明：{item_usage_description}\n- 属性：{item_properties}\n\n玩家信息：\n- 名称：{player_name}\n- 职业：{player_class}\n- 等级：{player_level}\n- 生命值：{player_hp}/{player_max_hp}\n- 法力值：{player_mp}/{player_max_mp}\n- 护甲等级：{player_ac}\n- 经验值：{player_experience}\n- 当前位置：{player_position}\n\n地图信息：{map_info}\n\n请根据物品的特性和当前情况，生成合理的使用效果。可以包括：\n- 属性变化（生命值、法力值、经验值等）\n- 传送效果\n- 地图变化\n- 特殊效果\n\n请返回JSON格式的效果数据。",
+      "required_params": ["item_name", "item_description", "item_type", "item_rarity", "item_usage_description", "item_properties", "player_name", "player_class", "player_level", "player_hp", "player_max_hp", "player_mp", "player_max_mp", "player_ac", "player_experience", "player_position", "map_info"],
+      "optional_params": {},
+      "description": "生成物品使用的效果",
+      "version": "1.0"
+    },
+    "map_description": {
+      "name": "map_description",
+      "category": "map_generation",
+      "template": "请为这个地下城地图生成一个生动的描述。\n\n地图信息：\n- 名称：{map_name}\n- 大小：{width}x{height}\n- 层数：{depth}\n\n上下文信息：{context}\n\n请生成一个富有想象力的地图描述，包括环境、氛围、可能的危险等。",
+      "required_params": ["map_name", "width", "height", "depth"],
+      "optional_params": {"context": ""},
+      "description": "生成详细的地图环境描述",
+      "version": "1.0"
+    }
+  },
+  "fallback_messages": {
+    "combat_defense": "你感受到了敌人攻击的冲击，但依然坚持战斗。",
+    "combat_attack": "你的攻击命中了目标，战斗继续进行。",
+    "movement": "你谨慎地移动到新的位置，观察着周围的环境。",
+    "item_use": "你使用了物品，感受到了它带来的效果。",
+    "event_trigger": "你触发了一个事件，情况发生了变化。",
+    "default": "你继续着冒险的旅程。"
+  }
+}

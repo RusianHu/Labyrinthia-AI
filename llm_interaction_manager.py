@@ -10,6 +10,7 @@ from dataclasses import dataclass
 
 from data_models import GameState, Monster, Item
 from llm_service import llm_service
+from prompt_manager import prompt_manager
 
 
 logger = logging.getLogger(__name__)
@@ -87,17 +88,28 @@ class LLMInteractionManager:
         if len(self.session_events) > 30:
             self.session_events = self.session_events[-20:]
     
-    async def generate_contextual_narrative(self, game_state: GameState, 
+    async def generate_contextual_narrative(self, game_state: GameState,
                                           context: InteractionContext) -> str:
         """生成具有上下文的叙述文本"""
-        
+
         # 构建详细的上下文信息
         context_info = self._build_context_info(game_state, context)
-        
-        # 根据交互类型选择合适的提示模板
-        prompt = self._build_prompt(game_state, context, context_info)
-        
+
         try:
+            # 使用PromptManager构建提示词
+            game_context = prompt_manager.build_game_context(game_state)
+            narrative_context = {
+                **game_context,
+                "recent_events": '; '.join(context_info['recent_events']),
+                "combat_summary": context_info['combat_summary'],
+                "movement_pattern": context_info['movement_pattern'],
+                "environmental_state": context_info['environmental_state'],
+                "quest_status": context_info['quest_status'],
+                "current_events": '; '.join(context.events),
+                "primary_action": context.primary_action
+            }
+
+            prompt = prompt_manager.format_prompt("general_narrative", **narrative_context)
             narrative = await llm_service._async_generate(prompt)
             logger.info(f"生成叙述文本 - 类型: {context.interaction_type.value}, 长度: {len(narrative)}")
             return narrative
@@ -260,15 +272,17 @@ class LLMInteractionManager:
     
     def _get_fallback_narrative(self, context: InteractionContext) -> str:
         """获取备用叙述文本"""
-        fallback_texts = {
-            InteractionType.COMBAT_DEFENSE: "你感受到了敌人攻击的冲击，但依然坚持战斗。",
-            InteractionType.COMBAT_ATTACK: "你的攻击命中了目标，战斗继续进行。",
-            InteractionType.MOVEMENT: "你谨慎地移动到新的位置，观察着周围的环境。",
-            InteractionType.ITEM_USE: "你使用了物品，感受到了它带来的效果。",
-            InteractionType.EVENT_TRIGGER: "你触发了一个事件，情况发生了变化。"
+        # 使用PromptManager的备用消息
+        interaction_type_map = {
+            InteractionType.COMBAT_DEFENSE: "combat_defense",
+            InteractionType.COMBAT_ATTACK: "combat_attack",
+            InteractionType.MOVEMENT: "movement",
+            InteractionType.ITEM_USE: "item_use",
+            InteractionType.EVENT_TRIGGER: "event_trigger"
         }
-        
-        return fallback_texts.get(context.interaction_type, "你继续着冒险的旅程。")
+
+        interaction_key = interaction_type_map.get(context.interaction_type, "default")
+        return prompt_manager.get_fallback_message(interaction_key)
 
 
 # 全局LLM交互管理器实例

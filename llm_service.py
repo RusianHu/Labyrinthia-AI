@@ -14,6 +14,7 @@ from openrouter_client import OpenRouterClient, ChatError
 from config import config, LLMProvider
 from data_models import Character, Monster, GameMap, Quest, GameState, Item
 from encoding_utils import encoding_converter
+from prompt_manager import prompt_manager
 
 
 logger = logging.getLogger(__name__)
@@ -384,6 +385,14 @@ class LLMService:
     
     async def generate_monster(self, challenge_rating: float = 1.0, context: str = "") -> Optional[Monster]:
         """生成怪物"""
+        # 使用PromptManager构建提示词
+        prompt = prompt_manager.format_prompt(
+            "monster_generation",
+            player_level=int(challenge_rating * 2),  # 简单的等级转换
+            difficulty="easy" if challenge_rating < 1.0 else "medium" if challenge_rating < 2.0 else "hard",
+            context=context
+        )
+
         # 使用generate_character生成基础角色，然后转换为Monster
         monster_context = f"挑战等级{challenge_rating}的怪物。{context}"
         character = await self.generate_character("monster", monster_context)
@@ -419,51 +428,25 @@ class LLMService:
     
     async def generate_map_description(self, map_data: GameMap, context: str = "") -> str:
         """生成地图描述"""
-        prompt = f"""
-        请为这个地下城地图生成一个生动的描述。
-        
-        地图信息：
-        - 名称：{map_data.name}
-        - 大小：{map_data.width}x{map_data.height}
-        - 层数：{map_data.depth}
-        
-        上下文信息：{context}
-        
-        请生成一个富有想象力的地图描述，包括环境、氛围、可能的危险等。
-        """
-        
+        # 使用PromptManager构建提示词
+        map_context = prompt_manager.build_map_context(map_data)
+        map_context["context"] = context
+
+        prompt = prompt_manager.format_prompt("map_description", **map_context)
         return await self._async_generate(prompt)
     
     async def generate_quest(self, player_level: int = 1, context: str = "") -> Optional[Quest]:
         """生成任务"""
-        prompt = f"""
-        请为等级{player_level}的玩家生成一个DnD风格的任务。
-        
-        上下文信息：{context}
-        
-        请返回JSON格式的任务数据，包含：
-        - title: 任务标题
-        - description: 任务描述
-        - objectives: 目标列表（字符串数组）
-        - experience_reward: 经验奖励
-        
-        确保任务适合玩家等级，有趣且具有挑战性。
-        """
-        
-        schema = {
-            "type": "object",
-            "properties": {
-                "title": {"type": "string"},
-                "description": {"type": "string"},
-                "objectives": {
-                    "type": "array",
-                    "items": {"type": "string"}
-                },
-                "experience_reward": {"type": "integer", "minimum": 0}
-            },
-            "required": ["title", "description", "objectives", "experience_reward"]
-        }
-        
+        # 使用PromptManager构建提示词
+        prompt = prompt_manager.format_prompt(
+            "quest_generation",
+            player_level=player_level,
+            context=context
+        )
+
+        # 获取对应的schema
+        schema = prompt_manager.get_schema("quest_generation")
+
         try:
             result = await self._async_generate_json(prompt, schema)
             if result:
@@ -476,7 +459,7 @@ class LLMService:
                 return quest
         except Exception as e:
             logger.error(f"Failed to generate quest: {e}")
-        
+
         return None
     
     async def generate_narrative(self, game_state: GameState, action: str) -> str:
@@ -538,70 +521,22 @@ class LLMService:
 
         return await self._async_generate(prompt)
 
+    async def generate_text(self, prompt: str) -> str:
+        """生成文本（通用方法）"""
+        return await self._async_generate(prompt)
+
     async def generate_item_on_pickup(self, game_state: GameState,
                                     pickup_context: str = "") -> Optional[Item]:
         """在拾取时生成物品"""
-        player = game_state.player
-        current_map = game_state.current_map
+        # 使用PromptManager构建提示词
+        player_context = prompt_manager.build_player_context(game_state.player)
+        map_context = prompt_manager.build_map_context(game_state.current_map)
 
-        prompt = f"""
-        为一个DnD风格的冒险游戏生成一个物品，玩家刚刚在地图上发现了它。
+        # 合并所有上下文
+        context = {**player_context, **map_context, "pickup_context": pickup_context}
 
-        玩家信息：
-        - 名称：{player.name}
-        - 职业：{player.character_class.value}
-        - 等级：{player.stats.level}
-        - 当前位置：{player.position}
-
-        地图信息：
-        - 地图名称：{current_map.name}
-        - 地图描述：{current_map.description}
-        - 地图深度：{current_map.depth}层
-
-        拾取上下文：{pickup_context}
-
-        请生成一个适合当前情况的物品，要求：
-        1. 必须有中文名称
-        2. 详细的功能和使用场景介绍
-        3. 物品类型要合理（weapon/armor/consumable/misc）
-        4. 稀有度要符合地图深度和玩家等级
-        5. 使用说明要清晰明确
-
-        请返回JSON格式：
-        {{
-            "name": "物品的中文名称",
-            "description": "物品的详细描述，包括外观和背景故事",
-            "item_type": "物品类型（weapon/armor/consumable/misc）",
-            "rarity": "稀有度（common/uncommon/rare/epic/legendary）",
-            "value": 物品价值（金币）,
-            "weight": 物品重量,
-            "usage_description": "详细的使用说明和效果描述",
-            "damage": "武器伤害（如果是武器，否则留空）",
-            "armor_class": "护甲等级（如果是护甲，否则留空）",
-            "healing": 治疗量（如果是治疗物品，否则为0）,
-            "mana_restore": 法力恢复量（如果恢复法力，否则为0）,
-            "special_effect": "特殊效果描述（如果有特殊效果）"
-        }}
-        """
-
-        schema = {
-            "type": "object",
-            "properties": {
-                "name": {"type": "string"},
-                "description": {"type": "string"},
-                "item_type": {"type": "string", "enum": ["weapon", "armor", "consumable", "misc"]},
-                "rarity": {"type": "string", "enum": ["common", "uncommon", "rare", "epic", "legendary"]},
-                "value": {"type": "integer", "minimum": 0},
-                "weight": {"type": "number", "minimum": 0},
-                "usage_description": {"type": "string"},
-                "damage": {"type": "string"},
-                "armor_class": {"type": "string"},
-                "healing": {"type": "integer"},
-                "mana_restore": {"type": "integer"},
-                "special_effect": {"type": "string"}
-            },
-            "required": ["name", "description", "item_type", "rarity", "value", "weight", "usage_description"]
-        }
+        prompt = prompt_manager.format_prompt("item_pickup_generation", **context)
+        schema = prompt_manager.get_schema("item_pickup_generation")
 
         try:
             result = await self._async_generate_json(prompt, schema)
@@ -639,74 +574,23 @@ class LLMService:
 
     async def process_item_usage(self, game_state: GameState, item: Item) -> Dict[str, Any]:
         """处理物品使用，返回效果数据"""
-        player = game_state.player
-        current_map = game_state.current_map
+        # 使用PromptManager构建提示词
+        player_context = prompt_manager.build_player_context(game_state.player)
+        item_context = prompt_manager.build_item_context(item)
 
         # 构建地图状态信息
         map_info = {
-            "name": current_map.name,
-            "description": current_map.description,
-            "depth": current_map.depth,
-            "player_position": player.position,
-            "nearby_terrain": self._get_nearby_terrain(game_state, player.position[0], player.position[1])
+            "name": game_state.current_map.name,
+            "description": game_state.current_map.description,
+            "depth": game_state.current_map.depth,
+            "player_position": game_state.player.position,
+            "nearby_terrain": self._get_nearby_terrain(game_state, game_state.player.position[0], game_state.player.position[1])
         }
 
-        prompt = f"""
-        玩家正在使用一个物品，请根据物品属性和当前游戏状态，生成使用效果。
+        # 合并所有上下文
+        context = {**player_context, **item_context, "map_info": map_info}
 
-        物品信息：
-        - 名称：{item.name}
-        - 描述：{item.description}
-        - 类型：{item.item_type}
-        - 稀有度：{item.rarity}
-        - 使用说明：{item.usage_description}
-        - 属性：{item.properties}
-
-        玩家信息：
-        - 名称：{player.name}
-        - 职业：{player.character_class.value}
-        - 等级：{player.stats.level}
-        - 生命值：{player.stats.hp}/{player.stats.max_hp}
-        - 法力值：{player.stats.mp}/{player.stats.max_mp}
-        - 护甲等级：{player.stats.ac}
-        - 经验值：{player.stats.experience}
-        - 当前位置：{player.position}
-
-        地图信息：{map_info}
-
-        请根据物品的特性和当前情况，生成合理的使用效果。可以包括：
-        - 属性变化（生命值、法力值、经验值等）
-        - 传送效果
-        - 地图变化
-        - 特殊效果
-
-        请返回JSON格式：
-        {{
-            "message": "使用物品后的描述信息",
-            "events": ["事件描述1", "事件描述2"],
-            "item_consumed": true,
-            "effects": {{
-                "stat_changes": {{
-                    "hp": 变化量,
-                    "mp": 变化量,
-                    "experience": 变化量
-                }},
-                "teleport": {{
-                    "type": "random/specific/stairs",
-                    "x": 目标x坐标（如果是specific）,
-                    "y": 目标y坐标（如果是specific）
-                }},
-                "map_changes": [
-                    {{
-                        "x": x坐标,
-                        "y": y坐标,
-                        "terrain": "新地形类型"
-                    }}
-                ],
-                "special_effects": ["reveal_map", "heal_full", "level_up"]
-            }}
-        }}
-        """
+        prompt = prompt_manager.format_prompt("item_usage_effect", **context)
 
         # 定义物品使用效果的JSON schema
         schema = {

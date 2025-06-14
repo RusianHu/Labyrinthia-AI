@@ -16,6 +16,7 @@ from data_models import (
     CharacterClass, CreatureType, DamageType
 )
 from llm_service import llm_service
+from prompt_manager import prompt_manager
 
 
 logger = logging.getLogger(__name__)
@@ -134,19 +135,17 @@ class ContentGenerator:
         请根据任务信息和楼层定位调整地图的名称和描述，使其与任务背景和当前进度相符。
         """
 
-        # 使用LLM生成地图名称和描述
-        map_prompt = f"""
-        为一个{width}x{height}的地下城第{depth}层生成名称和描述。
-        基础主题：{theme}{quest_info}
-
-        请返回JSON格式：
-        {{
-            "name": "地图名称（中文，体现主题和任务特色）",
-            "description": "地图描述（详细描述环境、氛围和可能的挑战）"
-        }}
-        """
-        
+        # 使用PromptManager生成地图名称和描述
         try:
+            map_prompt = prompt_manager.format_prompt(
+                "map_info_generation",
+                width=width,
+                height=height,
+                depth=depth,
+                theme=theme,
+                quest_info=quest_info
+            )
+
             map_info = await llm_service._async_generate_json(map_prompt)
             if map_info:
                 game_map.name = map_info.get("name", f"地下城第{depth}层")
