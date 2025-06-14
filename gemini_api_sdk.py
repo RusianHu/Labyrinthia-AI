@@ -76,11 +76,26 @@ class GeminiAPI:
         self.last_request_payload: Optional[dict] = None  # 兼容性属性
 
         # 设置代理环境变量（如果提供了代理配置）
+        # 注意：这种方式会影响整个进程，但Google Gen AI SDK目前只支持环境变量方式配置代理
+        self._original_proxy_env = {}
         if self.proxies:
+            # 保存原始环境变量
+            self._original_proxy_env["HTTP_PROXY"] = os.environ.get("HTTP_PROXY")
+            self._original_proxy_env["HTTPS_PROXY"] = os.environ.get("HTTPS_PROXY")
+
+            # 设置新的代理环境变量
             if "http" in self.proxies:
                 os.environ["HTTP_PROXY"] = self.proxies["http"]
             if "https" in self.proxies:
                 os.environ["HTTPS_PROXY"] = self.proxies["https"]
+        else:
+            # 如果不使用代理，确保清除代理环境变量（仅在我们设置过的情况下）
+            if hasattr(self, '_original_proxy_env'):
+                for key, value in self._original_proxy_env.items():
+                    if value is None:
+                        os.environ.pop(key, None)
+                    else:
+                        os.environ[key] = value
 
         if use_vertex_ai:
             if not project_id:
@@ -94,6 +109,16 @@ class GeminiAPI:
         else:
             # 使用 Gemini Developer API 客户端
             self.client = genai.Client(api_key=api_key)
+
+    def cleanup_proxy_env(self):
+        """清理代理环境变量，恢复原始设置"""
+        if hasattr(self, '_original_proxy_env'):
+            for key, value in self._original_proxy_env.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
+            delattr(self, '_original_proxy_env')
 
     # ---------------------------------------------------------------------
     # 基础文本生成方法
