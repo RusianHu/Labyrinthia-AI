@@ -9,7 +9,7 @@ import logging
 from typing import Dict, List, Optional, Any
 from concurrent.futures import ThreadPoolExecutor
 
-from gemini_api import GeminiAPI
+from gemini_api_sdk import GeminiAPI
 from openrouter_client import OpenRouterClient, ChatError
 from config import config, LLMProvider
 from data_models import Character, Monster, GameMap, Quest, GameState, Item

@@ -13,7 +13,7 @@ from pathlib import Path
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from config import config, LLMProvider
-from gemini_api import GeminiAPI
+from gemini_api_sdk import GeminiAPI
 
 # --- Test Helper Functions ---
 
