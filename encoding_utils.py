@@ -214,6 +214,31 @@ class EncodingConverter:
         except UnicodeError:
             return False
     
+    def process_text(self, text: str) -> str:
+        """
+        处理文本，确保编码安全
+
+        Args:
+            text: 要处理的文本
+
+        Returns:
+            处理后的文本
+        """
+        if not self.enabled:
+            return text
+
+        try:
+            if self.method == "utf8_strict":
+                return self._ensure_utf8_string(text)
+            elif self.method == "json_escape":
+                return self._escape_json_string(text)
+            else:
+                # 对于base64方法，直接返回原文本（base64主要用于载荷编码）
+                return text
+        except Exception as e:
+            logger.error(f"Failed to process text: {e}")
+            return text
+
     def get_encoding_info(self) -> Dict[str, Any]:
         """获取当前编码配置信息"""
         return {
