@@ -20,8 +20,7 @@ def check_dependencies():
         'jinja2',
         'requests',
         'pydantic',
-        'loguru',
-        'PyMuPDF'  # 用户提到已安装的PDF处理库
+        'loguru'
     ]
     
     missing_packages = []

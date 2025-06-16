@@ -1,22 +1,20 @@
 """
-gemini_api.py
+gemini_api.py - Google Gemini API SDK 版本
+基于 google-genai 1.20.0 实现
 """
 
 import base64
 import json
-from typing import List, Dict, Optional, Tuple
+import os
+from typing import List, Dict, Optional, Tuple, Union, Any
 
-import requests
+from google import genai
+from google.genai import types
 
 
 # =============================================================================
 # 配置常量 - Configuration Constants
 # =============================================================================
-
-# API 端点配置 - API Endpoint Configuration
-DEFAULT_ENDPOINT = "https://generativelanguage.googleapis.com"
-DEFAULT_API_VERSION = "v1beta"
-DEFAULT_TIMEOUT = 60
 
 # 默认模型名称 - Default Model Names
 DEFAULT_TEXT_MODEL = "gemini-2.5-flash-preview-05-20"          # 文本生成和对话
@@ -39,110 +37,167 @@ DEFAULT_TASK_TYPE = "RETRIEVAL_DOCUMENT"
 
 
 class GeminiAPI:
-    """Minimal REST client for Google's Gemini API (v1beta)."""
+    """Google Gemini API SDK 客户端，基于 google-genai 1.20.0 实现"""
 
     def __init__(
         self,
         api_key: str,
         *,
-        endpoint: str = DEFAULT_ENDPOINT,
-        api_version: str = DEFAULT_API_VERSION,
-        default_timeout: int = DEFAULT_TIMEOUT,
+        proxy: Optional[str] = None,
+        api_version: str = "v1beta",
+        # 兼容旧版参数
+        endpoint: Optional[str] = None,
+        default_timeout: Optional[int] = None,
         proxies: Optional[Dict[str, str]] = None,
+        use_vertex_ai: bool = False,
+        project_id: Optional[str] = None,
+        location: Optional[str] = None,
     ) -> None:
+        """
+        初始化 Gemini API 客户端
+
+        Args:
+            api_key: Google API 密钥
+            proxy: 代理服务器地址 (可选)
+            api_version: API 版本 (默认 v1beta)
+            endpoint: API端点（兼容性参数，已忽略）
+            default_timeout: 默认超时时间（兼容性参数，已忽略）
+            proxies: 代理配置字典（兼容性参数）
+            use_vertex_ai: 是否使用 Vertex AI（兼容性参数，已忽略）
+            project_id: Google Cloud 项目 ID（兼容性参数，已忽略）
+            location: 区域位置（兼容性参数，已忽略）
+        """
         self.api_key = api_key
-        self.endpoint = endpoint.rstrip("/")
-        self.api_version = api_version
-        self.default_timeout = default_timeout
-        self.proxies = proxies or {}
-        self.last_request_payload: Optional[dict] = None
+        self.last_request_payload: Optional[dict] = None  # 兼容性属性
+
+        # 处理代理配置（兼容旧版）
+        if proxies:
+            # 旧版使用 proxies 字典
+            if "http" in proxies:
+                os.environ['HTTP_PROXY'] = proxies["http"]
+            if "https" in proxies:
+                os.environ['HTTPS_PROXY'] = proxies["https"]
+        elif proxy:
+            # 新版使用 proxy 字符串
+            os.environ['HTTPS_PROXY'] = proxy
+            os.environ['HTTP_PROXY'] = proxy
+
+        # 创建客户端
+        http_options = types.HttpOptions(api_version=api_version) if api_version != "v1beta" else None
+        self.client = genai.Client(api_key=api_key, http_options=http_options)
 
     # ---------------------------------------------------------------------
-    # Low‑level helpers
+    # 内部辅助方法
     # ---------------------------------------------------------------------
-    def _url(self, path: str) -> str:
-        """Return full URL with API key query parm attached."""
-        return f"{self.endpoint}/{self.api_version}/{path}?key={self.api_key}"
+    def _convert_generation_config(self, config: Optional[dict]) -> Optional[types.GenerateContentConfig]:
+        """将字典格式的生成配置转换为 SDK 类型"""
+        if not config:
+            return None
 
-    def _post(self, path: str, payload: dict, *, timeout: Optional[int] = None) -> dict:
-        """HTTP POST with JSON payload and robust error handling."""
-        self.last_request_payload = payload
-        url = self._url(path)
-        t = timeout or self.default_timeout
-
-        # 添加请求头以模拟海外用户
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Accept': 'application/json',
-            'Accept-Language': 'en-US,en;q=0.9',
-            'Accept-Encoding': 'gzip, deflate, br',
-            'DNT': '1',
-            'Connection': 'keep-alive',
-            'Upgrade-Insecure-Requests': '1',
+        # 映射字段名称
+        sdk_config = {}
+        field_mapping = {
+            'maxOutputTokens': 'max_output_tokens',
+            'temperature': 'temperature',
+            'topP': 'top_p',
+            'topK': 'top_k',
+            'candidateCount': 'candidate_count',
+            'stopSequences': 'stop_sequences',
+            'responseMimeType': 'response_mime_type',
+            'responseSchema': 'response_schema',
+            'responseModalities': 'response_modalities',
         }
 
-        # 尝试使用编码转换器处理请求
+        for old_key, new_key in field_mapping.items():
+            if old_key in config:
+                sdk_config[new_key] = config[old_key]
+
+        return types.GenerateContentConfig(**sdk_config)
+
+    def _convert_safety_settings(self, settings: Optional[list]) -> Optional[List[types.SafetySetting]]:
+        """转换安全设置"""
+        if not settings:
+            return None
+
+        result = []
+        for setting in settings:
+            result.append(types.SafetySetting(
+                category=setting.get('category'),
+                threshold=setting.get('threshold')
+            ))
+        return result
+
+    def _sdk_response_to_dict(self, response) -> dict:
+        """将 SDK 响应转换为字典格式，保持与 REST 版本兼容"""
         try:
-            # 导入编码转换器（延迟导入避免循环依赖）
-            from encoding_utils import encoding_converter
+            # 构建兼容的响应格式
+            result = {
+                "candidates": [],
+                "usageMetadata": {}
+            }
 
-            if encoding_converter.enabled and encoding_converter.force_utf8:
-                # UTF-8强制编码方式：手动序列化JSON
-                json_data = encoding_converter.create_safe_json_payload(payload)
-                headers['Content-Type'] = 'application/json; charset=utf-8'
-                resp = requests.post(url, data=json_data.encode('utf-8'), timeout=t, proxies=self.proxies, headers=headers)
-            else:
-                # 默认方式
-                resp = requests.post(url, json=payload, timeout=t, proxies=self.proxies, headers=headers)
+            # 处理简单的文本响应
+            if hasattr(response, 'text') and response.text:
+                result["candidates"].append({
+                    "content": {
+                        "parts": [{"text": response.text}],
+                        "role": "model"
+                    },
+                    "finishReason": "STOP",
+                    "index": 0
+                })
+            elif hasattr(response, 'candidates') and response.candidates:
+                for i, candidate in enumerate(response.candidates):
+                    candidate_dict = {
+                        "content": {
+                            "parts": [],
+                            "role": "model"
+                        },
+                        "finishReason": str(getattr(candidate, 'finish_reason', 'STOP')),
+                        "index": i
+                    }
 
-        except ImportError:
-            # 如果编码转换器不可用，使用默认方式
-            resp = requests.post(url, json=payload, timeout=t, proxies=self.proxies, headers=headers)
+                    if hasattr(candidate, 'content') and candidate.content:
+                        if hasattr(candidate.content, 'parts') and candidate.content.parts:
+                            for part in candidate.content.parts:
+                                if hasattr(part, 'text') and part.text:
+                                    candidate_dict["content"]["parts"].append({"text": part.text})
+                                elif hasattr(part, 'inline_data'):
+                                    candidate_dict["content"]["parts"].append({
+                                        "inline_data": {
+                                            "mime_type": part.inline_data.mime_type,
+                                            "data": part.inline_data.data
+                                        }
+                                    })
+
+                    # 如果没有找到内容，但候选项存在，尝试从候选项直接获取文本
+                    if not candidate_dict["content"]["parts"] and hasattr(candidate, 'text') and candidate.text:
+                        candidate_dict["content"]["parts"].append({"text": candidate.text})
+
+                    result["candidates"].append(candidate_dict)
+
+            # 添加使用元数据
+            if hasattr(response, 'usage_metadata'):
+                usage = response.usage_metadata
+                result["usageMetadata"] = {
+                    "promptTokenCount": getattr(usage, 'prompt_token_count', 0),
+                    "candidatesTokenCount": getattr(usage, 'response_token_count', 0),
+                    "totalTokenCount": getattr(usage, 'total_token_count', 0)
+                }
+
+            return result
         except Exception as e:
-            # 如果编码转换失败，回退到默认方式
-            print(f"Encoding conversion failed, using default method: {e}")
-            resp = requests.post(url, json=payload, timeout=t, proxies=self.proxies, headers=headers)
-
-        try:
-            resp.raise_for_status()
-        except requests.HTTPError as exc:
-            raise RuntimeError(
-                f"Gemini API error {resp.status_code} – {resp.text[:200]}"
-            ) from exc
-        return resp.json()
+            # 如果转换失败，返回基本格式
+            text_content = str(response)
+            if hasattr(response, 'text'):
+                text_content = response.text
+            return {
+                "candidates": [{"content": {"parts": [{"text": text_content}], "role": "model"}}],
+                "usageMetadata": {}
+            }
 
     # ---------------------------------------------------------------------
-    # Core generateContent wrapper
-    # ---------------------------------------------------------------------
-    def _generate_content(
-        self,
-        model: str,
-        contents: List[dict],
-        *,
-        system_instruction: Optional[dict] = None,
-        generation_config: Optional[dict] = None,
-        tools: Optional[list] = None,
-        safety_settings: Optional[list] = None,
-        stream: bool = False,
-    ) -> dict:
-        """Generic wrapper around `models/*:generateContent`."""
-        payload: Dict = {"contents": contents}
-        if system_instruction:
-            payload["system_instruction"] = system_instruction
-        if generation_config:
-            payload["generation_config"] = generation_config
-        if tools:
-            payload["tools"] = tools
-        if safety_settings:
-            payload["safety_settings"] = safety_settings
-        if stream:
-            payload["stream"] = True
-
-        path = f"models/{model}:generateContent"
-        return self._post(path, payload)
-
-    # ---------------------------------------------------------------------
-    # Public helpers
+    # 公共方法 - 保持与 REST 版本相同的接口
     # ---------------------------------------------------------------------
     def single_turn(
         self,
@@ -151,13 +206,38 @@ class GeminiAPI:
         text: str,
         generation_config: Optional[dict] = None,
     ) -> dict:
-        """One‑shot prompt."""
-        contents = [{"role": "user", "parts": [{"text": text}]}]
-        return self._generate_content(
-            model, contents, generation_config=generation_config
+        """单轮对话"""
+        # 记录请求负载（兼容性）
+        self.last_request_payload = {
+            "model": model,
+            "contents": [{"role": "user", "parts": [{"text": text}]}],
+            "generation_config": generation_config
+        }
+
+        # 处理编码转换（如果需要）
+        processed_text = text
+        try:
+            # 导入编码转换器（延迟导入避免循环依赖）
+            from encoding_utils import encoding_converter
+            if encoding_converter.enabled:
+                processed_text = encoding_converter.process_text(text)
+        except ImportError:
+            # 如果编码转换器不可用，使用原始文本
+            pass
+        except Exception as e:
+            # 如果编码转换失败，使用原始文本
+            print(f"Encoding conversion failed, using original text: {e}")
+
+        config = self._convert_generation_config(generation_config)
+
+        response = self.client.models.generate_content(
+            model=model,
+            contents=processed_text,
+            config=config
         )
-    
-    # ---------------------- JSON-forced single-turn ----------------------
+
+        return self._sdk_response_to_dict(response)
+
     def single_turn_json(
         self,
         *,
@@ -166,24 +246,46 @@ class GeminiAPI:
         schema: Optional[dict] = None,
         generation_config: Optional[dict] = None,
     ) -> dict:
-        # ① 基础 contents
-        contents = [{"role": "user", "parts": [{"text": text}]}]
-
-        # ② 构造 / 合并 generation_config
-        gen_cfg = {"response_mime_type": "application/json"} # 强制 JSON
-        if generation_config:
-            gen_cfg.update(generation_config)
+        """强制 JSON 输出的单轮对话"""
+        # 记录请求负载（兼容性）
+        gen_cfg = generation_config.copy() if generation_config else {}
+        gen_cfg['response_mime_type'] = 'application/json'
         if schema:
-            gen_cfg["response_schema"] = schema
+            gen_cfg['response_schema'] = schema
 
-        # ③ 调用底层生成
-        return self._generate_content(
-            model, contents, generation_config=gen_cfg
+        self.last_request_payload = {
+            "model": model,
+            "contents": [{"role": "user", "parts": [{"text": text}]}],
+            "generation_config": gen_cfg
+        }
+
+        # 处理编码转换（如果需要）
+        processed_text = text
+        try:
+            # 导入编码转换器（延迟导入避免循环依赖）
+            from encoding_utils import encoding_converter
+            if encoding_converter.enabled:
+                processed_text = encoding_converter.process_text(text)
+        except ImportError:
+            # 如果编码转换器不可用，使用原始文本
+            pass
+        except Exception as e:
+            # 如果编码转换失败，使用原始文本
+            print(f"Encoding conversion failed, using original text: {e}")
+
+        config = self._convert_generation_config(gen_cfg)
+
+        response = self.client.models.generate_content(
+            model=model,
+            contents=processed_text,
+            config=config
         )
+
+        return self._sdk_response_to_dict(response)
 
     # ---------------------------- ChatSession ----------------------------
     class ChatSession:
-        """Stateful multi‑turn chat helper returned by :meth:`start_chat`."""
+        """多轮对话会话，基于 SDK 的 Chat 实现"""
 
         def __init__(
             self,
@@ -194,48 +296,73 @@ class GeminiAPI:
         ):
             self._parent = _parent
             self.model = model
-            self._history: List[dict] = []
             self._gen_cfg = generation_config or {}
-            # Store system prompt separately, don't add to history yet.
-            self._system_instruction = {"parts": [{"text": system_prompt}]} if system_prompt else None
+            self._system_prompt = system_prompt
+
+            # 创建 SDK 聊天会话
+            self._chat = _parent.client.chats.create(model=model)
+
+            # 如果有系统提示，先发送一条系统消息
+            if system_prompt:
+                try:
+                    # 发送系统提示作为第一条消息
+                    self._chat.send_message(f"System: {system_prompt}")
+                except:
+                    # 如果失败，忽略错误
+                    pass
 
         @property
         def history(self) -> List[dict]:
-            # For user visibility, we can prepend the system prompt to the history
-            if self._system_instruction:
-                # Create a "system" role entry for display purposes only
-                display_history = [{"role": "system", "parts": self._system_instruction["parts"]}]
-                display_history.extend(self._history)
-                return display_history
-            return self._history
+            """获取对话历史"""
+            history = []
+
+            # 添加系统提示（如果有）
+            if self._system_prompt:
+                history.append({
+                    "role": "system",
+                    "parts": [{"text": self._system_prompt}]
+                })
+
+            # 获取 SDK 聊天历史并转换格式
+            if hasattr(self._chat, 'history'):
+                for content in self._chat.history:
+                    if hasattr(content, 'role') and hasattr(content, 'parts'):
+                        parts = []
+                        for part in content.parts:
+                            if hasattr(part, 'text'):
+                                parts.append({"text": part.text})
+                        history.append({
+                            "role": content.role,
+                            "parts": parts
+                        })
+
+            return history
 
         def send(self, text: str, **gen_cfg) -> dict:
-            """Send user message; returns model candidate JSON."""
-            self._history.append({"role": "user", "parts": [{"text": text}]})
-            merged_cfg = {**self._gen_cfg, **(gen_cfg.get("generation_config") or {})}
+            """发送消息并返回响应"""
+            try:
+                # 合并生成配置
+                merged_cfg = {**self._gen_cfg, **gen_cfg}
+                config = self._parent._convert_generation_config(merged_cfg) if merged_cfg else None
 
-            resp = self._parent._generate_content(
-                self.model,
-                self._history,
-                system_instruction=self._system_instruction,
-                generation_config=merged_cfg
-            )
+                # 发送消息
+                response = self._chat.send_message(text, config=config)
 
-            # Safely extract and persist assistant reply into history
-            if (resp.get("candidates") and
-                resp["candidates"][0].get("content") and
-                resp["candidates"][0]["content"].get("parts")):
-                parts = resp["candidates"][0]["content"]["parts"]
-                self._history.append({"role": "model", "parts": parts})
-            else:
-                # Handle cases where response doesn't contain expected parts
-                # This can happen when generation is cut off due to safety filters,
-                # token limits, or other API constraints
-                finish_reason = resp.get("candidates", [{}])[0].get("finishReason", "UNKNOWN")
-                error_parts = [{"text": f"[Response incomplete - finish reason: {finish_reason}]"}]
-                self._history.append({"role": "model", "parts": error_parts})
+                # 转换响应格式
+                return self._parent._sdk_response_to_dict(response)
 
-            return resp
+            except Exception as e:
+                # 错误处理
+                return {
+                    "candidates": [{
+                        "content": {
+                            "parts": [{"text": f"[Error: {str(e)}]"}],
+                            "role": "model"
+                        },
+                        "finishReason": "ERROR"
+                    }],
+                    "usageMetadata": {}
+                }
 
     def start_chat(
         self,
@@ -244,12 +371,12 @@ class GeminiAPI:
         system_prompt: str = "",
         generation_config: Optional[dict] = None,
     ) -> "GeminiAPI.ChatSession":
-        """Return a stateful :class:`ChatSession`."""
+        """创建多轮对话会话"""
         return self.ChatSession(
             self, model, system_prompt=system_prompt, generation_config=generation_config
         )
 
-    # --------------------------- Multimodality ---------------------------
+    # --------------------------- 多模态功能 ---------------------------
     def multimodal_input(
         self,
         *,
@@ -259,19 +386,29 @@ class GeminiAPI:
         mime_type: str = DEFAULT_MIME_TYPE,
         generation_config: Optional[dict] = None,
     ) -> dict:
-        """Text + (optional) image → text."""
-        parts: List[dict] = []
-        if text:
-            parts.append({"text": text})
-        if image_path:
-            with open(image_path, "rb") as f:
-                data = base64.b64encode(f.read()).decode()
-            parts.append({"inline_data": {"mime_type": mime_type, "data": data}})
+        """文本 + 图像输入 → 文本输出"""
+        contents = []
 
-        contents = [{"role": "user", "parts": parts}]
-        return self._generate_content(
-            model, contents, generation_config=generation_config
+        # 添加文本部分
+        if text:
+            contents.append(text)
+
+        # 添加图像部分
+        if image_path:
+            with open(image_path, 'rb') as f:
+                image_bytes = f.read()
+            image_part = types.Part.from_bytes(data=image_bytes, mime_type=mime_type)
+            contents.append(image_part)
+
+        config = self._convert_generation_config(generation_config)
+
+        response = self.client.models.generate_content(
+            model=model,
+            contents=contents,
+            config=config
         )
+
+        return self._sdk_response_to_dict(response)
 
     def multimodal_in_out(
         self,
@@ -282,42 +419,48 @@ class GeminiAPI:
         mime_type: str = DEFAULT_MIME_TYPE,
         generation_config: Optional[dict] = None,
     ) -> Tuple[List[str], dict]:
-        """Prompt (+ reference images) → generated image(s) + raw response.
+        """提示词 + 参考图像 → 生成图像 + 原始响应
 
-        Returns
-        -------
-        images : List[str]
-            List of base64‑encoded image strings.
-        resp : dict
-            Raw JSON response from the API.
+        Returns:
+            images: base64 编码的图像字符串列表
+            resp: 原始 API 响应
         """
-        parts: List[dict] = [{"text": prompt}]
+        contents = [prompt]
+
+        # 添加参考图像
         reference_images = reference_images or []
-        for img in reference_images:
-            with open(img, "rb") as f:
-                b64 = base64.b64encode(f.read()).decode()
-            parts.append({"inline_data": {"mime_type": mime_type, "data": b64}})
+        for img_path in reference_images:
+            with open(img_path, 'rb') as f:
+                image_bytes = f.read()
+            image_part = types.Part.from_bytes(data=image_bytes, mime_type=mime_type)
+            contents.append(image_part)
 
-        # Add responseModalities to generation_config, crucial for image generation
-        # Add responseModalities to generation_config, crucial for image generation
-        gen_cfg = generation_config or {}
-        gen_cfg["responseModalities"] = ["TEXT", "IMAGE"]
+        # 配置多模态输出
+        gen_cfg = generation_config.copy() if generation_config else {}
+        gen_cfg['response_modalities'] = ['IMAGE', 'TEXT']
 
-        contents = [{"role": "user", "parts": parts}]
-        resp = self._generate_content(
-            model, contents, generation_config=gen_cfg
+        config = self._convert_generation_config(gen_cfg)
+
+        response = self.client.models.generate_content(
+            model=model,
+            contents=contents,
+            config=config
         )
 
-        imgs: List[str] = []
-        # Safely extract images, handling cases like RECITATION where no content is returned.
-        if resp.get("candidates"):
-            candidate = resp["candidates"][0]
-            if candidate.get("finishReason") == "STOP" and candidate.get("content", {}).get("parts"):
+        # 提取生成的图像
+        images = []
+        resp_dict = self._sdk_response_to_dict(response)
+
+        if resp_dict.get("candidates"):
+            candidate = resp_dict["candidates"][0]
+            if candidate.get("content", {}).get("parts"):
                 for part in candidate["content"]["parts"]:
-                    inline = part.get("inline_data")
-                    if inline and inline.get("mime_type", "").startswith("image/"):
-                        imgs.append(inline["data"])
-        return imgs, resp
+                    if "inline_data" in part:
+                        inline_data = part["inline_data"]
+                        if inline_data.get("mime_type", "").startswith("image/"):
+                            images.append(inline_data["data"])
+
+        return images, resp_dict
 
     def generate_image(
         self,
@@ -328,30 +471,41 @@ class GeminiAPI:
         aspect_ratio: str = DEFAULT_ASPECT_RATIO,
         person_generation: str = DEFAULT_PERSON_GENERATION,
     ) -> List[str]:
-        """Generate images using Imagen 3.
+        """使用 Imagen 3 生成图像
 
-        Note: Imagen models only support English prompts.
+        注意：Imagen 模型仅支持英文提示词
         """
-        path = f"models/{model}:predict"
-        payload = {
-            "instances": [{"prompt": prompt}],
-            "parameters": {
-                "numberOfImages": sample_count,
-                "aspectRatio": aspect_ratio,
-                "personGeneration": person_generation,
-            },
-        }
-        resp = self._post(path, payload)
+        try:
+            config = types.GenerateImagesConfig(
+                number_of_images=sample_count,
+                aspect_ratio=aspect_ratio,
+                person_generation=person_generation,
+                output_mime_type='image/png'
+            )
 
-        # Extract base64 image data from the response
-        images_base64 = []
-        if "predictions" in resp:
-            for prediction in resp["predictions"]:
-                if "bytesBase64Encoded" in prediction:
-                    images_base64.append(prediction["bytesBase64Encoded"])
-        return images_base64
+            response = self.client.models.generate_images(
+                model=model,
+                prompt=prompt,
+                config=config
+            )
 
-    # ------------------------------ Misc ---------------------------------
+            # 提取 base64 图像数据
+            images_base64 = []
+            if hasattr(response, 'generated_images'):
+                for generated_image in response.generated_images:
+                    if hasattr(generated_image, 'image') and hasattr(generated_image.image, 'image_bytes'):
+                        # 将图像字节转换为 base64
+                        image_b64 = base64.b64encode(generated_image.image.image_bytes).decode()
+                        images_base64.append(image_b64)
+
+            return images_base64
+
+        except Exception as e:
+            # 如果 SDK 方法不可用，返回空列表
+            print(f"Warning: generate_image failed: {e}")
+            return []
+
+    # ------------------------------ 其他功能 ---------------------------------
     def embed_text(
         self,
         text: str,
@@ -359,35 +513,118 @@ class GeminiAPI:
         model: str = DEFAULT_EMBEDDING_MODEL,
         task_type: str = DEFAULT_TASK_TYPE,
     ) -> List[float]:
-        """Return embedding vector for *text*."""
-        payload = {
-            "content": {"parts": [{"text": text}]},
-            "task_type": task_type,
-        }
-        path = f"models/{model}:embedContent"
-        resp = self._post(path, payload)
-        return resp["embedding"]["values"]
+        """获取文本的嵌入向量"""
+        try:
+            config = types.EmbedContentConfig(
+                task_type=task_type
+            )
+
+            response = self.client.models.embed_content(
+                model=model,
+                contents=text,
+                config=config
+            )
+
+            # 提取嵌入向量
+            if hasattr(response, 'embeddings') and response.embeddings:
+                embedding = response.embeddings[0]
+                if hasattr(embedding, 'values'):
+                    return embedding.values
+
+            return []
+
+        except Exception as e:
+            print(f"Warning: embed_text failed: {e}")
+            return []
+
+    def generate_content_stream(
+        self,
+        prompt: str,
+        *,
+        model: str = DEFAULT_TEXT_MODEL,
+        system_instruction: Optional[str] = None,
+        max_output_tokens: Optional[int] = None,
+        temperature: Optional[float] = None,
+    ):
+        """
+        流式生成文本内容（兼容性方法）
+
+        Args:
+            prompt: 输入提示
+            model: 模型名称
+            system_instruction: 系统指令
+            max_output_tokens: 最大输出令牌数
+            temperature: 温度参数
+
+        Yields:
+            生成的文本块
+        """
+        config = types.GenerateContentConfig()
+
+        if system_instruction:
+            config.system_instruction = system_instruction
+        if max_output_tokens:
+            config.max_output_tokens = max_output_tokens
+        if temperature is not None:
+            config.temperature = temperature
+
+        try:
+            for chunk in self.client.models.generate_content_stream(
+                model=model,
+                contents=prompt,
+                config=config
+            ):
+                if hasattr(chunk, 'text') and chunk.text:
+                    yield chunk.text
+        except Exception as e:
+            print(f"Stream generation failed: {e}")
+            yield f"[Stream error: {e}]"
+
+    def count_tokens(
+        self,
+        text: str,
+        *,
+        model: str = DEFAULT_TEXT_MODEL,
+    ) -> Any:
+        """
+        计算文本的令牌数（兼容性方法）
+
+        Args:
+            text: 输入文本
+            model: 模型名称
+
+        Returns:
+            令牌计数结果
+        """
+        try:
+            response = self.client.models.count_tokens(
+                model=model,
+                contents=text
+            )
+            return response
+        except Exception as e:
+            print(f"Token counting failed: {e}")
+            return {"total_tokens": 0}
 
     def list_models(self) -> dict:
-        """GET /models – list available models."""
-        url = self._url("models")
-
-        # 添加请求头以模拟海外用户
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Accept': 'application/json',
-            'Accept-Language': 'en-US,en;q=0.9',
-            'Accept-Encoding': 'gzip, deflate, br',
-            'DNT': '1',
-            'Connection': 'keep-alive',
-            'Upgrade-Insecure-Requests': '1',
-        }
-
-        resp = requests.get(url, timeout=self.default_timeout, proxies=self.proxies, headers=headers)
+        """列出可用模型"""
         try:
-            resp.raise_for_status()
-        except requests.HTTPError as exc:
-            raise RuntimeError(
-                f"Gemini API error {resp.status_code} – {resp.text[:200]}"
-            ) from exc
-        return resp.json()
+            models = []
+            for model in self.client.models.list():
+                model_dict = {
+                    "name": getattr(model, 'name', ''),
+                    "displayName": getattr(model, 'display_name', ''),
+                    "description": getattr(model, 'description', ''),
+                    "supportedGenerationMethods": getattr(model, 'supported_generation_methods', [])
+                }
+                models.append(model_dict)
+
+            return {"models": models}
+
+        except Exception as e:
+            print(f"Warning: list_models failed: {e}")
+            return {"models": []}
+
+
+# 兼容性别名 - 保持向后兼容
+GeminiAPISDK = GeminiAPI
