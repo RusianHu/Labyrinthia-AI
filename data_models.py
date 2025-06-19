@@ -223,6 +223,9 @@ class MapTile:
     is_visible: bool = False
     items: List[Item] = field(default_factory=list)
     character_id: Optional[str] = None
+    # 房间相关字段
+    room_type: str = ""  # 房间类型：entrance, treasure, boss, special, normal, corridor
+    room_id: Optional[str] = None  # 房间ID，用于标识同一房间的瓦片
     # 事件相关字段
     has_event: bool = False
     event_type: str = ""  # 事件类型：combat, treasure, trap, story, etc.
@@ -241,6 +244,8 @@ class MapTile:
             "is_visible": self.is_visible,
             "items": [item.to_dict() for item in self.items],
             "character_id": self.character_id,
+            "room_type": self.room_type,
+            "room_id": self.room_id,
             "has_event": self.has_event,
             "event_type": self.event_type,
             "event_data": self.event_data,

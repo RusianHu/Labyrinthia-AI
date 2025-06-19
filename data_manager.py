@@ -247,18 +247,32 @@ class DataManager:
         tile.is_explored = data.get("is_explored", False)
         tile.is_visible = data.get("is_visible", False)
         tile.character_id = data.get("character_id")
-        
+
+        # 房间类型信息
+        tile.room_type = data.get("room_type", "")
+        tile.room_id = data.get("room_id")
+
+        # 事件相关字段
+        tile.has_event = data.get("has_event", False)
+        tile.event_type = data.get("event_type", "")
+        tile.event_data = data.get("event_data", {})
+        tile.is_event_hidden = data.get("is_event_hidden", True)
+        tile.event_triggered = data.get("event_triggered", False)
+
+        # 物品相关字段
+        tile.items_collected = data.get("items_collected", [])
+
         # 地形类型
         if terrain := data.get("terrain"):
             try:
                 tile.terrain = TerrainType(terrain)
             except ValueError:
                 pass
-        
+
         # 物品
         if items_data := data.get("items"):
             tile.items = [self._dict_to_item(item_data) for item_data in items_data]
-        
+
         return tile
     
     def _dict_to_quest(self, data: Dict[str, Any]) -> Quest:

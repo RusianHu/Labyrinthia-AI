@@ -184,9 +184,6 @@ class ContentGenerator:
         # 连接房间（考虑任务路径需求）
         self._connect_rooms_strategically(game_map, rooms, room_requirements)
 
-        # 验证和调整房间类型配置
-        rooms = await self._validate_and_adjust_room_types(game_map, rooms, quest_context)
-
         # 放置特殊地形
         await self._place_special_terrain(game_map, rooms)
 
@@ -696,227 +693,50 @@ class ContentGenerator:
                                     tile.room_id = room_id
 
     def _place_doors_intelligently(self, game_map: GameMap, rooms: List[Dict[str, int]], room_types: List[str]):
-        """智能放置门 - 改进版本，确保门的合理连接"""
-        # 第一步：为每个重要房间找到最佳门位置
-        door_placements = []
+        """智能放置门"""
+        # 在走廊中找到与房间相邻的位置放置门
+        door_candidates = []
 
-        for i, room in enumerate(rooms):
-            room_type = room_types[i] if i < len(room_types) else "normal"
+        # 遍历所有走廊瓦片
+        for (x, y), tile in game_map.tiles.items():
+            if tile.terrain == TerrainType.FLOOR and tile.room_type == "corridor":
+                # 检查这个走廊瓦片是否与房间相邻
+                directions = [(0, 1), (0, -1), (1, 0), (-1, 0)]
 
-            # 确定房间是否需要门
-            needs_door = self._room_needs_door(room_type)
-            if not needs_door:
-                continue
+                for dx, dy in directions:
+                    adj_x, adj_y = x + dx, y + dy
+                    adj_tile = game_map.get_tile(adj_x, adj_y)
 
-            # 找到该房间的最佳门位置
-            best_door_positions = self._find_best_door_positions(game_map, room, room_type)
+                    if adj_tile and adj_tile.terrain == TerrainType.FLOOR and adj_tile.room_type != "corridor":
+                        # 找到了房间瓦片，检查是否应该在这里放门
+                        room_type = adj_tile.room_type
 
-            if best_door_positions:
-                # 选择最佳位置（优先选择连接质量最高的）
-                best_position = best_door_positions[0]
-                door_placements.append(best_position)
+                        # 根据房间类型决定是否放置门
+                        should_place_door = False
 
-        # 第二步：验证门的放置并实际放置
-        validated_doors = self._validate_and_place_doors(game_map, door_placements)
+                        if room_type in ["treasure", "boss", "special"]:
+                            should_place_door = True  # 重要房间必须有门
+                        elif room_type == "normal" and random.random() < 0.4:
+                            should_place_door = True  # 普通房间40%概率有门
+                        elif room_type == "entrance" and random.random() < 0.2:
+                            should_place_door = True  # 入口房间20%概率有门
 
-        # 第三步：为没有门的重要房间强制添加门
-        self._ensure_critical_rooms_have_doors(game_map, rooms, room_types, validated_doors)
+                        if should_place_door:
+                            # 在走廊瓦片上放置门
+                            door_candidates.append((x, y, room_type))
+                            break  # 每个走廊瓦片最多放一个门
 
-        logger.info(f"成功放置 {len(validated_doors)} 个门")
+        # 去重并限制门的数量
+        unique_doors = list(set(door_candidates))
+        max_doors = min(len(unique_doors), len(rooms))
+        selected_doors = random.sample(unique_doors, min(max_doors, len(unique_doors)))
 
-    def _room_needs_door(self, room_type: str) -> bool:
-        """判断房间类型是否需要门"""
-        # 重要房间必须有门
-        if room_type in ["treasure", "boss", "special"]:
-            return True
-        # 普通房间70%概率有门（提高概率）
-        elif room_type == "normal":
-            return random.random() < 0.7
-        # 入口房间30%概率有门（提高概率）
-        elif room_type == "entrance":
-            return random.random() < 0.3
-        return False
-
-    def _find_best_door_positions(self, game_map: GameMap, room: Dict[str, int], room_type: str) -> List[tuple]:
-        """为房间找到最佳门位置"""
-        candidates = []
-
-        # 获取房间边界上的所有位置
-        room_edges = self._get_room_edge_positions(room)
-
-        for edge_x, edge_y in room_edges:
-            # 检查边界位置外侧是否有走廊
-            door_score = self._evaluate_door_position(game_map, edge_x, edge_y, room)
-            if door_score > 0:
-                candidates.append((edge_x, edge_y, room_type, door_score))
-
-        # 按评分排序，返回最佳位置
-        candidates.sort(key=lambda x: x[3], reverse=True)
-        return candidates[:3]  # 返回最多3个最佳位置
-
-    def _get_room_edge_positions(self, room: Dict[str, int]) -> List[tuple]:
-        """获取房间边界位置（房间内侧边界）"""
-        edges = []
-
-        # 上边界（房间内第一行）
-        for x in range(room["x"] + 1, room["x"] + room["width"] - 1):
-            edges.append((x, room["y"]))
-
-        # 下边界（房间内最后一行）
-        for x in range(room["x"] + 1, room["x"] + room["width"] - 1):
-            edges.append((x, room["y"] + room["height"] - 1))
-
-        # 左边界（房间内第一列）
-        for y in range(room["y"] + 1, room["y"] + room["height"] - 1):
-            edges.append((room["x"], y))
-
-        # 右边界（房间内最后一列）
-        for y in range(room["y"] + 1, room["y"] + room["height"] - 1):
-            edges.append((room["x"] + room["width"] - 1, y))
-
-        return edges
-
-    def _evaluate_door_position(self, game_map: GameMap, x: int, y: int, room: Dict[str, int]) -> float:
-        """评估门位置的质量分数"""
-        score = 0.0
-
-        # 检查该位置是否是房间内的地板
-        tile = game_map.get_tile(x, y)
-        if not tile or tile.terrain != TerrainType.FLOOR:
-            return 0.0
-
-        # 检查四个方向，寻找走廊连接
-        directions = [(0, 1), (0, -1), (1, 0), (-1, 0)]
-        corridor_connections = 0
-        room_connections = 0
-
-        for dx, dy in directions:
-            adj_x, adj_y = x + dx, y + dy
-            adj_tile = game_map.get_tile(adj_x, adj_y)
-
-            if adj_tile and adj_tile.terrain == TerrainType.FLOOR:
-                if adj_tile.room_type == "corridor":
-                    corridor_connections += 1
-                    score += 10.0  # 连接走廊得高分
-                elif adj_tile.room_type and adj_tile.room_type != "corridor":
-                    # 检查是否连接到不同房间
-                    if not self._is_point_in_room(adj_x, adj_y, room):
-                        room_connections += 1
-                        score += 5.0  # 连接其他房间得中等分
-
-        # 必须至少有一个走廊连接才是有效门位置
-        if corridor_connections == 0:
-            return 0.0
-
-        # 奖励有多个连接的位置（但不要太多）
-        if corridor_connections == 1:
-            score += 5.0  # 单一走廊连接是理想的
-        elif corridor_connections == 2:
-            score += 2.0  # 两个走廊连接可以接受
-        else:
-            score -= 5.0  # 太多连接可能是交叉路口，不适合放门
-
-        return score
-
-    def _validate_and_place_doors(self, game_map: GameMap, door_placements: List[tuple]) -> List[tuple]:
-        """验证门的放置并实际放置门"""
-        validated_doors = []
-
-        for x, y, room_type, score in door_placements:
-            # 最终验证门的连接质量
-            if self._validate_door_connection(game_map, x, y):
-                # 在房间边界外的走廊位置放置门
-                door_position = self._find_corridor_position_for_door(game_map, x, y)
-                if door_position:
-                    door_x, door_y = door_position
-                    tile = game_map.tiles.get((door_x, door_y))
-                    if tile:
-                        tile.terrain = TerrainType.DOOR
-                        # 保持走廊类型标记
-                        tile.room_type = "corridor"
-                        validated_doors.append((door_x, door_y, room_type))
-                        logger.debug(f"在位置 ({door_x}, {door_y}) 为 {room_type} 房间放置门")
-
-        return validated_doors
-
-    def _validate_door_connection(self, game_map: GameMap, x: int, y: int) -> bool:
-        """验证门位置的连接是否合理"""
-        directions = [(0, 1), (0, -1), (1, 0), (-1, 0)]
-        corridor_count = 0
-        room_count = 0
-
-        for dx, dy in directions:
-            adj_x, adj_y = x + dx, y + dy
-            adj_tile = game_map.get_tile(adj_x, adj_y)
-
-            if adj_tile and adj_tile.terrain == TerrainType.FLOOR:
-                if adj_tile.room_type == "corridor":
-                    corridor_count += 1
-                elif adj_tile.room_type and adj_tile.room_type != "corridor":
-                    room_count += 1
-
-        # 门必须连接走廊和房间，或者连接两个不同区域
-        return corridor_count >= 1 and (room_count >= 1 or corridor_count >= 1)
-
-    def _find_corridor_position_for_door(self, game_map: GameMap, room_x: int, room_y: int) -> Optional[tuple]:
-        """为房间位置找到相邻的走廊位置来放置门"""
-        directions = [(0, 1), (0, -1), (1, 0), (-1, 0)]
-
-        for dx, dy in directions:
-            corridor_x, corridor_y = room_x + dx, room_y + dy
-            corridor_tile = game_map.get_tile(corridor_x, corridor_y)
-
-            if (corridor_tile and
-                corridor_tile.terrain == TerrainType.FLOOR and
-                corridor_tile.room_type == "corridor"):
-                return (corridor_x, corridor_y)
-
-        return None
-
-    def _ensure_critical_rooms_have_doors(self, game_map: GameMap, rooms: List[Dict[str, int]],
-                                        room_types: List[str], existing_doors: List[tuple]):
-        """确保关键房间都有门"""
-        critical_room_types = ["treasure", "boss", "special"]
-        existing_door_rooms = set()
-
-        # 记录已有门的房间
-        for door_x, door_y, room_type in existing_doors:
-            existing_door_rooms.add(room_type)
-
-        # 为没有门的关键房间强制添加门
-        for i, room in enumerate(rooms):
-            room_type = room_types[i] if i < len(room_types) else "normal"
-
-            if room_type in critical_room_types and room_type not in existing_door_rooms:
-                # 强制为这个房间找一个门位置
-                emergency_door = self._place_emergency_door(game_map, room, room_type)
-                if emergency_door:
-                    existing_doors.append(emergency_door)
-                    logger.warning(f"为关键房间 {room_type} 强制添加紧急门")
-
-    def _place_emergency_door(self, game_map: GameMap, room: Dict[str, int], room_type: str) -> Optional[tuple]:
-        """为关键房间强制放置紧急门"""
-        # 获取房间所有边界位置
-        room_edges = self._get_room_edge_positions(room)
-
-        for edge_x, edge_y in room_edges:
-            # 寻找任何可能的走廊连接
-            directions = [(0, 1), (0, -1), (1, 0), (-1, 0)]
-
-            for dx, dy in directions:
-                corridor_x, corridor_y = edge_x + dx, edge_y + dy
-                corridor_tile = game_map.get_tile(corridor_x, corridor_y)
-
-                if (corridor_tile and
-                    corridor_tile.terrain == TerrainType.FLOOR and
-                    corridor_tile.room_type == "corridor"):
-
-                    # 在走廊位置放置门
-                    corridor_tile.terrain = TerrainType.DOOR
-                    corridor_tile.room_type = "corridor"
-                    return (corridor_x, corridor_y, room_type)
-
-        return None
+        for x, y, room_type in selected_doors:
+            if (x, y) in game_map.tiles:
+                tile = game_map.tiles[(x, y)]
+                tile.terrain = TerrainType.DOOR
+                # 保持走廊类型，但标记为门
+                tile.room_type = "corridor"
 
     def _get_room_edges(self, room: Dict[str, int]) -> List[tuple]:
         """获取房间边界点"""
@@ -1508,284 +1328,6 @@ class ContentGenerator:
                     tile.event_data = {
                         "mystery_type": random.choice(["puzzle", "riddle", "choice"])
                     }
-
-    async def _validate_and_adjust_room_types(self, game_map: GameMap, rooms: List[Dict[str, int]],
-                                            quest_context: Optional[Dict[str, Any]] = None) -> List[Dict[str, int]]:
-        """验证和调整房间类型配置，确保满足任务需求"""
-        if not rooms:
-            return rooms
-
-        # 分析任务需求
-        required_room_types = self._get_required_room_types(quest_context, game_map.depth)
-
-        # 分配房间类型
-        room_types = self._assign_room_types_by_requirements(rooms, required_room_types)
-
-        # 验证房间配置
-        validation_result = self._validate_room_configuration(rooms, room_types, required_room_types)
-
-        if not validation_result["is_valid"]:
-            logger.warning(f"房间配置验证失败: {validation_result['issues']}")
-            # 尝试自动修复
-            rooms, room_types = await self._auto_fix_room_configuration(
-                game_map, rooms, room_types, required_room_types, validation_result
-            )
-
-        # 应用房间类型到地图瓦片
-        self._apply_room_types_to_map(game_map, rooms, room_types)
-
-        # 为房间添加类型信息
-        for i, room in enumerate(rooms):
-            room["type"] = room_types[i] if i < len(room_types) else "normal"
-
-        logger.info(f"房间类型分配完成: {dict(zip(room_types, [room_types.count(t) for t in set(room_types)]))}")
-        return rooms
-
-    def _get_required_room_types(self, quest_context: Optional[Dict[str, Any]], depth: int) -> Dict[str, Any]:
-        """根据任务上下文和楼层深度确定必需的房间类型"""
-        required = {
-            "entrance": 1,  # 至少需要一个入口房间
-            "normal": 1,    # 至少需要一个普通房间
-            "treasure": 0,
-            "boss": 0,
-            "special": 0,
-            "corridor": True  # 需要走廊连接
-        }
-
-        if not quest_context:
-            return required
-
-        # 根据任务类型调整需求
-        quest_type = quest_context.get('quest_type', 'exploration')
-
-        if quest_type == 'boss_fight' or depth == config.game.max_quest_floors:
-            required["boss"] = 1
-            required["treasure"] = 1  # Boss房间通常有宝藏
-        elif quest_type == 'treasure_hunt':
-            required["treasure"] = max(2, depth)  # 寻宝任务需要更多宝藏房间
-            required["special"] = 1
-        elif quest_type == 'exploration':
-            required["special"] = 1
-            if depth > 1:
-                required["treasure"] = 1
-
-        # 根据特殊事件调整需求
-        special_events = quest_context.get('special_events', [])
-        current_depth_events = [
-            event for event in special_events
-            if not event.get('location_hint') or str(depth) in event.get('location_hint', '')
-        ]
-
-        # 为每个特殊事件至少需要一个特殊房间
-        if current_depth_events:
-            required["special"] = max(required["special"], len(current_depth_events))
-
-        return required
-
-    def _assign_room_types_by_requirements(self, rooms: List[Dict[str, int]], required_room_types: Dict[str, Any]) -> List[str]:
-        """为房间分配类型"""
-        room_types = ["normal"] * len(rooms)
-
-        if not rooms:
-            return room_types
-
-        # 第一个房间通常是入口
-        room_types[0] = "entrance"
-        assigned_count = {"entrance": 1, "normal": len(rooms) - 1}
-
-        # 分配必需的特殊房间
-        available_indices = list(range(1, len(rooms)))  # 除了入口房间
-
-        # 分配Boss房间（通常在最后）
-        if required_room_types.get("boss", 0) > 0 and available_indices:
-            boss_index = available_indices[-1]  # 最后一个房间
-            room_types[boss_index] = "boss"
-            available_indices.remove(boss_index)
-            assigned_count["boss"] = 1
-            assigned_count["normal"] -= 1
-
-        # 分配宝藏房间
-        treasure_needed = required_room_types.get("treasure", 0)
-        for _ in range(min(treasure_needed, len(available_indices))):
-            if available_indices:
-                treasure_index = random.choice(available_indices)
-                room_types[treasure_index] = "treasure"
-                available_indices.remove(treasure_index)
-                assigned_count["treasure"] = assigned_count.get("treasure", 0) + 1
-                assigned_count["normal"] -= 1
-
-        # 分配特殊房间
-        special_needed = required_room_types.get("special", 0)
-        for _ in range(min(special_needed, len(available_indices))):
-            if available_indices:
-                special_index = random.choice(available_indices)
-                room_types[special_index] = "special"
-                available_indices.remove(special_index)
-                assigned_count["special"] = assigned_count.get("special", 0) + 1
-                assigned_count["normal"] -= 1
-
-        return room_types
-
-    def _validate_room_configuration(self, rooms: List[Dict[str, int]], room_types: List[str],
-                                   required_room_types: Dict[str, Any]) -> Dict[str, Any]:
-        """验证房间配置是否满足需求"""
-        issues = []
-
-        # 统计实际房间类型
-        actual_counts = {}
-        for room_type in room_types:
-            actual_counts[room_type] = actual_counts.get(room_type, 0) + 1
-
-        # 检查必需房间类型
-        for room_type, required_count in required_room_types.items():
-            if room_type == "corridor":
-                continue  # 走廊单独检查
-
-            actual_count = actual_counts.get(room_type, 0)
-            if actual_count < required_count:
-                issues.append(f"缺少{room_type}房间: 需要{required_count}个，实际{actual_count}个")
-
-        # 检查入口房间
-        if actual_counts.get("entrance", 0) == 0:
-            issues.append("缺少入口房间")
-
-        # 检查房间总数是否合理
-        if len(rooms) < 3:
-            issues.append(f"房间数量过少: {len(rooms)}个（建议至少3个）")
-
-        return {
-            "is_valid": len(issues) == 0,
-            "issues": issues,
-            "actual_counts": actual_counts
-        }
-
-    async def _auto_fix_room_configuration(self, game_map: GameMap, rooms: List[Dict[str, int]],
-                                         room_types: List[str], required_room_types: Dict[str, Any],
-                                         validation_result: Dict[str, Any]) -> Tuple[List[Dict[str, int]], List[str]]:
-        """自动修复房间配置问题"""
-        logger.info("尝试自动修复房间配置...")
-
-        # 如果房间数量不足，尝试添加房间
-        if len(rooms) < 3:
-            additional_rooms = await self._add_emergency_rooms(game_map, rooms, 3 - len(rooms))
-            rooms.extend(additional_rooms)
-            room_types.extend(["normal"] * len(additional_rooms))
-
-        # 重新分配房间类型以满足需求
-        room_types = self._assign_room_types_by_requirements(rooms, required_room_types)
-
-        # 再次验证
-        new_validation = self._validate_room_configuration(rooms, room_types, required_room_types)
-        if new_validation["is_valid"]:
-            logger.info("房间配置自动修复成功")
-        else:
-            logger.warning(f"房间配置自动修复后仍有问题: {new_validation['issues']}")
-
-        return rooms, room_types
-
-    async def _add_emergency_rooms(self, game_map: GameMap, existing_rooms: List[Dict[str, int]],
-                                 count: int) -> List[Dict[str, int]]:
-        """在地图中添加紧急房间"""
-        new_rooms = []
-
-        # 寻找可用空间
-        for _ in range(count):
-            room_position = self._find_available_space_for_room(game_map, existing_rooms + new_rooms)
-            if room_position:
-                new_room = {
-                    "x": room_position[0],
-                    "y": room_position[1],
-                    "width": room_position[2],
-                    "height": room_position[3],
-                    "type": "normal",
-                    "id": str(uuid.uuid4())
-                }
-
-                # 在地图上雕刻新房间
-                self._carve_room(game_map, new_room)
-
-                # 连接到现有房间网络
-                if existing_rooms or new_rooms:
-                    nearest_room = self._find_nearest_room(new_room, existing_rooms + new_rooms)
-                    if nearest_room:
-                        self._connect_two_rooms(game_map, new_room, nearest_room)
-
-                new_rooms.append(new_room)
-                logger.info(f"添加紧急房间: {new_room}")
-
-        return new_rooms
-
-    def _find_available_space_for_room(self, game_map: GameMap, existing_rooms: List[Dict[str, int]]) -> Optional[Tuple[int, int, int, int]]:
-        """寻找可用空间来放置新房间"""
-        min_room_size = 3
-        max_room_size = 6
-
-        # 尝试多次寻找合适位置
-        for _ in range(50):
-            width = random.randint(min_room_size, min(max_room_size, game_map.width - 2))
-            height = random.randint(min_room_size, min(max_room_size, game_map.height - 2))
-            x = random.randint(1, game_map.width - width - 1)
-            y = random.randint(1, game_map.height - height - 1)
-
-            # 检查是否与现有房间重叠
-            new_room = {"x": x, "y": y, "width": width, "height": height}
-            if not self._room_overlaps_with_existing(new_room, existing_rooms):
-                return (x, y, width, height)
-
-        return None
-
-    def _room_overlaps_with_existing(self, new_room: Dict[str, int], existing_rooms: List[Dict[str, int]]) -> bool:
-        """检查新房间是否与现有房间重叠"""
-        for existing_room in existing_rooms:
-            if self._rooms_overlap(new_room, existing_room):
-                return True
-        return False
-
-    def _rooms_overlap(self, room1: Dict[str, int], room2: Dict[str, int]) -> bool:
-        """检查两个房间是否重叠（包括缓冲区）"""
-        # 添加1格缓冲区
-        r1_left = room1["x"] - 1
-        r1_right = room1["x"] + room1["width"] + 1
-        r1_top = room1["y"] - 1
-        r1_bottom = room1["y"] + room1["height"] + 1
-
-        r2_left = room2["x"] - 1
-        r2_right = room2["x"] + room2["width"] + 1
-        r2_top = room2["y"] - 1
-        r2_bottom = room2["y"] + room2["height"] + 1
-
-        return not (r1_right <= r2_left or r2_right <= r1_left or
-                   r1_bottom <= r2_top or r2_bottom <= r1_top)
-
-    def _find_nearest_room(self, target_room: Dict[str, int], rooms: List[Dict[str, int]]) -> Optional[Dict[str, int]]:
-        """找到距离目标房间最近的房间"""
-        if not rooms:
-            return None
-
-        min_distance = float('inf')
-        nearest_room = None
-
-        for room in rooms:
-            distance = self._calculate_room_distance(target_room, room)
-            if distance < min_distance:
-                min_distance = distance
-                nearest_room = room
-
-        return nearest_room
-
-    def _apply_room_types_to_map(self, game_map: GameMap, rooms: List[Dict[str, int]], room_types: List[str]):
-        """将房间类型应用到地图瓦片"""
-        for i, room in enumerate(rooms):
-            room_type = room_types[i] if i < len(room_types) else "normal"
-            room_id = room.get("id", f"room_{i}")
-
-            # 为房间内的所有地板瓦片设置房间类型
-            for x in range(room["x"], room["x"] + room["width"]):
-                for y in range(room["y"], room["y"] + room["height"]):
-                    tile = game_map.get_tile(x, y)
-                    if tile and tile.terrain == TerrainType.FLOOR:
-                        tile.room_type = room_type
-                        tile.room_id = room_id
 
 
 # 全局内容生成器实例
