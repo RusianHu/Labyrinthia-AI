@@ -292,8 +292,25 @@
     <!-- 地图瓦片工具提示 -->
     <div id="tile-tooltip" class="tile-tooltip"></div>
 
-    <!-- 脚本 -->
-    <script src="/static/game.js"></script>
+    <!-- 脚本 - 按依赖顺序加载模块化的JavaScript文件 -->
+    <!-- 1. 核心游戏类 - 必须首先加载 -->
+    <script src="/static/GameCore.js"></script>
+
+    <!-- 2. 功能扩展模块 - 按依赖关系顺序加载 -->
+    <script src="/static/DebugManager.js"></script>
+    <script src="/static/OverlayManager.js"></script>
+    <script src="/static/EffectsManager.js"></script>
+    <script src="/static/UIManager.js"></script>
+    <script src="/static/MapInteraction.js"></script>
+    <script src="/static/GameActions.js"></script>
+    <script src="/static/SaveManager.js"></script>
+    <script src="/static/EventHandler.js"></script>
+
+    <!-- 3. 游戏初始化 - 最后加载 -->
+    <script>
+        // 初始化游戏实例
+        const game = new LabyrinthiaGame();
+    </script>
     
     <style>
         /* 额外的样式 */
