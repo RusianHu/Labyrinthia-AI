@@ -397,6 +397,12 @@ class EventChoiceSystem:
     # 选择处理器方法
     async def _handle_story_choice(self, game_state: GameState, context: EventChoiceContext, choice: EventChoice) -> ChoiceResult:
         """处理故事选择"""
+        # 获取当前活跃任务信息
+        active_quest = next((q for q in game_state.quests if q.is_active), None)
+        quest_info = ""
+        if active_quest:
+            quest_info = f"任务：{active_quest.title} - {active_quest.description}"
+
         # 构建LLM提示来处理选择结果
         prompt = prompt_manager.format_prompt(
             "process_story_choice",
@@ -406,13 +412,24 @@ class EventChoiceSystem:
             player_name=game_state.player.name,
             player_level=game_state.player.stats.level,
             player_hp=game_state.player.stats.hp,
+            player_max_hp=game_state.player.stats.max_hp,
             current_map=game_state.current_map.name,
-            tile_position=context.context_data.get("tile_position", (0, 0))
+            map_depth=game_state.current_map.depth,
+            map_width=game_state.current_map.width,
+            map_height=game_state.current_map.height,
+            tile_position=context.context_data.get("tile_position", (0, 0)),
+            quest_info=quest_info
         )
 
         try:
             # 使用LLM处理选择结果
             llm_response = await llm_service._async_generate_json(prompt)
+
+            # 调试日志
+            from config import config
+            if config.game.show_llm_debug:
+                logger.info(f"Story choice LLM prompt: {prompt}")
+                logger.info(f"Story choice LLM response: {llm_response}")
 
             if llm_response:
                 result = ChoiceResult(
@@ -425,9 +442,15 @@ class EventChoiceSystem:
                     new_items=llm_response.get("new_items", [])
                 )
 
+                # 调试日志：显示将要应用的更新
+                if config.game.show_llm_debug:
+                    logger.info(f"Applying choice result: {result}")
+
                 # 应用更新到游戏状态
                 await self._apply_choice_result(game_state, result)
                 return result
+            else:
+                logger.warning("LLM returned empty response for story choice")
 
         except Exception as e:
             logger.error(f"Error handling story choice: {e}")
@@ -654,8 +677,22 @@ class EventChoiceSystem:
                 # 更新物品栏
                 if "add_items" in result.player_updates:
                     for item_data in result.player_updates["add_items"]:
-                        # 这里需要根据item_data创建Item对象并添加到inventory
-                        pass
+                        if isinstance(item_data, dict):
+                            from data_models import Item
+                            item = Item(
+                                name=item_data.get("name", "神秘物品"),
+                                description=item_data.get("description", "一个神秘的物品"),
+                                item_type=item_data.get("item_type", "misc"),
+                                rarity=item_data.get("rarity", "common")
+                            )
+                            # 设置其他可能的物品属性
+                            if "usage_description" in item_data:
+                                item.usage_description = item_data["usage_description"]
+                            if "properties" in item_data:
+                                item.properties = item_data["properties"]
+
+                            player.inventory.append(item)
+                            logger.info(f"Added item {item.name} to player inventory")
 
                 if "remove_items" in result.player_updates:
                     items_to_remove = result.player_updates["remove_items"]
@@ -666,13 +703,57 @@ class EventChoiceSystem:
             if result.map_updates:
                 current_map = game_state.current_map
                 tile_updates = result.map_updates.get("tiles", {})
+
                 for tile_key, tile_data in tile_updates.items():
-                    if tile_key in current_map.tiles:
-                        tile = current_map.tiles[tile_key]
+                    try:
+                        # 解析坐标
+                        if "," in tile_key:
+                            x, y = map(int, tile_key.split(","))
+                        else:
+                            logger.warning(f"Invalid tile key format: {tile_key}")
+                            continue
+
+                        # 获取或创建瓦片
+                        tile = current_map.get_tile(x, y)
+                        if not tile:
+                            # 如果瓦片不存在，创建新的
+                            from data_models import MapTile, TerrainType
+                            tile = MapTile(x=x, y=y)
+                            current_map.set_tile(x, y, tile)
+
                         # 更新瓦片属性
                         for attr_name, value in tile_data.items():
-                            if hasattr(tile, attr_name):
+                            if attr_name == "terrain":
+                                # 处理地形类型更新
+                                from data_models import TerrainType
+                                if hasattr(TerrainType, value.upper()):
+                                    tile.terrain = TerrainType(value.lower())
+                                else:
+                                    logger.warning(f"Unknown terrain type: {value}")
+                            elif attr_name == "items" and isinstance(value, list):
+                                # 处理物品添加
+                                for item_data in value:
+                                    if isinstance(item_data, dict):
+                                        from data_models import Item
+                                        item = Item(
+                                            name=item_data.get("name", "神秘物品"),
+                                            description=item_data.get("description", "一个神秘的物品"),
+                                            item_type=item_data.get("item_type", "misc"),
+                                            rarity=item_data.get("rarity", "common")
+                                        )
+                                        tile.items.append(item)
+                            elif attr_name == "monster" and isinstance(value, dict):
+                                # 处理怪物添加/更新
+                                await self._handle_monster_update(game_state, x, y, value)
+                            elif hasattr(tile, attr_name):
                                 setattr(tile, attr_name, value)
+                            else:
+                                logger.debug(f"Unknown tile attribute: {attr_name}")
+
+                        logger.info(f"Updated tile at ({x}, {y}) with data: {tile_data}")
+
+                    except Exception as e:
+                        logger.error(f"Error updating tile {tile_key}: {e}")
 
             # 应用任务更新
             if result.quest_updates:
@@ -689,6 +770,88 @@ class EventChoiceSystem:
 
         except Exception as e:
             logger.error(f"Error applying choice result: {e}")
+
+    async def _handle_monster_update(self, game_state: GameState, x: int, y: int, monster_data: Dict[str, Any]):
+        """处理怪物添加/更新"""
+        try:
+            from data_models import Monster, Stats, CharacterClass
+
+            action = monster_data.get("action", "add")  # add, update, remove
+
+            if action == "remove":
+                # 移除怪物
+                tile = game_state.current_map.get_tile(x, y)
+                if tile and tile.character_id:
+                    # 从怪物列表中移除
+                    game_state.monsters = [m for m in game_state.monsters if m.id != tile.character_id]
+                    # 清除瓦片上的角色引用
+                    tile.character_id = None
+                    logger.info(f"Removed monster from tile ({x}, {y})")
+
+            elif action == "update":
+                # 更新现有怪物
+                tile = game_state.current_map.get_tile(x, y)
+                if tile and tile.character_id:
+                    monster = next((m for m in game_state.monsters if m.id == tile.character_id), None)
+                    if monster:
+                        # 更新怪物属性
+                        if "name" in monster_data:
+                            monster.name = monster_data["name"]
+                        if "description" in monster_data:
+                            monster.description = monster_data["description"]
+                        if "stats" in monster_data:
+                            stats_data = monster_data["stats"]
+                            if "hp" in stats_data:
+                                monster.stats.hp = min(stats_data["hp"], monster.stats.max_hp)
+                            if "max_hp" in stats_data:
+                                monster.stats.max_hp = stats_data["max_hp"]
+                                monster.stats.hp = min(monster.stats.hp, monster.stats.max_hp)
+                        if "challenge_rating" in monster_data:
+                            monster.challenge_rating = monster_data["challenge_rating"]
+                        if "behavior" in monster_data:
+                            monster.behavior = monster_data["behavior"]
+                        if "is_boss" in monster_data:
+                            monster.is_boss = monster_data["is_boss"]
+                        logger.info(f"Updated monster {monster.name} at ({x}, {y})")
+
+            elif action == "add":
+                # 添加新怪物
+                tile = game_state.current_map.get_tile(x, y)
+                if tile:
+                    # 如果该位置已有角色，先移除
+                    if tile.character_id:
+                        game_state.monsters = [m for m in game_state.monsters if m.id != tile.character_id]
+
+                    # 创建新怪物
+                    monster = Monster()
+                    monster.name = monster_data.get("name", "神秘生物")
+                    monster.description = monster_data.get("description", "一个神秘的生物")
+                    monster.character_class = CharacterClass.FIGHTER  # 默认职业
+                    monster.position = (x, y)
+                    monster.challenge_rating = monster_data.get("challenge_rating", 1.0)
+                    monster.behavior = monster_data.get("behavior", "aggressive")
+                    monster.is_boss = monster_data.get("is_boss", False)
+                    monster.quest_monster_id = monster_data.get("quest_monster_id")
+                    monster.attack_range = monster_data.get("attack_range", 1)
+
+                    # 设置怪物属性
+                    if "stats" in monster_data:
+                        stats_data = monster_data["stats"]
+                        monster.stats.max_hp = stats_data.get("max_hp", 20)
+                        monster.stats.hp = stats_data.get("hp", monster.stats.max_hp)
+                        monster.stats.max_mp = stats_data.get("max_mp", 10)
+                        monster.stats.mp = stats_data.get("mp", monster.stats.max_mp)
+                        monster.stats.ac = stats_data.get("ac", 12)
+                        monster.stats.level = stats_data.get("level", 1)
+
+                    # 添加到游戏状态
+                    game_state.monsters.append(monster)
+                    tile.character_id = monster.id
+
+                    logger.info(f"Added new monster {monster.name} at ({x}, {y})")
+
+        except Exception as e:
+            logger.error(f"Error handling monster update: {e}")
 
     async def _create_new_quest(self, game_state: GameState, quest_data: Dict[str, Any]):
         """创建新任务"""

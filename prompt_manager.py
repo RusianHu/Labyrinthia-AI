@@ -576,29 +576,81 @@ class PromptManager:
 玩家信息：
 - 名称：{player_name}
 - 等级：{player_level}
-- 生命值：{player_hp}
+- 生命值：{player_hp}/{player_max_hp}
 - 位置：{tile_position}
 
-当前地图：{current_map}
+当前地图信息：
+- 地图名称：{current_map}
+- 地图深度：第{map_depth}层
+- 地图尺寸：{map_width}x{map_height}
 
-请根据玩家的选择生成合理的结果，可以包括：
-1. 玩家属性变化（生命值、经验值等）
-2. 地图元素变化（瓦片状态、新物品等）
-3. 任务进度更新
-4. 获得新物品
-5. 叙述事件
+当前任务信息：{quest_info}
+
+**重要说明**：你作为AI主持人，拥有完全的权限来修改游戏世界。你可以：
+1. 修改地图上任何位置的地形（如创建隐藏通道、新房间等）
+2. 在地图上添加新的物品、门、楼梯等元素
+3. 改变玩家的属性和状态
+4. 推进任务进度
+5. 创建新的事件和互动元素
+
+请根据玩家的选择生成合理且有趣的结果。如果选择涉及发现隐藏通道、秘密房间等，请大胆地修改地图结构。
+
+地图更新格式说明：
+- 使用 "x,y" 格式作为坐标键（如 "15,10"）
+- 可修改的地形类型：floor, wall, door, stairs_up, stairs_down, treasure, trap, water, lava, pit
+- 可添加事件数据、物品、怪物等
+
+怪物操作说明：
+- 添加怪物：在 "monster" 字段中设置 "action": "add"
+- 更新怪物：在 "monster" 字段中设置 "action": "update"
+- 移除怪物：在 "monster" 字段中设置 "action": "remove"
+
+事件操作说明：
+- 设置 "has_event": true 来创建事件瓦片
+- 使用 "event_type" 指定事件类型：story, combat, treasure, trap, secret_passage, puzzle等
+- 在 "event_data" 中添加事件的详细信息
 
 请返回JSON格式：
 {{
-    "message": "选择结果的主要描述",
-    "events": ["事件描述1", "事件描述2"],
+    "message": "选择结果的主要描述（80-120字）",
+    "events": ["详细的事件描述1", "详细的事件描述2"],
     "player_updates": {{
         "stats": {{"hp": 新生命值, "experience": 新经验值}},
-        "add_items": [物品数据],
+        "add_items": [
+            {{
+                "name": "物品名称",
+                "description": "物品描述",
+                "item_type": "weapon/armor/consumable/misc",
+                "rarity": "common/uncommon/rare/epic/legendary"
+            }}
+        ],
         "remove_items": ["物品名称"]
     }},
     "map_updates": {{
-        "tiles": {{"x,y": {{"terrain": "新地形类型"}}}}
+        "tiles": {{
+            "x,y": {{
+                "terrain": "新地形类型",
+                "has_event": true,
+                "event_type": "story",
+                "event_data": {{"description": "事件描述"}},
+                "items": [物品数据],
+                "monster": {{
+                    "action": "add/update/remove",
+                    "name": "怪物名称",
+                    "description": "怪物描述",
+                    "challenge_rating": 1.5,
+                    "behavior": "aggressive/defensive/neutral",
+                    "is_boss": false,
+                    "attack_range": 1,
+                    "stats": {{
+                        "max_hp": 30,
+                        "hp": 30,
+                        "ac": 14,
+                        "level": 2
+                    }}
+                }}
+            }}
+        }}
     }},
     "quest_updates": {{
         "quest_id": {{"progress_percentage": 新进度}}
@@ -607,15 +659,29 @@ class PromptManager:
             """.strip(),
             required_params=[
                 "choice_text", "choice_description", "event_context",
-                "player_name", "player_level", "player_hp", "current_map", "tile_position"
+                "player_name", "player_level", "player_hp", "player_max_hp",
+                "current_map", "map_depth", "map_width", "map_height", "tile_position"
             ],
+            optional_params={"quest_info": ""},
             schema={
                 "type": "object",
                 "properties": {
                     "message": {"type": "string"},
                     "events": {"type": "array", "items": {"type": "string"}},
-                    "player_updates": {"type": "object"},
-                    "map_updates": {"type": "object"},
+                    "player_updates": {
+                        "type": "object",
+                        "properties": {
+                            "stats": {"type": "object"},
+                            "add_items": {"type": "array"},
+                            "remove_items": {"type": "array"}
+                        }
+                    },
+                    "map_updates": {
+                        "type": "object",
+                        "properties": {
+                            "tiles": {"type": "object"}
+                        }
+                    },
                     "quest_updates": {"type": "object"},
                     "new_items": {"type": "array"}
                 },

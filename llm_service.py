@@ -659,7 +659,7 @@ class LLMService:
 
     def get_last_request_payload(self) -> Optional[Dict[str, Any]]:
         """获取最后一次发送给LLM的请求报文。
-        
+
         注意：在并发请求的环境下，这个方法返回的报文可能不完全准确，
         因为它只保留了最后一次完成的请求的报文。
         在串行调用的场景下（例如测试脚本），这是可靠的。
@@ -668,6 +668,19 @@ class LLMService:
             # 返回一个深拷贝以防止外部修改
             import copy
             return copy.deepcopy(self.client.last_request_payload)
+        return None
+
+    def get_last_response_payload(self) -> Optional[Dict[str, Any]]:
+        """获取最后一次LLM的响应报文。
+
+        注意：在并发请求的环境下，这个方法返回的报文可能不完全准确，
+        因为它只保留了最后一次完成的请求的响应。
+        在串行调用的场景下（例如测试脚本），这是可靠的。
+        """
+        if hasattr(self.client, 'last_response_payload'):
+            # 返回一个深拷贝以防止外部修改
+            import copy
+            return copy.deepcopy(self.client.last_response_payload)
         return None
     def _get_nearby_terrain(self, game_state: GameState, x: int, y: int, radius: int = 2) -> List[str]:
         """获取周围地形信息"""

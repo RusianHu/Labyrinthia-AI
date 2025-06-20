@@ -67,6 +67,7 @@ class OpenRouterClient:
     proxies: Optional[Dict[str, str]] = None
     _history: List[Dict[str, Any]] = field(default_factory=list, init=False)
     last_request_payload: Optional[Dict[str, Any]] = field(default=None, init=False)
+    last_response_payload: Optional[Dict[str, Any]] = field(default=None, init=False)
     _session: requests.Session = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
@@ -260,7 +261,10 @@ class OpenRouterClient:
     ) -> Dict[str, Any]:
         payload = self._build_payload(messages, model=model, stream=stream, **params)
         resp = self._post("/chat/completions", payload, stream=False)
-        return resp.json()
+        response_data = resp.json()
+        # 保存响应用于调试
+        self.last_response_payload = response_data
+        return response_data
 
     def _build_payload(
         self,

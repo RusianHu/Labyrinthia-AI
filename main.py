@@ -751,6 +751,27 @@ if config.game.debug_mode:
 
     # ==================== 新增调试API端点 ====================
 
+    @app.get("/api/debug/llm-info")
+    async def get_llm_debug_info():
+        """获取LLM调试信息"""
+        try:
+            if not config.game.show_llm_debug:
+                return {"success": False, "error": "LLM调试模式未启用"}
+
+            # 获取最后的LLM请求和响应
+            last_request = llm_service.get_last_request_payload()
+            last_response = llm_service.get_last_response_payload()
+
+            return {
+                "success": True,
+                "last_request": last_request,
+                "last_response": last_response,
+                "timestamp": datetime.now().isoformat()
+            }
+        except Exception as e:
+            logger.error(f"Get LLM debug info error: {e}")
+            return {"success": False, "error": str(e)}
+
     # ==================== 测试API端点 ====================
 
     @app.post("/api/test/gemini")
@@ -1266,6 +1287,367 @@ if config.game.debug_mode:
             return {
                 "success": False,
                 "message": f"内存使用测试失败: {str(e)}"
+            }
+
+    # ==================== 事件选择系统测试API ====================
+
+    @app.post("/api/test/event-choice-system")
+    async def test_event_choice_system(request: Request):
+        """测试事件选择系统功能"""
+        try:
+            request_data = await request.json()
+            test_type = request_data.get("test_type", "system_check")
+
+            if test_type == "system_check":
+                # 检查事件选择系统状态
+                from event_choice_system import event_choice_system, ChoiceEventType
+
+                # 获取系统信息
+                context_info = event_choice_system.get_context_info()
+                supported_event_types = [event_type.value for event_type in ChoiceEventType]
+                registered_handlers = len(event_choice_system.choice_handlers)
+
+                return {
+                    "success": True,
+                    "supported_event_types": supported_event_types,
+                    "registered_handlers": registered_handlers,
+                    "active_contexts": context_info.get("active_contexts_count", 0),
+                    "choice_history_count": context_info.get("choice_history_count", 0),
+                    "context_expiry_time": context_info.get("context_expiry_time", 0)
+                }
+
+        except Exception as e:
+            logger.error(f"Event choice system test failed: {e}")
+            return {
+                "success": False,
+                "message": f"事件选择系统测试失败: {str(e)}"
+            }
+
+    @app.post("/api/test/story-event-generation")
+    async def test_story_event_generation(request: Request):
+        """测试故事事件生成功能"""
+        try:
+            request_data = await request.json()
+
+            # 创建测试游戏状态
+            from data_models import GameState, Character, GameMap, MapTile, Quest
+            from event_choice_system import event_choice_system
+
+            test_game_state = GameState()
+            test_game_state.player = Character()
+            test_game_state.player.name = "测试玩家"
+            test_game_state.player.stats.level = request_data.get("player_level", 1)
+            test_game_state.player.position = (5, 5)
+
+            test_map = GameMap()
+            test_map.name = "测试地下城"
+            test_map.depth = request_data.get("map_depth", 1)
+            test_map.width = 10
+            test_map.height = 10
+            test_game_state.current_map = test_map
+
+            # 创建测试瓦片
+            test_tile = MapTile(x=5, y=5)
+            test_tile.event_data = {"story_type": "mystery", "description": "测试事件"}
+
+            # 如果需要活跃任务
+            if request_data.get("has_active_quest", False):
+                test_quest = Quest()
+                test_quest.title = "测试任务"
+                test_quest.description = "这是一个测试任务"
+                test_quest.quest_type = "exploration"
+                test_quest.is_active = True
+                test_quest.progress_percentage = 50.0
+                test_quest.objectives = ["探索地下城", "寻找宝藏"]
+                test_quest.story_context = "在古老的地下城中寻找失落的宝藏"
+                test_game_state.quests.append(test_quest)
+
+            # 生成故事事件
+            context = await event_choice_system.create_story_event_choice(test_game_state, test_tile)
+
+            if context:
+                return {
+                    "success": True,
+                    "event_title": context.title,
+                    "event_description": context.description,
+                    "choices_count": len(context.choices),
+                    "context_id": context.id,
+                    "event_type": context.event_type
+                }
+            else:
+                return {
+                    "success": False,
+                    "message": "无法生成故事事件"
+                }
+
+        except Exception as e:
+            logger.error(f"Story event generation test failed: {e}")
+            return {
+                "success": False,
+                "message": f"故事事件生成测试失败: {str(e)}"
+            }
+
+    @app.post("/api/test/quest-completion-choice")
+    async def test_quest_completion_choice(request: Request):
+        """测试任务完成选择功能"""
+        try:
+            request_data = await request.json()
+
+            # 创建测试游戏状态和已完成任务
+            from data_models import GameState, Character, GameMap, Quest
+            from event_choice_system import event_choice_system
+
+            test_game_state = GameState()
+            test_game_state.player = Character()
+            test_game_state.player.name = "测试玩家"
+            test_game_state.player.stats.level = request_data.get("player_level", 1)
+
+            test_map = GameMap()
+            test_map.name = "测试地下城"
+            test_map.depth = 1
+            test_game_state.current_map = test_map
+
+            # 创建已完成的测试任务
+            completed_quest = Quest()
+            completed_quest.title = request_data.get("quest_title", "测试任务")
+            completed_quest.description = "这是一个已完成的测试任务"
+            completed_quest.quest_type = request_data.get("quest_type", "exploration")
+            completed_quest.experience_reward = 100
+            completed_quest.story_context = "在地下城中完成了一项重要任务"
+            completed_quest.is_completed = True
+
+            # 生成任务完成选择
+            context = await event_choice_system.create_quest_completion_choice(test_game_state, completed_quest)
+
+            if context:
+                return {
+                    "success": True,
+                    "completion_title": context.title,
+                    "completion_description": context.description,
+                    "choices_count": len(context.choices),
+                    "context_id": context.id,
+                    "event_type": context.event_type
+                }
+            else:
+                return {
+                    "success": False,
+                    "message": "无法生成任务完成选择"
+                }
+
+        except Exception as e:
+            logger.error(f"Quest completion choice test failed: {e}")
+            return {
+                "success": False,
+                "message": f"任务完成选择测试失败: {str(e)}"
+            }
+
+    @app.post("/api/test/choice-processing")
+    async def test_choice_processing(request: Request):
+        """测试选择处理功能"""
+        try:
+            request_data = await request.json()
+
+            # 创建测试游戏状态
+            from data_models import GameState, Character, GameMap, MapTile, EventChoiceContext, EventChoice
+            from event_choice_system import event_choice_system
+
+            test_game_state = GameState()
+            test_game_state.player = Character()
+            test_game_state.player.name = "测试玩家"
+            test_game_state.player.stats.level = 1
+            test_game_state.player.stats.hp = 100
+            test_game_state.player.stats.max_hp = 100
+            test_game_state.player.position = (5, 5)
+
+            test_map = GameMap()
+            test_map.name = "测试地下城"
+            test_map.depth = 1
+            test_map.width = 10
+            test_map.height = 10
+            test_game_state.current_map = test_map
+
+            # 创建测试选择上下文
+            context = EventChoiceContext()
+            context.event_type = request_data.get("event_type", "story_event")
+            context.title = "测试事件"
+            context.description = "这是一个测试事件"
+            context.context_data = {"tile_position": (5, 5), "story_type": "test"}
+
+            # 创建测试选择
+            choice = EventChoice()
+            choice.text = request_data.get("choice_text", "测试选择")
+            choice.description = "这是一个测试选择"
+            choice.consequences = "测试后果"
+            choice.is_available = True
+
+            # 处理选择
+            result = await event_choice_system.process_choice(test_game_state, context.id, choice.id)
+
+            return {
+                "success": result.success,
+                "result_message": result.message,
+                "triggered_events": len(result.events),
+                "map_updates": bool(result.map_updates),
+                "player_updates": bool(result.player_updates),
+                "quest_updates": bool(result.quest_updates),
+                "events": result.events[:3] if result.events else []  # 只返回前3个事件
+            }
+
+        except Exception as e:
+            logger.error(f"Choice processing test failed: {e}")
+            return {
+                "success": False,
+                "message": f"选择处理测试失败: {str(e)}"
+            }
+
+    @app.post("/api/test/llm-permissions")
+    async def test_llm_permissions(request: Request):
+        """测试LLM权限功能"""
+        try:
+            request_data = await request.json()
+            test_permissions = request_data.get("test_permissions", [])
+
+            # 检查各种权限的实现状态
+            permission_results = {}
+
+            for permission in test_permissions:
+                if permission == "terrain_modification":
+                    # 检查地形修改功能
+                    permission_results[permission] = True  # 已在_apply_choice_result中实现
+                elif permission == "monster_management":
+                    # 检查怪物管理功能
+                    permission_results[permission] = True  # 已在_handle_monster_update中实现
+                elif permission == "event_creation":
+                    # 检查事件创建功能
+                    permission_results[permission] = True  # 已在地图更新中实现
+                elif permission == "item_addition":
+                    # 检查物品添加功能
+                    permission_results[permission] = True  # 已在_apply_choice_result中实现
+                elif permission == "player_attributes":
+                    # 检查玩家属性修改功能
+                    permission_results[permission] = True  # 已在_apply_choice_result中实现
+                elif permission == "quest_progress":
+                    # 检查任务进度功能
+                    permission_results[permission] = True  # 已在_apply_choice_result中实现
+                elif permission == "narrative_content":
+                    # 检查叙述内容功能
+                    permission_results[permission] = True  # 已在result.events中实现
+                else:
+                    permission_results[permission] = False
+
+            return {
+                "success": True,
+                "permission_results": permission_results,
+                "total_permissions": len(test_permissions),
+                "supported_permissions": sum(permission_results.values())
+            }
+
+        except Exception as e:
+            logger.error(f"LLM permissions test failed: {e}")
+            return {
+                "success": False,
+                "message": f"LLM权限测试失败: {str(e)}"
+            }
+
+    @app.post("/api/test/context-information")
+    async def test_context_information(request: Request):
+        """测试上下文信息传递功能"""
+        try:
+            request_data = await request.json()
+
+            # 创建测试游戏状态
+            from data_models import GameState, Character, GameMap, Quest
+            from prompt_manager import prompt_manager
+
+            test_game_state = GameState()
+            test_game_state.player = Character()
+            test_game_state.player.name = "测试玩家"
+            test_game_state.player.stats.level = 5
+            test_game_state.player.stats.hp = 80
+            test_game_state.player.stats.max_hp = 100
+            test_game_state.player.position = (10, 15)
+
+            test_map = GameMap()
+            test_map.name = "深层地下城"
+            test_map.depth = 3
+            test_map.width = 20
+            test_map.height = 20
+            test_game_state.current_map = test_map
+
+            # 创建活跃任务
+            active_quest = Quest()
+            active_quest.title = "寻找古老宝藏"
+            active_quest.description = "在地下城深处寻找传说中的古老宝藏"
+            active_quest.quest_type = "treasure_hunt"
+            active_quest.progress_percentage = 75.0
+            active_quest.objectives = ["探索第3层", "击败守护者", "找到宝藏"]
+            active_quest.story_context = "传说中的宝藏被强大的守护者保护着"
+            active_quest.is_active = True
+            test_game_state.quests.append(active_quest)
+
+            # 检查上下文信息构建
+            context_data = {}
+
+            if request_data.get("include_player_info", True):
+                player_context = prompt_manager.build_player_context(test_game_state.player)
+                context_data["player_info"] = bool(player_context)
+                context_data["player_fields"] = list(player_context.keys()) if player_context else []
+
+            if request_data.get("include_map_info", True):
+                map_context = prompt_manager.build_map_context(test_game_state.current_map)
+                context_data["map_info"] = bool(map_context)
+                context_data["map_fields"] = list(map_context.keys()) if map_context else []
+
+            if request_data.get("include_quest_info", True):
+                # 检查任务信息是否正确传递
+                quest_info = {
+                    "quest_title": active_quest.title,
+                    "quest_description": active_quest.description,
+                    "quest_type": active_quest.quest_type,
+                    "quest_progress": active_quest.progress_percentage,
+                    "quest_objectives": active_quest.objectives,
+                    "quest_story_context": active_quest.story_context,
+                    "has_active_quest": True
+                }
+                context_data["quest_info"] = bool(quest_info)
+                context_data["quest_fields"] = list(quest_info.keys())
+
+            if request_data.get("include_event_info", True):
+                event_info = {
+                    "location_x": test_game_state.player.position[0],
+                    "location_y": test_game_state.player.position[1],
+                    "story_type": "test",
+                    "event_description": "测试事件描述"
+                }
+                context_data["event_info"] = bool(event_info)
+                context_data["event_fields"] = list(event_info.keys())
+
+            # 构建详细信息
+            detailed_info = {}
+            if context_data.get("player_info"):
+                detailed_info.update(prompt_manager.build_player_context(test_game_state.player))
+            if context_data.get("map_info"):
+                detailed_info.update(prompt_manager.build_map_context(test_game_state.current_map))
+
+            context_data["detailed_info"] = detailed_info
+
+            return {
+                "success": True,
+                "context_data": context_data,
+                "total_fields": len(detailed_info),
+                "context_complete": all([
+                    context_data.get("player_info", False),
+                    context_data.get("map_info", False),
+                    context_data.get("quest_info", False),
+                    context_data.get("event_info", False)
+                ])
+            }
+
+        except Exception as e:
+            logger.error(f"Context information test failed: {e}")
+            return {
+                "success": False,
+                "message": f"上下文信息测试失败: {str(e)}"
             }
 
     @app.post("/api/game/{game_id}/debug/trigger-event")

@@ -69,6 +69,7 @@ class GeminiAPI:
         """
         self.api_key = api_key
         self.last_request_payload: Optional[dict] = None  # 兼容性属性
+        self.last_response_payload: Optional[dict] = None  # 保存最后的响应
 
         # 处理代理配置（兼容旧版）
         if proxies:
@@ -236,7 +237,10 @@ class GeminiAPI:
             config=config
         )
 
-        return self._sdk_response_to_dict(response)
+        response_dict = self._sdk_response_to_dict(response)
+        # 保存响应用于调试
+        self.last_response_payload = response_dict
+        return response_dict
 
     def single_turn_json(
         self,
@@ -281,7 +285,10 @@ class GeminiAPI:
             config=config
         )
 
-        return self._sdk_response_to_dict(response)
+        response_dict = self._sdk_response_to_dict(response)
+        # 保存响应用于调试
+        self.last_response_payload = response_dict
+        return response_dict
 
     # ---------------------------- ChatSession ----------------------------
     class ChatSession:

@@ -322,6 +322,40 @@
                     </div>
                 </div>
 
+                <!-- 事件选择系统测试 -->
+                <div class="test-category">
+                    <div class="category-title">
+                        <span class="material-icons">psychology</span>
+                        事件选择系统测试
+                    </div>
+                    <div class="test-buttons">
+                        <button class="test-btn" onclick="testEventChoiceSystem()">
+                            <span class="material-icons">quiz</span>
+                            事件选择系统检查
+                        </button>
+                        <button class="test-btn" onclick="testStoryEventGeneration()">
+                            <span class="material-icons">auto_stories</span>
+                            故事事件生成测试
+                        </button>
+                        <button class="test-btn" onclick="testQuestCompletionChoice()">
+                            <span class="material-icons">task_alt</span>
+                            任务完成选择测试
+                        </button>
+                        <button class="test-btn" onclick="testChoiceProcessing()">
+                            <span class="material-icons">settings_suggest</span>
+                            选择处理测试
+                        </button>
+                        <button class="test-btn" onclick="testLLMPermissions()">
+                            <span class="material-icons">admin_panel_settings</span>
+                            LLM权限测试
+                        </button>
+                        <button class="test-btn" onclick="testContextInformation()">
+                            <span class="material-icons">info</span>
+                            上下文信息测试
+                        </button>
+                    </div>
+                </div>
+
                 <!-- 数据管理测试 -->
                 <div class="test-category">
                     <div class="category-title">
@@ -695,6 +729,255 @@
                     }
                 } catch (error) {
                     log(`❌ 内容生成测试异常: ${error.message}`, 'error');
+                }
+            });
+        }
+
+        // ==================== 事件选择系统测试 ====================
+
+        async function testEventChoiceSystem() {
+            const button = event.target;
+            await withLoadingButton(button, async () => {
+                log('开始事件选择系统检查...', 'info');
+
+                try {
+                    // 检查事件选择管理器是否存在
+                    if (typeof EventChoiceManager !== 'undefined') {
+                        log('✅ EventChoiceManager 类存在', 'success');
+                    } else {
+                        log('❌ EventChoiceManager 类不存在', 'error');
+                    }
+
+                    // 检查事件选择系统API
+                    const response = await fetch('/api/test/event-choice-system', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ test_type: 'system_check' })
+                    });
+
+                    if (response.ok) {
+                        const result = await response.json();
+                        if (result.success) {
+                            log('✅ 事件选择系统API可用', 'success');
+                            log(`📊 支持的事件类型: ${result.supported_event_types?.length || 0} 种`, 'info');
+                            log(`🔧 注册的处理器: ${result.registered_handlers || 0} 个`, 'info');
+                            log(`📝 活跃上下文: ${result.active_contexts || 0} 个`, 'info');
+                        } else {
+                            log(`❌ 事件选择系统检查失败: ${result.message}`, 'error');
+                        }
+                    } else {
+                        log(`❌ 事件选择系统API请求失败: HTTP ${response.status}`, 'error');
+                    }
+                } catch (error) {
+                    log(`❌ 事件选择系统检查异常: ${error.message}`, 'error');
+                }
+            });
+        }
+
+        async function testStoryEventGeneration() {
+            const button = event.target;
+            await withLoadingButton(button, async () => {
+                log('开始故事事件生成测试...', 'info');
+
+                try {
+                    const response = await fetch('/api/test/story-event-generation', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            test_type: 'story_event',
+                            player_level: 1,
+                            map_depth: 1,
+                            has_active_quest: true
+                        })
+                    });
+
+                    if (response.ok) {
+                        const result = await response.json();
+                        if (result.success) {
+                            log('✅ 故事事件生成成功', 'success');
+                            log(`📖 事件标题: ${result.event_title || '未知'}`, 'info');
+                            log(`📝 事件描述: ${result.event_description?.substring(0, 50) || '无'}...`, 'info');
+                            log(`🎯 选择数量: ${result.choices_count || 0} 个`, 'info');
+                            log(`🔗 上下文ID: ${result.context_id || '无'}`, 'info');
+                        } else {
+                            log(`❌ 故事事件生成失败: ${result.message}`, 'error');
+                        }
+                    } else {
+                        log(`❌ 故事事件生成请求失败: HTTP ${response.status}`, 'error');
+                    }
+                } catch (error) {
+                    log(`❌ 故事事件生成测试异常: ${error.message}`, 'error');
+                }
+            });
+        }
+
+        async function testQuestCompletionChoice() {
+            const button = event.target;
+            await withLoadingButton(button, async () => {
+                log('开始任务完成选择测试...', 'info');
+
+                try {
+                    const response = await fetch('/api/test/quest-completion-choice', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            test_type: 'quest_completion',
+                            quest_title: '测试任务',
+                            quest_type: 'exploration',
+                            player_level: 1
+                        })
+                    });
+
+                    if (response.ok) {
+                        const result = await response.json();
+                        if (result.success) {
+                            log('✅ 任务完成选择生成成功', 'success');
+                            log(`🏆 完成标题: ${result.completion_title || '未知'}`, 'info');
+                            log(`📝 完成描述: ${result.completion_description?.substring(0, 50) || '无'}...`, 'info');
+                            log(`🎯 后续选择: ${result.choices_count || 0} 个`, 'info');
+                            log(`🔗 上下文ID: ${result.context_id || '无'}`, 'info');
+                        } else {
+                            log(`❌ 任务完成选择测试失败: ${result.message}`, 'error');
+                        }
+                    } else {
+                        log(`❌ 任务完成选择请求失败: HTTP ${response.status}`, 'error');
+                    }
+                } catch (error) {
+                    log(`❌ 任务完成选择测试异常: ${error.message}`, 'error');
+                }
+            });
+        }
+
+        async function testChoiceProcessing() {
+            const button = event.target;
+            await withLoadingButton(button, async () => {
+                log('开始选择处理测试...', 'info');
+
+                try {
+                    const response = await fetch('/api/test/choice-processing', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            test_type: 'choice_processing',
+                            choice_text: '仔细调查',
+                            event_type: 'story_event'
+                        })
+                    });
+
+                    if (response.ok) {
+                        const result = await response.json();
+                        if (result.success) {
+                            log('✅ 选择处理测试成功', 'success');
+                            log(`📝 处理结果: ${result.result_message || '无'}`, 'info');
+                            log(`🎭 触发事件: ${result.triggered_events || 0} 个`, 'info');
+                            log(`🗺️ 地图更新: ${result.map_updates ? '是' : '否'}`, 'info');
+                            log(`👤 玩家更新: ${result.player_updates ? '是' : '否'}`, 'info');
+                            log(`📜 任务更新: ${result.quest_updates ? '是' : '否'}`, 'info');
+                        } else {
+                            log(`❌ 选择处理测试失败: ${result.message}`, 'error');
+                        }
+                    } else {
+                        log(`❌ 选择处理请求失败: HTTP ${response.status}`, 'error');
+                    }
+                } catch (error) {
+                    log(`❌ 选择处理测试异常: ${error.message}`, 'error');
+                }
+            });
+        }
+
+        async function testLLMPermissions() {
+            const button = event.target;
+            await withLoadingButton(button, async () => {
+                log('开始LLM权限测试...', 'info');
+
+                try {
+                    const response = await fetch('/api/test/llm-permissions', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            test_type: 'permissions_check',
+                            test_permissions: [
+                                'terrain_modification',
+                                'monster_management',
+                                'event_creation',
+                                'item_addition',
+                                'player_attributes',
+                                'quest_progress',
+                                'narrative_content'
+                            ]
+                        })
+                    });
+
+                    if (response.ok) {
+                        const result = await response.json();
+                        if (result.success) {
+                            log('✅ LLM权限测试成功', 'success');
+
+                            const permissions = result.permission_results || {};
+                            Object.entries(permissions).forEach(([permission, status]) => {
+                                const icon = status ? '✅' : '❌';
+                                const type = status ? 'success' : 'error';
+                                log(`${icon} ${permission}: ${status ? '支持' : '不支持'}`, type);
+                            });
+
+                            const supportedCount = Object.values(permissions).filter(Boolean).length;
+                            const totalCount = Object.keys(permissions).length;
+                            log(`📊 权限支持率: ${supportedCount}/${totalCount} (${((supportedCount/totalCount)*100).toFixed(1)}%)`, 'info');
+                        } else {
+                            log(`❌ LLM权限测试失败: ${result.message}`, 'error');
+                        }
+                    } else {
+                        log(`❌ LLM权限请求失败: HTTP ${response.status}`, 'error');
+                    }
+                } catch (error) {
+                    log(`❌ LLM权限测试异常: ${error.message}`, 'error');
+                }
+            });
+        }
+
+        async function testContextInformation() {
+            const button = event.target;
+            await withLoadingButton(button, async () => {
+                log('开始上下文信息测试...', 'info');
+
+                try {
+                    const response = await fetch('/api/test/context-information', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            test_type: 'context_check',
+                            include_player_info: true,
+                            include_map_info: true,
+                            include_quest_info: true,
+                            include_event_info: true
+                        })
+                    });
+
+                    if (response.ok) {
+                        const result = await response.json();
+                        if (result.success) {
+                            log('✅ 上下文信息测试成功', 'success');
+
+                            const context = result.context_data || {};
+                            log(`👤 玩家信息: ${context.player_info ? '包含' : '缺失'}`, context.player_info ? 'success' : 'warning');
+                            log(`🗺️ 地图信息: ${context.map_info ? '包含' : '缺失'}`, context.map_info ? 'success' : 'warning');
+                            log(`📜 任务信息: ${context.quest_info ? '包含' : '缺失'}`, context.quest_info ? 'success' : 'warning');
+                            log(`🎭 事件信息: ${context.event_info ? '包含' : '缺失'}`, context.event_info ? 'success' : 'warning');
+
+                            if (context.detailed_info) {
+                                log(`📊 详细信息字段: ${Object.keys(context.detailed_info).length} 个`, 'info');
+                                Object.keys(context.detailed_info).forEach(field => {
+                                    log(`   📋 ${field}`, 'info');
+                                });
+                            }
+                        } else {
+                            log(`❌ 上下文信息测试失败: ${result.message}`, 'error');
+                        }
+                    } else {
+                        log(`❌ 上下文信息请求失败: HTTP ${response.status}`, 'error');
+                    }
+                } catch (error) {
+                    log(`❌ 上下文信息测试异常: ${error.message}`, 'error');
                 }
             });
         }
