@@ -1224,7 +1224,35 @@ class ContentGenerator:
                 items.append(item)
         
         return items
-    
+
+    async def generate_loot_items(self, player_level: int, rarity: str = "common",
+                                item_types: Optional[List[str]] = None, count: int = 1) -> List[Item]:
+        """生成战利品物品（兼容性方法，调用generate_random_items）"""
+        # 如果指定了物品类型，过滤生成的物品
+        if item_types:
+            items = []
+            for _ in range(count):
+                # 为每个指定类型生成物品
+                for item_type in item_types:
+                    generated_items = await self.generate_random_items(1, player_level)
+                    if generated_items:
+                        item = generated_items[0]
+                        item.item_type = item_type  # 强制设置为指定类型
+                        item.rarity = rarity  # 设置稀有度
+                        items.append(item)
+                    if len(items) >= count:
+                        break
+                if len(items) >= count:
+                    break
+            return items[:count]
+        else:
+            # 使用原有的generate_random_items方法
+            items = await self.generate_random_items(count, player_level)
+            # 设置稀有度
+            for item in items:
+                item.rarity = rarity
+            return items
+
     async def generate_quest_chain(self, player_level: int,
                                  chain_length: int = 1) -> List[Quest]:
         """生成任务链（开发阶段简化）"""

@@ -17,12 +17,30 @@ class LabyrinthiaGame {
 
         this.init();
         this.initializeDebugMode();
-        this.loadConfig();
+        // loadConfig 将在 initializeDebugMode 中异步调用
     }
     
     init() {
         this.setupEventListeners();
         this.loadGameList();
+
+        // 延迟启动事件选择管理器，确保所有脚本都已加载
+        setTimeout(() => {
+            this.initEventChoiceManager();
+        }, 100);
+    }
+
+    initEventChoiceManager() {
+        if (window.eventChoiceManager) {
+            window.eventChoiceManager.startChoicePolling();
+            console.log('EventChoiceManager polling started');
+        } else {
+            console.warn('EventChoiceManager not found, retrying...');
+            // 如果还没有加载，再等一会儿
+            setTimeout(() => {
+                this.initEventChoiceManager();
+            }, 500);
+        }
     }
 
     async loadConfig() {
@@ -50,12 +68,37 @@ class LabyrinthiaGame {
 
         try {
             const response = await fetch(`/api/game/${this.gameId}`);
+
+            // 检查响应状态
+            if (response.status === 404) {
+                console.warn('Game not found on server, clearing game state');
+                this.gameId = null;
+                this.gameState = null;
+                this.addMessage('游戏会话已失效，请重新加载游戏', 'warning');
+
+                // 停止EventChoiceManager轮询
+                if (window.eventChoiceManager) {
+                    window.eventChoiceManager.stopChoicePolling();
+                }
+                return;
+            }
+
             const gameState = await response.json();
 
             this.gameState = gameState;
             this.updateUI();
+
+            // 触发EventChoiceManager立即检查
+            if (window.eventChoiceManager) {
+                window.eventChoiceManager.triggerImmediateCheck();
+            }
         } catch (error) {
             console.error('Failed to refresh game state:', error);
+
+            // 如果是连接错误，提示用户
+            if (error.message.includes('Failed to fetch')) {
+                this.addMessage('无法连接到服务器，请检查网络连接', 'error');
+            }
         }
     }
 
@@ -68,6 +111,20 @@ class LabyrinthiaGame {
         this.updateQuests();
         this.updateControlPanel();
         this.processPendingEffects();
+    }
+
+    updateGameState(newGameState) {
+        /**
+         * 更新游戏状态并刷新UI
+         * 用于EventChoiceManager等组件更新游戏状态
+         */
+        this.gameState = newGameState;
+        this.updateUI();
+
+        // 触发EventChoiceManager立即检查
+        if (window.eventChoiceManager) {
+            window.eventChoiceManager.triggerImmediateCheck();
+        }
     }
 
     renderGame() {
@@ -288,6 +345,42 @@ class LabyrinthiaGame {
                 };
                 controlPanel.appendChild(testButton);
             }
+        }
+    }
+
+    // 调试方法占位符 - 将被DebugManager.js覆盖
+    initializeDebugMode() {
+        // 占位符方法，防止调用错误
+        console.log('GameCore: Debug mode placeholder - will be overridden by DebugManager.js');
+
+        // 基础调试模式初始化
+        this.debugMode = false;
+
+        // 异步加载配置并更新调试模式
+        this.loadConfig().then(() => {
+            // 只有在方法没有被覆盖时才调用占位符版本
+            if (this.updateDebugFabVisibility.toString().includes('占位符')) {
+                this.updateDebugFabVisibility();
+            }
+        }).catch(error => {
+            console.warn('GameCore: Failed to load config for debug mode:', error);
+        });
+    }
+
+    updateDebugFabVisibility() {
+        // 占位符方法，防止调用错误
+        console.log('GameCore: updateDebugFabVisibility placeholder called');
+        const debugFab = document.getElementById('debug-fab');
+        if (debugFab) {
+            if (this.debugMode) {
+                debugFab.classList.remove('hidden');
+                console.log('GameCore: Debug FAB shown (placeholder)');
+            } else {
+                debugFab.classList.add('hidden');
+                console.log('GameCore: Debug FAB hidden (placeholder)');
+            }
+        } else {
+            console.warn('GameCore: Debug FAB element not found (placeholder)');
         }
     }
 }

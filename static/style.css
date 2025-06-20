@@ -406,6 +406,18 @@ body {
 .message-action { color: #2c3e50; }
 .message-combat { color: #e74c3c; }
 .message-success { color: #27ae60; }
+.message-error { color: #e74c3c; font-weight: 600; }
+.message-narrative {
+    color: #5e35b1;
+    font-style: italic;
+    background: rgba(94, 53, 177, 0.1);
+    padding: 8px;
+    border-radius: 4px;
+    border-left: 3px solid #5e35b1;
+    margin: 4px 0;
+}
+.message-info { color: #3498db; }
+.message-warning { color: #f39c12; }
 
 /* 物品栏 */
 .inventory-grid {
@@ -1255,4 +1267,92 @@ body {
 .debug-close:hover {
     background: rgba(255, 255, 255, 0.1);
     border-radius: 50%;
+}
+
+/* 调试按钮样式 */
+.debug-buttons {
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+}
+
+.debug-button-group {
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 8px;
+    padding: 12px;
+    border-left: 3px solid #667eea;
+}
+
+.debug-button-group h5 {
+    margin: 0 0 10px 0;
+    color: #667eea;
+    font-size: 13px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.debug-btn {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    padding: 8px 12px;
+    margin-bottom: 6px;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    border: none;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    text-align: left;
+}
+
+.debug-btn:hover {
+    background: linear-gradient(135deg, #5a67d8 0%, #6b46c1 100%);
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
+}
+
+.debug-btn:active {
+    transform: translateY(0);
+    box-shadow: 0 2px 6px rgba(102, 126, 234, 0.2);
+}
+
+.debug-btn .material-icons {
+    font-size: 16px;
+}
+
+.debug-teleport-group {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+
+.debug-input {
+    flex: 1;
+    padding: 6px 8px;
+    background: rgba(255, 255, 255, 0.1);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 4px;
+    color: white;
+    font-size: 12px;
+    max-width: 80px;
+}
+
+.debug-input::placeholder {
+    color: rgba(255, 255, 255, 0.5);
+}
+
+.debug-input:focus {
+    outline: none;
+    border-color: #667eea;
+    background: rgba(255, 255, 255, 0.15);
+}
+
+.debug-teleport-group .debug-btn {
+    flex: 2;
+    margin-bottom: 0;
 }

@@ -292,13 +292,24 @@ class ProgressManager:
             "quest_title": quest.title,
             "experience_reward": quest.experience_reward,
             "message": completion_message,
-            "timestamp": self._get_current_timestamp()
+            "timestamp": self._get_current_timestamp(),
+            "completed_quest": quest.to_dict()  # 添加完整的任务数据
         }
 
         # 将特效信息添加到游戏状态中，供前端使用
         if not hasattr(game_state, 'pending_effects'):
             game_state.pending_effects = []
         game_state.pending_effects.append(quest_completion_effect)
+
+        # 设置任务完成选择标志，让游戏引擎处理选择系统
+        if not hasattr(game_state, 'pending_quest_completion'):
+            game_state.pending_quest_completion = None
+        game_state.pending_quest_completion = quest
+
+        # 设置新任务生成标志，确保玩家始终有活跃任务
+        if not hasattr(game_state, 'pending_new_quest_generation'):
+            game_state.pending_new_quest_generation = False
+        game_state.pending_new_quest_generation = True
 
         logger.info(f"Quest completed: {quest.title}")
 

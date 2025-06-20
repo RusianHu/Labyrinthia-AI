@@ -23,6 +23,7 @@ from llm_interaction_manager import (
     llm_interaction_manager, InteractionType, InteractionContext
 )
 from prompt_manager import prompt_manager
+from event_choice_system import event_choice_system, ChoiceEventType
 
 
 logger = logging.getLogger(__name__)
@@ -239,6 +240,46 @@ class GameEngine:
                         result["events"] = []
                     result["events"].extend(game_state.pending_events)
                     game_state.pending_events.clear()
+
+                # 检查是否有任务完成需要处理选择
+                if hasattr(game_state, 'pending_quest_completion') and game_state.pending_quest_completion:
+                    completed_quest = game_state.pending_quest_completion
+                    try:
+                        # 创建任务完成选择上下文
+                        choice_context = await event_choice_system.create_quest_completion_choice(
+                            game_state, completed_quest
+                        )
+
+                        # 将选择上下文存储到游戏状态中
+                        game_state.pending_choice_context = choice_context
+                        event_choice_system.active_contexts[choice_context.id] = choice_context
+
+                        # 清理任务完成标志
+                        game_state.pending_quest_completion = None
+
+                        logger.info(f"Created quest completion choice for: {completed_quest.title}")
+
+                    except Exception as e:
+                        logger.error(f"Error creating quest completion choice: {e}")
+                        # 清理标志，避免重复处理
+                        game_state.pending_quest_completion = None
+
+                # 检查是否需要生成新任务（确保玩家始终有活跃任务）
+                if hasattr(game_state, 'pending_new_quest_generation') and game_state.pending_new_quest_generation:
+                    try:
+                        # 检查是否还有活跃任务
+                        active_quest = next((q for q in game_state.quests if q.is_active), None)
+                        if not active_quest:
+                            # 生成新任务
+                            await self._generate_new_quest_for_player(game_state)
+
+                        # 清理新任务生成标志
+                        game_state.pending_new_quest_generation = False
+
+                    except Exception as e:
+                        logger.error(f"Error generating new quest: {e}")
+                        # 清理标志，避免重复处理
+                        game_state.pending_new_quest_generation = False
 
                 # 检查游戏是否结束
                 if game_state.is_game_over:
@@ -976,65 +1017,57 @@ class GameEngine:
         is_quest_event = quest_event_id is not None
 
         if is_quest_event:
-            # 处理任务专属事件
+            # 处理任务专属事件 - 使用选择系统
             event_name = event_data.get("name", "任务事件")
             event_description = event_data.get("description", "")
             progress_value = event_data.get("progress_value", 0.0)
             is_mandatory = event_data.get("is_mandatory", True)
 
-            # 使用PromptManager生成任务相关的故事内容
+            # 创建事件选择上下文
             try:
-                prompt = prompt_manager.format_prompt(
-                    "quest_event_story",
-                    event_name=event_name,
-                    event_description=event_description,
-                    is_mandatory=is_mandatory,
-                    player_x=tile.x,
-                    player_y=tile.y,
-                    player_level=game_state.player.stats.level,
-                    map_name=game_state.current_map.name
+                choice_context = await event_choice_system.create_story_event_choice(game_state, tile)
+
+                # 将选择上下文存储到游戏状态中
+                game_state.pending_choice_context = choice_context
+                event_choice_system.active_contexts[choice_context.id] = choice_context
+
+                # 触发任务专属事件进度（使用更高的进度值）
+                await self._trigger_progress_event(
+                    game_state, ProgressEventType.STORY_EVENT,
+                    {
+                        "story_type": "quest_event",
+                        "quest_event_id": quest_event_id,
+                        "progress_value": progress_value,
+                        "location": (tile.x, tile.y)
+                    }
                 )
 
-                story_text = await llm_service.generate_text(prompt)
-                result_message = story_text or f"你发现了重要的线索：{event_name}"
+                result_message = f"你发现了重要的线索：{event_name}。请做出选择..."
+
             except Exception as e:
-                logger.error(f"Error generating quest story event: {e}")
+                logger.error(f"Error creating story event choice: {e}")
                 result_message = f"你发现了重要的线索：{event_name}"
 
-            # 触发任务专属事件进度（使用更高的进度值）
-            await self._trigger_progress_event(
-                game_state, ProgressEventType.STORY_EVENT,
-                {
-                    "story_type": "quest_event",
-                    "quest_event_id": quest_event_id,
-                    "progress_value": progress_value,
-                    "location": (tile.x, tile.y)
-                }
-            )
-
         else:
-            # 处理普通故事事件
-            prompt = f"""
-            为玩家生成一个{story_type}类型的故事事件。
-            玩家当前位置：({tile.x}, {tile.y})
-            玩家等级：{game_state.player.stats.level}
-            地图：{game_state.current_map.name}
-
-            请生成一个简短但有趣的故事描述（50-100字）。
-            """
-
+            # 处理普通故事事件 - 使用选择系统
             try:
-                story_text = await llm_service.generate_text(prompt)
-                result_message = story_text or "你发现了一些古老的痕迹..."
-            except Exception as e:
-                logger.error(f"Error generating story event: {e}")
-                result_message = "你发现了一些古老的痕迹..."
+                choice_context = await event_choice_system.create_story_event_choice(game_state, tile)
 
-            # 触发普通故事事件进度
-            await self._trigger_progress_event(
-                game_state, ProgressEventType.STORY_EVENT,
-                {"story_type": story_type, "location": (tile.x, tile.y)}
-            )
+                # 将选择上下文存储到游戏状态中
+                game_state.pending_choice_context = choice_context
+                event_choice_system.active_contexts[choice_context.id] = choice_context
+
+                # 触发普通故事事件进度
+                await self._trigger_progress_event(
+                    game_state, ProgressEventType.STORY_EVENT,
+                    {"story_type": story_type, "location": (tile.x, tile.y)}
+                )
+
+                result_message = "你遇到了一个有趣的情况，请做出选择..."
+
+            except Exception as e:
+                logger.error(f"Error creating story event choice: {e}")
+                result_message = "你发现了一些古老的痕迹..."
 
         return result_message
 
@@ -1082,20 +1115,18 @@ class GameEngine:
         event_data = tile.event_data
         mystery_type = event_data.get("mystery_type", "puzzle")
 
-        # 使用LLM生成神秘事件
-        prompt = f"""
-        为玩家生成一个{mystery_type}类型的神秘事件。
-        玩家当前位置：({tile.x}, {tile.y})
-        玩家等级：{game_state.player.stats.level}
-
-        请生成一个简短的神秘事件描述和可能的选择（50-100字）。
-        """
-
+        # 使用选择系统处理神秘事件
         try:
-            mystery_text = await llm_service.generate_text(prompt)
-            return mystery_text or "你遇到了一个神秘的现象..."
+            choice_context = await event_choice_system.create_story_event_choice(game_state, tile)
+
+            # 将选择上下文存储到游戏状态中
+            game_state.pending_choice_context = choice_context
+            event_choice_system.active_contexts[choice_context.id] = choice_context
+
+            return "你遇到了一个神秘的现象，请做出选择..."
+
         except Exception as e:
-            logger.error(f"Error generating mystery event: {e}")
+            logger.error(f"Error creating mystery event choice: {e}")
             return "你遇到了一个神秘的现象..."
 
     async def _find_treasure(self, game_state: GameState) -> str:
@@ -1309,6 +1340,137 @@ class GameEngine:
 
         except Exception as e:
             logger.error(f"Error triggering progress event {event_type.value}: {e}")
+
+    async def _generate_new_quest_for_player(self, game_state: GameState):
+        """为玩家生成新任务"""
+        try:
+            logger.info("Generating new quest for player after quest completion")
+
+            # 生成新任务
+            new_quests = await content_generator.generate_quest_chain(
+                game_state.player.stats.level, 1
+            )
+
+            if new_quests:
+                new_quest = new_quests[0]
+                game_state.quests.append(new_quest)
+
+                # 添加新任务通知
+                quest_message = f"新任务：{new_quest.title}"
+                game_state.pending_events.append(quest_message)
+                game_state.pending_events.append("你的冒险将继续...")
+
+                logger.info(f"Generated new quest: {new_quest.title}")
+
+                # 为新任务生成适合的地图
+                await self._generate_new_quest_map(game_state, new_quest)
+
+            else:
+                logger.warning("Failed to generate new quest")
+                # 创建一个简单的默认任务
+                await self._create_default_quest(game_state)
+
+        except Exception as e:
+            logger.error(f"Error generating new quest: {e}")
+            # 创建一个简单的默认任务作为后备
+            await self._create_default_quest(game_state)
+
+    async def _generate_new_quest_map(self, game_state: GameState, new_quest: 'Quest'):
+        """为新任务生成适合的地图"""
+        try:
+            logger.info(f"Generating new map for quest: {new_quest.title}")
+
+            # 清除旧地图上的角色标记
+            old_tile = game_state.current_map.get_tile(*game_state.player.position)
+            if old_tile:
+                old_tile.character_id = None
+
+            for monster in game_state.monsters:
+                if monster.position:
+                    monster_tile = game_state.current_map.get_tile(*monster.position)
+                    if monster_tile:
+                        monster_tile.character_id = None
+
+            # 生成新地图（通常是下一层）
+            new_depth = game_state.current_map.depth + 1
+            quest_context = new_quest.to_dict()
+
+            new_map = await content_generator.generate_dungeon_map(
+                width=config.game.default_map_size[0],
+                height=config.game.default_map_size[1],
+                depth=new_depth,
+                theme=f"地下城第{new_depth}层 - {new_quest.title}",
+                quest_context=quest_context
+            )
+
+            # 更新游戏状态
+            game_state.current_map = new_map
+
+            # 设置玩家位置到新地图的合适位置
+            spawn_positions = content_generator.get_spawn_positions(new_map, 1)
+            if spawn_positions:
+                game_state.player.position = spawn_positions[0]
+                tile = new_map.get_tile(*game_state.player.position)
+                if tile:
+                    tile.character_id = game_state.player.id
+                    tile.is_explored = True
+                    tile.is_visible = True
+
+            # 清空旧怪物并生成新的
+            game_state.monsters.clear()
+
+            # 生成普通怪物
+            monsters = await content_generator.generate_encounter_monsters(
+                game_state.player.stats.level, "normal"
+            )
+
+            # 生成任务专属怪物
+            quest_monsters = await self._generate_quest_monsters(game_state, new_map)
+            monsters.extend(quest_monsters)
+
+            # 放置怪物
+            monster_positions = content_generator.get_spawn_positions(new_map, len(monsters))
+            for monster, position in zip(monsters, monster_positions):
+                monster.position = position
+                tile = new_map.get_tile(*position)
+                if tile:
+                    tile.character_id = monster.id
+                game_state.monsters.append(monster)
+
+            # 添加地图切换通知
+            game_state.pending_events.append(f"进入了{new_map.name}")
+
+            logger.info(f"Successfully generated new map: {new_map.name}")
+
+        except Exception as e:
+            logger.error(f"Error generating new quest map: {e}")
+            # 如果生成新地图失败，保持当前地图但添加通知
+            game_state.pending_events.append("继续在当前区域探索...")
+
+    async def _create_default_quest(self, game_state: GameState):
+        """创建默认任务作为后备"""
+        try:
+            from data_models import Quest
+
+            default_quest = Quest()
+            default_quest.title = "继续探索"
+            default_quest.description = "继续在当前区域探索，寻找新的挑战和机遇"
+            default_quest.quest_type = "exploration"
+            default_quest.experience_reward = max(100, game_state.player.stats.level * 50)
+            default_quest.objectives = ["探索当前区域", "寻找有价值的发现"]
+            default_quest.completed_objectives = [False, False]
+            default_quest.is_active = True
+            default_quest.is_completed = False
+            default_quest.progress_percentage = 0.0
+            default_quest.story_context = "虽然上一个任务已经完成，但这个区域仍有许多未知的秘密等待发现。"
+
+            game_state.quests.append(default_quest)
+            game_state.pending_events.append(f"新任务：{default_quest.title}")
+
+            logger.info("Created default exploration quest")
+
+        except Exception as e:
+            logger.error(f"Error creating default quest: {e}")
 
     async def _update_quest_progress(self, game_state: GameState, event_type: str, context: Any = None):
         """更新任务进度 - 保留兼容性的包装方法"""

@@ -13,6 +13,7 @@ from datetime import datetime
 class CharacterClass(Enum):
     """角色职业枚举"""
     FIGHTER = "fighter"
+    WARRIOR = "warrior"  # 添加warrior作为fighter的别名
     WIZARD = "wizard"
     ROGUE = "rogue"
     CLERIC = "cleric"
@@ -92,9 +93,39 @@ class Stats:
     speed: int = 30
     level: int = 1
     experience: int = 0
-    
+    # 基础属性
+    strength: int = 10
+    dexterity: int = 10
+    constitution: int = 10
+    intelligence: int = 10
+    wisdom: int = 10
+    charisma: int = 10
+
     def is_alive(self) -> bool:
         return self.hp > 0
+
+    def calculate_derived_stats(self):
+        """根据基础属性计算衍生属性"""
+        # 根据体质调整生命值
+        con_modifier = (self.constitution - 10) // 2
+        base_hp = 100 + (con_modifier * 10)
+        self.max_hp = max(base_hp, 10)  # 最少10点生命值
+        if self.hp > self.max_hp:
+            self.hp = self.max_hp
+
+        # 根据智力调整魔法值
+        int_modifier = (self.intelligence - 10) // 2
+        base_mp = 50 + (int_modifier * 5)
+        self.max_mp = max(base_mp, 0)  # 魔法值可以为0
+        if self.mp > self.max_mp:
+            self.mp = self.max_mp
+
+        # 根据敏捷调整护甲等级
+        dex_modifier = (self.dexterity - 10) // 2
+        self.ac = 10 + dex_modifier
+
+        # 根据敏捷调整速度
+        self.speed = 30 + dex_modifier
 
 
 @dataclass
@@ -391,6 +422,50 @@ class Quest:
 
 
 @dataclass
+class EventChoice:
+    """事件选项"""
+    id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    text: str = ""  # 选项显示文本
+    description: str = ""  # 选项详细描述
+    consequences: str = ""  # 选择后果描述
+    requirements: Dict[str, Any] = field(default_factory=dict)  # 选择要求（如等级、物品等）
+    is_available: bool = True  # 是否可选择
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "id": self.id,
+            "text": self.text,
+            "description": self.description,
+            "consequences": self.consequences,
+            "requirements": self.requirements,
+            "is_available": self.is_available
+        }
+
+
+@dataclass
+class EventChoiceContext:
+    """事件选择上下文"""
+    id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    event_type: str = ""  # 事件类型：story, combat, mystery, quest_completion等
+    title: str = ""  # 事件标题
+    description: str = ""  # 事件描述
+    choices: List[EventChoice] = field(default_factory=list)  # 可选择的选项
+    context_data: Dict[str, Any] = field(default_factory=dict)  # 上下文数据
+    created_at: datetime = field(default_factory=datetime.now)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "id": self.id,
+            "event_type": self.event_type,
+            "title": self.title,
+            "description": self.description,
+            "choices": [choice.to_dict() for choice in self.choices],
+            "context_data": self.context_data,
+            "created_at": self.created_at.isoformat()
+        }
+
+
+@dataclass
 class GameState:
     """游戏状态"""
     id: str = field(default_factory=lambda: str(uuid.uuid4()))
@@ -409,6 +484,8 @@ class GameState:
     last_saved: datetime = field(default_factory=datetime.now)
     # 新增：地图切换控制
     pending_map_transition: Optional[str] = None  # 待切换的地图类型 ("stairs_down", "stairs_up", etc.)
+    # 新增：事件选择系统
+    pending_choice_context: Optional[EventChoiceContext] = None  # 待处理的选择上下文
     
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -426,7 +503,8 @@ class GameState:
             "pending_effects": self.pending_effects,
             "created_at": self.created_at.isoformat(),
             "last_saved": self.last_saved.isoformat(),
-            "pending_map_transition": self.pending_map_transition
+            "pending_map_transition": self.pending_map_transition,
+            "pending_choice_context": self.pending_choice_context.to_dict() if self.pending_choice_context else None
         }
 
 
@@ -434,5 +512,6 @@ class GameState:
 __all__ = [
     "CharacterClass", "CreatureType", "DamageType", "TerrainType",
     "Ability", "Stats", "Item", "Spell", "Character", "Monster",
-    "MapTile", "GameMap", "QuestEvent", "QuestMonster", "Quest", "GameState"
+    "MapTile", "GameMap", "QuestEvent", "QuestMonster", "Quest",
+    "EventChoice", "EventChoiceContext", "GameState"
 ]

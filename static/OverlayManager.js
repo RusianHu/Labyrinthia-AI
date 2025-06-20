@@ -70,16 +70,18 @@ Object.assign(LabyrinthiaGame.prototype, {
         const titles = {
             'move': 'AI 正在分析环境',
             'attack': 'AI 正在计算战斗',
-            'interact': 'AI 正在处理交互',
+            'interact': 'AI 正在处理选择',
             'rest': 'AI 正在恢复状态',
+            'choice': 'AI 正在处理选择',
             'default': 'AI 正在思考'
         };
 
         const subtitles = {
             'move': '分析地形和潜在威胁...',
             'attack': '计算最佳攻击策略...',
-            'interact': '理解环境中的元素...',
+            'interact': '分析您的选择并生成结果...',
             'rest': '评估休息的安全性...',
+            'choice': '分析您的选择并更新游戏状态...',
             'default': '处理您的请求...'
         };
 

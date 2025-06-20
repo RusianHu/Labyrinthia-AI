@@ -50,6 +50,11 @@
                         <i class="material-icons">folder_open</i>
                         加载游戏
                     </button>
+                    <!-- 调试模式快捷按钮 - 仅在调试模式启用时显示 -->
+                    <button id="btn-quick-test" class="btn btn-warning debug-only" style="display: none;" onclick="window.open('/static/quick_test.html', '_blank')">
+                        <i class="material-icons">bug_report</i>
+                        快速测试
+                    </button>
                 </div>
 
                 <!-- 存档列表 -->
@@ -216,6 +221,17 @@
                     </div>
                 </div>
 
+                <!-- 事件选择对话框 -->
+                <div id="event-choice-dialog" class="dialog-overlay" style="display: none;">
+                    <div class="dialog event-choice-dialog">
+                        <h3 id="event-choice-title">事件选择</h3>
+                        <div id="event-choice-content">
+                            <div id="event-choice-description" class="event-description"></div>
+                            <div id="event-choice-options" class="choice-options"></div>
+                        </div>
+                    </div>
+                </div>
+
 
             </div>
         </div>
@@ -273,6 +289,60 @@
         <button class="debug-close" onclick="game.toggleDebugPanel()">×</button>
         <h3>🐛 调试信息</h3>
 
+        <!-- 调试功能按钮区域 -->
+        <div class="debug-section">
+            <h4>🎮 调试功能</h4>
+            <div class="debug-buttons">
+                <!-- 核心调试功能 -->
+                <div class="debug-button-group">
+                    <h5>核心功能</h5>
+                    <button class="debug-btn" onclick="game.debugTriggerRandomEvent()" title="在当前位置强制触发一个随机的地图事件">
+                        <i class="material-icons">event</i>触发随机事件
+                    </button>
+                    <button class="debug-btn" onclick="game.debugCompleteCurrentQuest()" title="将当前任务进度设置为100%并触发任务完成逻辑">
+                        <i class="material-icons">task_alt</i>直接完成当前任务
+                    </button>
+                    <button class="debug-btn" onclick="game.debugGenerateTestItem()" title="在玩家背包中添加随机生成的测试物品">
+                        <i class="material-icons">inventory</i>生成测试物品
+                    </button>
+                    <div class="debug-teleport-group">
+                        <input type="number" id="debug-floor-input" placeholder="楼层数" min="1" max="10" value="1" class="debug-input">
+                        <button class="debug-btn" onclick="game.debugTeleportToFloor()" title="传送到指定楼层进行测试">
+                            <i class="material-icons">flight_takeoff</i>传送到楼层
+                        </button>
+                    </div>
+                </div>
+
+                <!-- 地图与战斗调试 -->
+                <div class="debug-button-group">
+                    <h5>地图与战斗</h5>
+                    <button class="debug-btn" onclick="game.debugSpawnEnemyNearby()" title="在玩家当前位置附近生成一个测试敌人">
+                        <i class="material-icons">dangerous</i>生成附近敌人
+                    </button>
+                    <button class="debug-btn" onclick="game.debugClearAllEnemies()" title="移除当前地图上的所有敌人">
+                        <i class="material-icons">clear_all</i>清空当前地图敌人
+                    </button>
+                    <button class="debug-btn" onclick="game.debugRegenerateCurrentMap()" title="基于当前任务重新生成地图">
+                        <i class="material-icons">refresh</i>重新生成当前地图
+                    </button>
+                </div>
+
+                <!-- 状态调试 -->
+                <div class="debug-button-group">
+                    <h5>状态管理</h5>
+                    <button class="debug-btn" onclick="game.debugRestorePlayerStatus()" title="将玩家的HP、MP等状态恢复到满值">
+                        <i class="material-icons">healing</i>恢复玩家状态
+                    </button>
+                    <button class="debug-btn" onclick="game.debugShowFullGameState()" title="在调试界面显示完整的游戏状态JSON数据">
+                        <i class="material-icons">info</i>查看完整游戏状态
+                    </button>
+                    <button class="debug-btn" onclick="game.debugClearMessageLog()" title="清空游戏消息日志">
+                        <i class="material-icons">clear</i>清空消息日志
+                    </button>
+                </div>
+            </div>
+        </div>
+
         <div class="debug-section">
             <h4>最近的LLM请求</h4>
             <div id="debug-request" class="debug-content">暂无请求</div>
@@ -305,11 +375,88 @@
     <script src="/static/GameActions.js"></script>
     <script src="/static/SaveManager.js"></script>
     <script src="/static/EventHandler.js"></script>
+    <script src="/static/EventChoiceManager.js"></script>
 
     <!-- 3. 游戏初始化 - 最后加载 -->
     <script>
-        // 初始化游戏实例
-        const game = new LabyrinthiaGame();
+        // 等待所有脚本加载完成后再初始化游戏
+        function initializeGame() {
+            try {
+                // 检查必要的类和函数是否已加载
+                if (typeof LabyrinthiaGame === 'undefined') {
+                    console.warn('LabyrinthiaGame not loaded yet, retrying...');
+                    setTimeout(initializeGame, 100);
+                    return;
+                }
+
+                // 创建游戏实例
+                window.game = new LabyrinthiaGame();
+                console.log('Game instance created and assigned to window.game');
+
+                // 添加调试方法
+                if (typeof addDebugMethodsToGame === 'function') {
+                    addDebugMethodsToGame(window.game);
+                    console.log('Debug methods added via addDebugMethodsToGame');
+                } else if (typeof DebugMethods === 'object') {
+                    Object.assign(window.game, DebugMethods);
+                    console.log('Debug methods added via DebugMethods object');
+
+                    // 手动初始化调试模式
+                    if (typeof window.game.initializeDebugMode === 'function') {
+                        window.game.initializeDebugMode();
+                    }
+                } else {
+                    console.warn('Debug methods not available');
+                }
+
+                console.log('Game initialization complete');
+
+                // 检查调试模式并显示快速测试按钮
+                checkDebugModeAndShowTestButton();
+
+            } catch (error) {
+                console.error('Failed to initialize game:', error);
+                // 重试
+                setTimeout(initializeGame, 500);
+            }
+        }
+
+        // 检查调试模式并控制快速测试按钮显示
+        async function checkDebugModeAndShowTestButton() {
+            try {
+                const response = await fetch('/api/config');
+                if (response.ok) {
+                    const result = await response.json();
+                    const config = result.config || result;
+                    const debugMode = config.game?.debug_mode || false;
+                    const showLLMDebug = config.game?.show_llm_debug || false;
+
+                    // 如果启用了调试模式或LLM调试，显示快速测试按钮
+                    const quickTestBtn = document.getElementById('btn-quick-test');
+                    if (quickTestBtn && (debugMode || showLLMDebug)) {
+                        quickTestBtn.style.display = 'flex';
+                        console.log('Quick test button enabled (debug mode active)');
+                    } else if (quickTestBtn) {
+                        quickTestBtn.style.display = 'none';
+                        console.log('Quick test button hidden (debug mode inactive)');
+                    }
+                }
+            } catch (error) {
+                console.error('Failed to check debug mode for quick test button:', error);
+                // 在错误情况下隐藏按钮
+                const quickTestBtn = document.getElementById('btn-quick-test');
+                if (quickTestBtn) {
+                    quickTestBtn.style.display = 'none';
+                }
+            }
+        }
+
+        // 开始初始化
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', initializeGame);
+        } else {
+            initializeGame();
+        }
     </script>
     
     <style>
@@ -360,6 +507,48 @@
         .saves-list {
             max-height: 300px;
             overflow-y: auto;
+        }
+
+        /* 调试模式快速测试按钮样式 */
+        .debug-only {
+            position: relative;
+            overflow: hidden;
+        }
+
+        .debug-only::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.3), transparent);
+            transition: left 0.5s ease;
+        }
+
+        .debug-only:hover::before {
+            left: 100%;
+        }
+
+        .debug-only:hover {
+            transform: translateY(-2px) scale(1.02);
+            box-shadow: 0 6px 20px rgba(255, 154, 86, 0.5);
+        }
+
+        /* 确保按钮在调试模式下有特殊的视觉效果 */
+        #btn-quick-test {
+            background: linear-gradient(135deg, #ff9800, #f57c00);
+            border: 2px solid rgba(255, 152, 0, 0.3);
+            animation: debugPulse 2s infinite;
+        }
+
+        @keyframes debugPulse {
+            0%, 100% {
+                box-shadow: 0 4px 12px rgba(255, 152, 0, 0.3);
+            }
+            50% {
+                box-shadow: 0 4px 20px rgba(255, 152, 0, 0.6);
+            }
         }
         
         .save-item {
@@ -567,6 +756,149 @@
         .dialog-buttons .btn {
             flex: 1;
             max-width: 100px;
+        }
+
+        /* 事件选择对话框样式 */
+        .event-choice-dialog {
+            max-width: 600px;
+            width: 95%;
+        }
+
+        .event-description {
+            background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+            padding: 20px;
+            border-radius: 12px;
+            margin-bottom: 24px;
+            border-left: 4px solid #5e35b1;
+            font-size: 16px;
+            line-height: 1.6;
+            color: #2c3e50;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+        }
+
+        .choice-options {
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+        }
+
+        .choice-option {
+            background: white;
+            border: 2px solid #e9ecef;
+            border-radius: 12px;
+            padding: 20px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .choice-option:hover {
+            border-color: #5e35b1;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 16px rgba(94, 53, 177, 0.2);
+        }
+
+        .choice-option.disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            background: #f8f9fa;
+        }
+
+        .choice-option.disabled:hover {
+            transform: none;
+            box-shadow: none;
+            border-color: #e9ecef;
+        }
+
+        .choice-text {
+            font-weight: 600;
+            font-size: 18px;
+            color: #2c3e50;
+            margin-bottom: 8px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .choice-text::before {
+            content: "▶";
+            color: #5e35b1;
+            font-size: 14px;
+            transition: transform 0.3s ease;
+        }
+
+        .choice-option:hover .choice-text::before {
+            transform: translateX(4px);
+        }
+
+        .choice-description {
+            color: #6c757d;
+            font-size: 14px;
+            line-height: 1.5;
+            margin-bottom: 8px;
+        }
+
+        .choice-consequences {
+            color: #495057;
+            font-size: 13px;
+            font-style: italic;
+            padding: 8px 12px;
+            background: rgba(94, 53, 177, 0.1);
+            border-radius: 6px;
+            border-left: 3px solid #5e35b1;
+        }
+
+        .choice-requirements {
+            position: absolute;
+            top: 12px;
+            right: 12px;
+            background: #ffc107;
+            color: #212529;
+            padding: 4px 8px;
+            border-radius: 12px;
+            font-size: 11px;
+            font-weight: 600;
+        }
+
+        .choice-option.disabled .choice-requirements {
+            background: #dc3545;
+            color: white;
+        }
+
+        /* 选择动画效果 */
+        .choice-option.selected {
+            background: linear-gradient(135deg, #5e35b1 0%, #7e57c2 100%);
+            color: white;
+            border-color: #5e35b1;
+            transform: scale(0.98);
+        }
+
+        .choice-option.selected .choice-text,
+        .choice-option.selected .choice-description,
+        .choice-option.selected .choice-consequences {
+            color: white;
+        }
+
+        .choice-option.selected .choice-consequences {
+            background: rgba(255, 255, 255, 0.2);
+            border-left-color: white;
+        }
+
+        /* 响应式设计 */
+        @media (max-width: 768px) {
+            .event-choice-dialog {
+                width: 98%;
+                margin: 10px;
+            }
+
+            .choice-option {
+                padding: 16px;
+            }
+
+            .choice-text {
+                font-size: 16px;
+            }
         }
     </style>
 </body>

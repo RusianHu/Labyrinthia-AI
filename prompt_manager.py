@@ -24,6 +24,7 @@ class PromptCategory(Enum):
     COMBAT_SYSTEM = "combat_system"
     QUEST_SYSTEM = "quest_system"
     NARRATIVE = "narrative"
+    EVENT_CHOICE = "event_choice"
 
 
 @dataclass
@@ -59,6 +60,9 @@ class PromptManager:
                 self._load_from_config(str(default_config))
             else:
                 self._load_default_templates()
+
+        # 确保事件选择模板被注册（在配置文件加载后）
+        self._register_event_choice_templates()
 
         logger.info(f"PromptManager initialized with {len(self.templates)} templates")
 
@@ -109,6 +113,8 @@ class PromptManager:
         self._register_quest_templates()
         # 叙述生成相关模板
         self._register_narrative_templates()
+        # 事件选择相关模板
+        self._register_event_choice_templates()
     
     def _register_map_templates(self):
         """注册地图相关模板"""
@@ -385,6 +391,296 @@ class PromptManager:
             description="生成通用的游戏叙述文本"
         )
         self.register_template(general_narrative_template)
+
+    def _register_event_choice_templates(self):
+        """注册事件选择相关模板"""
+        # 故事事件选择生成
+        story_event_choices_template = PromptTemplate(
+            name="story_event_choices",
+            category=PromptCategory.EVENT_CHOICE,
+            template="""
+为一个DnD风格的冒险游戏生成一个故事事件的选择情况。
+
+玩家信息：
+- 名称：{player_name}
+- 等级：{player_level}
+- 生命值：{player_hp}/{player_max_hp}
+- 位置：({location_x}, {location_y})
+
+地图信息：
+- 地图名称：{map_name}
+- 地图深度：第{map_depth}层
+
+当前任务信息：
+{{% if has_active_quest %}}
+- 任务标题：{quest_title}
+- 任务描述：{quest_description}
+- 任务类型：{quest_type}
+- 任务进度：{quest_progress:.1f}%
+- 任务目标：{quest_objectives}
+- 故事背景：{quest_story_context}
+{{% else %}}
+- 当前无活跃任务
+{{% endif %}}
+
+事件信息：
+- 事件类型：{story_type}
+- 事件描述：{event_description}
+
+请生成一个与当前任务相关的有趣故事事件，包含：
+1. 事件标题和详细描述（要与任务背景呼应）
+2. 3-4个不同的选择选项
+3. 每个选项都要有明确的后果说明
+4. 选项要有不同的风险和收益
+5. 如果有活跃任务，事件应该与任务主题、目标或故事背景相关
+
+请返回JSON格式：
+{{
+    "title": "事件标题",
+    "description": "详细的事件描述（100-150字，要体现与任务的关联）",
+    "choices": [
+        {{
+            "text": "选项文本",
+            "description": "选项详细说明",
+            "consequences": "可能的后果（可能影响任务进度）",
+            "requirements": {{"min_level": 1}}
+        }}
+    ]
+}}
+
+注意：
+- 事件要符合DnD世界观
+- 如果有活跃任务，事件要与任务相关联
+- 选择要有意义的后果，可能推进或影响任务
+- 描述要生动有趣，体现任务的故事背景
+- 选项要平衡风险和收益
+- 考虑任务进度，为接近完成的任务提供相关机会
+            """.strip(),
+            required_params=[
+                "player_name", "player_level", "player_hp", "player_max_hp",
+                "location_x", "location_y", "map_name", "map_depth", "story_type",
+                "has_active_quest", "quest_title", "quest_description", "quest_type",
+                "quest_progress", "quest_objectives", "quest_story_context"
+            ],
+            optional_params={"event_description": ""},
+            schema={
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string"},
+                    "description": {"type": "string"},
+                    "choices": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "text": {"type": "string"},
+                                "description": {"type": "string"},
+                                "consequences": {"type": "string"},
+                                "requirements": {"type": "object"}
+                            },
+                            "required": ["text", "description", "consequences"]
+                        }
+                    }
+                },
+                "required": ["title", "description", "choices"]
+            },
+            description="生成与任务相关的故事事件选择"
+        )
+        self.register_template(story_event_choices_template)
+
+        # 任务完成选择生成
+        quest_completion_choices_template = PromptTemplate(
+            name="quest_completion_choices",
+            category=PromptCategory.EVENT_CHOICE,
+            template="""
+为一个DnD风格的冒险游戏生成任务完成后的选择情况。
+
+任务信息：
+- 标题：{quest_title}
+- 描述：{quest_description}
+- 类型：{quest_type}
+- 经验奖励：{experience_reward}
+- 故事背景：{story_context}
+
+玩家信息：
+- 名称：{player_name}
+- 等级：{player_level}
+
+当前环境：
+- 地图：{current_map}
+- 深度：第{map_depth}层
+
+请生成任务完成后的情况，包含：
+1. 庆祝完成的描述
+2. 3-4个关于下一步行动的选择
+3. 选项应该限制在当前地图内的活动，如：继续探索当前区域、休息整理装备、寻找隐藏区域、与NPC交流等
+4. 每个选项要有明确的后果和发展方向
+5. **重要限制**：不要生成创建新任务、切换地图、前往新区域等选项
+
+请返回JSON格式：
+{{
+    "title": "任务完成标题",
+    "description": "任务完成的庆祝描述（100-150字）",
+    "choices": [
+        {{
+            "text": "选项文本",
+            "description": "选项详细说明",
+            "consequences": "可能的后果和发展",
+            "requirements": {{}}
+        }}
+    ]
+}}
+            """.strip(),
+            required_params=[
+                "quest_title", "quest_description", "quest_type", "experience_reward",
+                "story_context", "player_name", "player_level", "current_map", "map_depth"
+            ],
+            schema={
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string"},
+                    "description": {"type": "string"},
+                    "choices": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "text": {"type": "string"},
+                                "description": {"type": "string"},
+                                "consequences": {"type": "string"},
+                                "requirements": {"type": "object"}
+                            },
+                            "required": ["text", "description", "consequences"]
+                        }
+                    }
+                },
+                "required": ["title", "description", "choices"]
+            },
+            description="生成任务完成后的选择情况"
+        )
+        self.register_template(quest_completion_choices_template)
+
+        # 处理故事选择结果
+        process_story_choice_template = PromptTemplate(
+            name="process_story_choice",
+            category=PromptCategory.EVENT_CHOICE,
+            template="""
+玩家在一个故事事件中做出了选择，请处理选择的结果。
+
+选择信息：
+- 选择文本：{choice_text}
+- 选择描述：{choice_description}
+
+事件背景：{event_context}
+
+玩家信息：
+- 名称：{player_name}
+- 等级：{player_level}
+- 生命值：{player_hp}
+- 位置：{tile_position}
+
+当前地图：{current_map}
+
+请根据玩家的选择生成合理的结果，可以包括：
+1. 玩家属性变化（生命值、经验值等）
+2. 地图元素变化（瓦片状态、新物品等）
+3. 任务进度更新
+4. 获得新物品
+5. 叙述事件
+
+请返回JSON格式：
+{{
+    "message": "选择结果的主要描述",
+    "events": ["事件描述1", "事件描述2"],
+    "player_updates": {{
+        "stats": {{"hp": 新生命值, "experience": 新经验值}},
+        "add_items": [物品数据],
+        "remove_items": ["物品名称"]
+    }},
+    "map_updates": {{
+        "tiles": {{"x,y": {{"terrain": "新地形类型"}}}}
+    }},
+    "quest_updates": {{
+        "quest_id": {{"progress_percentage": 新进度}}
+    }}
+}}
+            """.strip(),
+            required_params=[
+                "choice_text", "choice_description", "event_context",
+                "player_name", "player_level", "player_hp", "current_map", "tile_position"
+            ],
+            schema={
+                "type": "object",
+                "properties": {
+                    "message": {"type": "string"},
+                    "events": {"type": "array", "items": {"type": "string"}},
+                    "player_updates": {"type": "object"},
+                    "map_updates": {"type": "object"},
+                    "quest_updates": {"type": "object"},
+                    "new_items": {"type": "array"}
+                },
+                "required": ["message", "events"]
+            },
+            description="处理故事选择的结果"
+        )
+        self.register_template(process_story_choice_template)
+
+        # 处理任务完成选择结果
+        process_quest_completion_choice_template = PromptTemplate(
+            name="process_quest_completion_choice",
+            category=PromptCategory.EVENT_CHOICE,
+            template="""
+玩家在任务完成后做出了选择，请处理选择的结果。
+
+选择信息：
+- 选择文本：{choice_text}
+- 选择描述：{choice_description}
+
+已完成任务：{completed_quest_data}
+
+玩家信息：
+- 名称：{player_name}
+- 等级：{player_level}
+
+当前环境：
+- 地图：{current_map}
+- 深度：第{map_depth}层
+
+请根据玩家的选择生成合理的结果，限制在当前地图内的活动：
+1. 玩家状态调整（如果选择休息）
+2. 当前地图的剧情推进
+3. 发现隐藏区域或物品
+4. 与当前环境的互动
+
+**重要限制**：不要创建新任务或切换地图，只处理当前地图内的活动。
+
+请返回JSON格式：
+{{
+    "message": "选择结果的主要描述",
+    "events": ["事件描述1", "事件描述2"],
+    "player_updates": {{
+        "stats": {{"hp": 新生命值}}
+    }},
+    "quest_updates": {{}}
+}}
+            """.strip(),
+            required_params=[
+                "choice_text", "choice_description", "completed_quest_data",
+                "player_name", "player_level", "current_map", "map_depth"
+            ],
+            schema={
+                "type": "object",
+                "properties": {
+                    "message": {"type": "string"},
+                    "events": {"type": "array", "items": {"type": "string"}},
+                    "player_updates": {"type": "object"},
+                    "quest_updates": {"type": "object"}
+                },
+                "required": ["message", "events"]
+            },
+            description="处理任务完成选择的结果"
+        )
+        self.register_template(process_quest_completion_choice_template)
 
     def register_template(self, template: PromptTemplate):
         """注册提示词模板"""
