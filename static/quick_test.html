@@ -533,26 +533,48 @@
             await withLoadingButton(button, async () => {
                 log('开始基础功能检查...', 'info');
 
-                // 检查核心类是否存在
-                const coreClasses = [
-                    'LabyrinthiaGame',
-                    'addDebugMethodsToGame'
+                // 检查核心类和函数是否存在
+                const coreItems = [
+                    { name: 'LabyrinthiaGame', type: 'class' },
+                    { name: 'addDebugMethodsToGame', type: 'function' }
                 ];
 
-                let allClassesExist = true;
-                coreClasses.forEach(className => {
-                    if (typeof window[className] !== 'undefined') {
-                        log(`✅ ${className} 已定义`, 'success');
+                let allItemsExist = true;
+                coreItems.forEach(item => {
+                    let exists = false;
+                    let correctType = false;
+
+                    if (item.name === 'LabyrinthiaGame') {
+                        // 特殊检查 LabyrinthiaGame 类
+                        exists = typeof LabyrinthiaGame !== 'undefined';
+                        correctType = exists && typeof LabyrinthiaGame === 'function' && LabyrinthiaGame.prototype;
+
+                        // 额外检查：是否有游戏实例存在
+                        if (exists && window.game instanceof LabyrinthiaGame) {
+                            log(`✅ ${item.name} (${item.type}) 已定义且实例已创建`, 'success');
+                            return;
+                        }
                     } else {
-                        log(`❌ ${className} 未定义`, 'error');
-                        allClassesExist = false;
+                        // 检查其他函数
+                        exists = typeof window[item.name] !== 'undefined';
+                        correctType = exists && typeof window[item.name] === 'function';
+                    }
+
+                    if (exists && correctType) {
+                        log(`✅ ${item.name} (${item.type}) 已定义`, 'success');
+                    } else if (exists) {
+                        log(`⚠️ ${item.name} 已定义但类型不匹配`, 'warning');
+                        allItemsExist = false;
+                    } else {
+                        log(`❌ ${item.name} (${item.type}) 未定义`, 'error');
+                        allItemsExist = false;
                     }
                 });
 
-                if (allClassesExist) {
-                    log('🎉 所有核心类检查通过！', 'success');
+                if (allItemsExist) {
+                    log('🎉 所有核心组件检查通过！', 'success');
                 } else {
-                    log('⚠️ 部分核心类缺失，可能影响游戏功能', 'warning');
+                    log('⚠️ 部分核心组件缺失，可能影响游戏功能', 'warning');
                 }
             });
         }
@@ -1140,6 +1162,37 @@
             if (window.game) {
                 log('🎮 检测到现有游戏实例，可以进行高级测试', 'success');
                 testGame = window.game;
+            } else {
+                // 创建一个测试用的游戏实例
+                try {
+                    if (typeof LabyrinthiaGame !== 'undefined') {
+                        window.game = new LabyrinthiaGame();
+                        testGame = window.game;
+                        log('🎮 已创建测试游戏实例', 'success');
+                    } else {
+                        log('⚠️ LabyrinthiaGame 类未加载，稍后重试...', 'warning');
+                        // 延迟重试
+                        setTimeout(() => {
+                            if (typeof LabyrinthiaGame !== 'undefined') {
+                                window.game = new LabyrinthiaGame();
+                                testGame = window.game;
+                                log('🎮 已创建测试游戏实例 (延迟)', 'success');
+
+                                // 重新尝试添加调试方法
+                                if (typeof addDebugMethodsToGame === 'function') {
+                                    try {
+                                        addDebugMethodsToGame(testGame);
+                                        log('🔧 调试方法已集成到测试环境 (延迟)', 'success');
+                                    } catch (error) {
+                                        log(`⚠️ 调试方法集成失败: ${error.message}`, 'warning');
+                                    }
+                                }
+                            }
+                        }, 500);
+                    }
+                } catch (error) {
+                    log(`❌ 创建游戏实例失败: ${error.message}`, 'error');
+                }
             }
 
             // 添加调试功能集成
