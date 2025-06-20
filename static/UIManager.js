@@ -221,6 +221,90 @@ Object.assign(LabyrinthiaGame.prototype, {
             questElement.innerHTML = questHTML;
             questList.appendChild(questElement);
         });
+
+        // 动态调整任务面板大小
+        this.adjustQuestPanelSize();
+
+        // 确保窗口大小变化时重新调整
+        this.setupQuestPanelResizeListener();
+    },
+
+    adjustQuestPanelSize() {
+        const questList = document.getElementById('quest-list');
+        const questPanel = document.querySelector('.quest-panel');
+
+        if (!questList || !questPanel) return;
+
+        // 等待DOM更新完成后再调整大小
+        setTimeout(() => {
+            // 获取任务列表的实际内容高度
+            const contentHeight = questList.scrollHeight;
+            const viewportHeight = window.innerHeight;
+            const maxHeight = viewportHeight * 0.6; // 60vh，为其他UI元素留出空间
+
+            // 获取当前任务数量
+            const questItems = questList.querySelectorAll('.quest-item');
+            const questCount = questItems.length;
+
+            // 根据任务数量和内容高度智能调整
+            if (questCount === 0) {
+                // 没有任务时，设置最小高度
+                questList.style.height = '50px';
+                questList.style.maxHeight = 'none';
+                questList.style.overflowY = 'hidden';
+            } else if (contentHeight <= maxHeight) {
+                // 内容适中，让容器自适应内容高度
+                questList.style.maxHeight = 'none';
+                questList.style.height = 'auto';
+                questList.style.overflowY = 'visible';
+
+                // 添加调试信息（如果启用调试模式）
+                if (this.config && this.config.game && this.config.game.debug_mode) {
+                    console.log(`Quest panel auto-sized: ${contentHeight}px (${questCount} quests)`);
+                }
+            } else {
+                // 内容过多，使用滚动条
+                questList.style.maxHeight = `${maxHeight}px`;
+                questList.style.height = `${maxHeight}px`;
+                questList.style.overflowY = 'auto';
+
+                // 添加调试信息（如果启用调试模式）
+                if (this.config && this.config.game && this.config.game.debug_mode) {
+                    console.log(`Quest panel with scroll: ${maxHeight}px (content: ${contentHeight}px, ${questCount} quests)`);
+                }
+            }
+
+            // 确保任务面板在视觉上突出显示（如果有任务）
+            if (questCount > 0) {
+                questPanel.style.border = '2px solid rgba(94, 53, 177, 0.3)';
+                questPanel.style.boxShadow = '0 4px 12px rgba(94, 53, 177, 0.1)';
+            } else {
+                questPanel.style.border = '1px solid rgba(94, 53, 177, 0.2)';
+                questPanel.style.boxShadow = 'none';
+            }
+        }, 10);
+    },
+
+    setupQuestPanelResizeListener() {
+        // 避免重复添加监听器
+        if (this._questPanelResizeListenerAdded) return;
+
+        let resizeTimeout;
+        const handleResize = () => {
+            // 防抖处理，避免频繁调整
+            clearTimeout(resizeTimeout);
+            resizeTimeout = setTimeout(() => {
+                this.adjustQuestPanelSize();
+            }, 250);
+        };
+
+        window.addEventListener('resize', handleResize);
+        this._questPanelResizeListenerAdded = true;
+
+        // 添加调试信息
+        if (this.config && this.config.game && this.config.game.debug_mode) {
+            console.log('Quest panel resize listener added');
+        }
     },
 
     isQuestMonster(monster) {

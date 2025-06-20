@@ -22,9 +22,12 @@
     </div>
 
     <div class="container">
-        <!-- 全屏加载遮罩 -->
+        <!-- 全屏加载遮罩 - 优化版本 -->
         <div id="fullscreen-overlay" class="fullscreen-overlay">
             <div class="overlay-content">
+                <div class="overlay-icon">
+                    <i class="material-icons">castle</i>
+                </div>
                 <h1 id="overlay-title" class="overlay-title">加载中...</h1>
                 <p id="overlay-subtitle" class="overlay-subtitle">正在准备您的冒险</p>
                 <div class="overlay-spinner"></div>
@@ -32,6 +35,9 @@
                     <div id="overlay-progress-bar" class="overlay-progress-bar"></div>
                 </div>
                 <p id="overlay-status" class="overlay-status">初始化游戏世界...</p>
+                <div class="overlay-tips">
+                    <p id="overlay-tip">💡 提示：游戏世界由AI实时生成，每次冒险都是独一无二的</p>
+                </div>
             </div>
         </div>
 
@@ -666,9 +672,13 @@
             margin-bottom: 5px;
         }
         
+        /* 任务列表样式 - 与static/style.css保持一致，但添加备用滚动机制 */
         .quest-list {
-            max-height: 150px;
-            overflow-y: auto;
+            /* 优先使用static/style.css中的样式，这里只作为备用 */
+            max-height: 80vh; /* 最大不超过视窗高度的80% - 备用机制 */
+            overflow-y: auto; /* 备用滚动机制 */
+            /* 平滑的过渡效果 */
+            transition: max-height 0.3s ease, height 0.3s ease;
         }
         
         .quest-item {

@@ -24,10 +24,95 @@ class LabyrinthiaGame {
         this.setupEventListeners();
         this.loadGameList();
 
+        // 检查URL参数中是否有game_id
+        this.checkUrlGameId();
+
         // 延迟启动事件选择管理器，确保所有脚本都已加载
         setTimeout(() => {
             this.initEventChoiceManager();
         }, 100);
+    }
+
+    checkUrlGameId() {
+        // 检查URL参数中的game_id
+        const urlParams = new URLSearchParams(window.location.search);
+        const gameId = urlParams.get('game_id');
+
+        if (gameId) {
+            console.log('Found game_id in URL:', gameId);
+            // 自动加载指定的游戏
+            // 需要等待SaveManager加载完成后再调用
+            setTimeout(() => {
+                // 直接调用this.loadGame方法，因为SaveManager扩展了LabyrinthiaGame原型
+                if (typeof this.loadGame === 'function') {
+                    console.log('Auto-loading game via this.loadGame:', gameId);
+                    this.loadGame(gameId);
+                } else {
+                    console.warn('loadGame method not available, trying alternative approach');
+                    // 备用方案：直接调用API并手动处理界面切换
+                    this.autoLoadGameFromUrl(gameId);
+                }
+            }, 1000); // 增加等待时间确保所有脚本都已加载
+        }
+    }
+
+    async autoLoadGameFromUrl(gameId) {
+        try {
+            console.log('Auto-loading game from URL using backup method:', gameId);
+
+            // 显示加载界面
+            this.setLoading(true);
+            this.showFullscreenOverlay('加载游戏', '正在读取您的冒险进度...', '连接到游戏服务器...');
+
+            // 模拟进度更新
+            this.updateOverlayProgress(15, '验证游戏存档...');
+            await new Promise(resolve => setTimeout(resolve, 300));
+
+            // 调用加载API
+            this.updateOverlayProgress(30, '读取游戏数据...');
+            const response = await fetch(`/api/load/${gameId}`, {
+                method: 'POST'
+            });
+
+            this.updateOverlayProgress(50, '解析游戏状态...');
+            const result = await response.json();
+
+            if (result.success) {
+                this.updateOverlayProgress(70, '重建游戏世界...');
+                this.gameId = result.game_id;
+
+                this.updateOverlayProgress(85, '加载角色状态...');
+                await this.refreshGameState();
+
+                this.updateOverlayProgress(95, '准备游戏界面...');
+
+                // 显示叙述文本
+                if (result.narrative) {
+                    this.addMessage(result.narrative, 'narrative');
+                }
+
+                this.updateOverlayProgress(100, '加载完成！');
+
+                // 延迟一下显示完成状态
+                await new Promise(resolve => setTimeout(resolve, 800));
+
+                // 隐藏主菜单，显示游戏界面
+                document.getElementById('main-menu').style.display = 'none';
+                document.getElementById('game-interface').style.display = 'block';
+
+                this.hideFullscreenOverlay();
+                this.addMessage('游戏已加载', 'success');
+            } else {
+                this.addMessage('加载失败: ' + (result.message || '未知错误'), 'error');
+                this.hideFullscreenOverlay();
+            }
+        } catch (error) {
+            console.error('Auto load error:', error);
+            this.addMessage('自动加载游戏时发生错误', 'error');
+            this.hideFullscreenOverlay();
+        } finally {
+            this.setLoading(false);
+        }
     }
 
     initEventChoiceManager() {

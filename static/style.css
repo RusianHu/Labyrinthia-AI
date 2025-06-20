@@ -693,15 +693,15 @@ body {
     backdrop-filter: blur(5px);
 }
 
-/* 全屏加载遮罩 */
+/* 全屏加载遮罩 - 优化版本 */
 .fullscreen-overlay {
     position: fixed;
     top: 0;
     left: 0;
     width: 100%;
     height: 100%;
-    background: linear-gradient(135deg, rgba(94, 53, 177, 0.9), rgba(156, 39, 176, 0.9));
-    backdrop-filter: blur(10px);
+    background: linear-gradient(135deg, rgba(94, 53, 177, 0.95), rgba(156, 39, 176, 0.95));
+    backdrop-filter: blur(15px);
     z-index: 9999;
     display: none;
     justify-content: center;
@@ -709,6 +709,7 @@ body {
     flex-direction: column;
     color: white;
     font-family: 'Roboto', sans-serif;
+    animation: overlayFadeIn 0.5s ease-out;
 }
 
 .fullscreen-overlay.show {
@@ -717,48 +718,116 @@ body {
 
 .overlay-content {
     text-align: center;
-    animation: fadeInUp 0.6s ease-out;
+    animation: fadeInUp 0.8s ease-out;
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 20px;
+    padding: 40px;
+    backdrop-filter: blur(10px);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3);
+    min-width: 400px;
+    max-width: 500px;
+    position: relative;
+}
+
+.overlay-icon {
+    font-size: 4rem;
+    margin-bottom: 1rem;
+    animation: iconFloat 3s ease-in-out infinite;
+}
+
+.overlay-icon .material-icons {
+    font-size: inherit;
+    color: rgba(255, 255, 255, 0.9);
+    text-shadow: 0 0 20px rgba(255, 255, 255, 0.5);
 }
 
 .overlay-title {
-    font-size: 2.5rem;
+    font-size: 2.8rem;
     font-weight: 300;
     margin-bottom: 1rem;
-    text-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+    text-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+    background: linear-gradient(45deg, #fff, #e8eaf6);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
 }
 
 .overlay-subtitle {
-    font-size: 1.2rem;
-    margin-bottom: 2rem;
-    opacity: 0.9;
+    font-size: 1.3rem;
+    margin-bottom: 2.5rem;
+    opacity: 0.95;
+    line-height: 1.5;
+    color: rgba(255, 255, 255, 0.9);
 }
 
 .overlay-spinner {
+    width: 80px;
+    height: 80px;
+    border: 5px solid rgba(255, 255, 255, 0.2);
+    border-radius: 50%;
+    border-top-color: #fff;
+    border-right-color: rgba(255, 255, 255, 0.6);
+    animation: spinEnhanced 1.2s cubic-bezier(0.68, -0.55, 0.265, 1.55) infinite;
+    margin: 0 auto 2rem;
+    position: relative;
+}
+
+.overlay-spinner::before {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
     width: 60px;
     height: 60px;
-    border: 4px solid rgba(255, 255, 255, 0.3);
+    border: 3px solid transparent;
+    border-top-color: rgba(255, 255, 255, 0.4);
     border-radius: 50%;
-    border-top-color: white;
-    animation: spin 1s linear infinite;
-    margin: 0 auto 1rem;
+    transform: translate(-50%, -50%);
+    animation: spinReverse 0.8s linear infinite;
 }
 
 .overlay-progress {
-    width: 300px;
-    height: 4px;
-    background: rgba(255, 255, 255, 0.2);
-    border-radius: 2px;
+    width: 350px;
+    height: 8px;
+    background: rgba(255, 255, 255, 0.15);
+    border-radius: 10px;
     overflow: hidden;
-    margin: 1rem auto;
+    margin: 1.5rem auto;
+    position: relative;
+    box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.2);
+}
+
+.overlay-progress::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: -100%;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.3), transparent);
+    animation: progressShimmer 2s infinite;
 }
 
 .overlay-progress-bar {
     height: 100%;
-    background: linear-gradient(90deg, #fff, rgba(255, 255, 255, 0.8));
-    border-radius: 2px;
+    background: linear-gradient(90deg, #fff, #e8eaf6, #fff);
+    border-radius: 10px;
     width: 0%;
-    transition: width 0.3s ease;
-    animation: shimmer 2s infinite;
+    transition: width 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+    position: relative;
+    box-shadow: 0 0 10px rgba(255, 255, 255, 0.5);
+}
+
+.overlay-progress-bar::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    right: 0;
+    width: 20px;
+    height: 100%;
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.8));
+    border-radius: 0 10px 10px 0;
 }
 
 @keyframes fadeInUp {
@@ -772,16 +841,111 @@ body {
     }
 }
 
+@keyframes overlayFadeIn {
+    from {
+        opacity: 0;
+        backdrop-filter: blur(0px);
+    }
+    to {
+        opacity: 1;
+        backdrop-filter: blur(15px);
+    }
+}
+
+@keyframes spinEnhanced {
+    0% {
+        transform: rotate(0deg);
+        border-top-color: #fff;
+        border-right-color: rgba(255, 255, 255, 0.6);
+    }
+    25% {
+        border-top-color: rgba(255, 255, 255, 0.8);
+        border-right-color: #fff;
+    }
+    50% {
+        border-top-color: rgba(255, 255, 255, 0.6);
+        border-right-color: rgba(255, 255, 255, 0.8);
+    }
+    75% {
+        border-top-color: #fff;
+        border-right-color: rgba(255, 255, 255, 0.4);
+    }
+    100% {
+        transform: rotate(360deg);
+        border-top-color: #fff;
+        border-right-color: rgba(255, 255, 255, 0.6);
+    }
+}
+
+@keyframes spinReverse {
+    from {
+        transform: translate(-50%, -50%) rotate(0deg);
+    }
+    to {
+        transform: translate(-50%, -50%) rotate(-360deg);
+    }
+}
+
+@keyframes progressShimmer {
+    0% {
+        left: -100%;
+    }
+    50% {
+        left: 0%;
+    }
+    100% {
+        left: 100%;
+    }
+}
+
 @keyframes shimmer {
     0% { background-position: -300px 0; }
     100% { background-position: 300px 0; }
 }
 
+@keyframes iconFloat {
+    0%, 100% {
+        transform: translateY(0px);
+    }
+    50% {
+        transform: translateY(-10px);
+    }
+}
+
+@keyframes tipFade {
+    0%, 100% {
+        opacity: 0.8;
+    }
+    50% {
+        opacity: 0.6;
+    }
+}
+
 .overlay-status {
-    font-size: 1rem;
-    margin-top: 1rem;
-    opacity: 0.8;
-    font-weight: 300;
+    font-size: 1.1rem;
+    margin-top: 1.5rem;
+    opacity: 0.9;
+    font-weight: 400;
+    color: rgba(255, 255, 255, 0.95);
+    text-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+    min-height: 1.5rem;
+    transition: all 0.3s ease;
+}
+
+.overlay-tips {
+    margin-top: 2rem;
+    padding: 15px;
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 10px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.overlay-tips p {
+    margin: 0;
+    font-size: 0.9rem;
+    color: rgba(255, 255, 255, 0.8);
+    line-height: 1.4;
+    animation: tipFade 4s ease-in-out infinite;
 }
 
 /* 地图瓦片高亮效果 */

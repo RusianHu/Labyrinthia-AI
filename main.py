@@ -519,6 +519,178 @@ async def health_check():
     }
 
 
+
+
+
+@app.get("/auto-load/{game_id}")
+async def auto_load_game(game_id: str):
+    """自动加载游戏页面 - 显示加载界面并自动进入游戏"""
+    html_content = f"""
+    <!DOCTYPE html>
+    <html lang="zh-CN">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>加载游戏 - Labyrinthia AI</title>
+        <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
+        <link rel="stylesheet" href="/static/style.css">
+        <style>
+            body {{
+                margin: 0;
+                padding: 0;
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                font-family: 'Roboto', sans-serif;
+                overflow: hidden;
+            }}
+            .loading-container {{
+                position: fixed;
+                top: 0;
+                left: 0;
+                width: 100%;
+                height: 100%;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                z-index: 9999;
+            }}
+            .loading-content {{
+                background: rgba(255, 255, 255, 0.95);
+                border-radius: 20px;
+                padding: 40px;
+                text-align: center;
+                box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3);
+                max-width: 500px;
+                width: 90%;
+            }}
+            .loading-title {{
+                font-size: 28px;
+                font-weight: bold;
+                color: #333;
+                margin-bottom: 20px;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                gap: 10px;
+            }}
+            .loading-subtitle {{
+                font-size: 18px;
+                color: #666;
+                margin-bottom: 30px;
+            }}
+            .spinner {{
+                width: 40px;
+                height: 40px;
+                border: 4px solid #e0e0e0;
+                border-top: 4px solid #4CAF50;
+                border-radius: 50%;
+                animation: spin 1s linear infinite;
+                margin: 0 auto 20px;
+            }}
+            @keyframes spin {{
+                0% {{ transform: rotate(0deg); }}
+                100% {{ transform: rotate(360deg); }}
+            }}
+            .loading-text {{
+                font-size: 16px;
+                color: #666;
+                margin-bottom: 20px;
+            }}
+        </style>
+    </head>
+    <body>
+        <div class="loading-container">
+            <div class="loading-content">
+                <div class="loading-title">
+                    <i class="material-icons">games</i>
+                    正在进入游戏
+                </div>
+                <div class="loading-subtitle">准备您的冒险...</div>
+
+                <div class="spinner"></div>
+
+                <div class="loading-text">正在加载游戏数据...</div>
+            </div>
+        </div>
+
+        <script>
+            async function autoLoadGame() {{
+                try {{
+                    // 调用加载游戏API
+                    const response = await fetch('/api/load/{game_id}', {{
+                        method: 'POST',
+                        headers: {{
+                            'Content-Type': 'application/json'
+                        }}
+                    }});
+
+                    const result = await response.json();
+
+                    if (result.success) {{
+                        // 加载成功，跳转到游戏页面
+                        window.location.href = '/?game_id={game_id}';
+                    }} else {{
+                        // 加载失败，显示错误
+                        document.querySelector('.loading-text').textContent = '加载失败: ' + result.message;
+                        document.querySelector('.spinner').style.display = 'none';
+                    }}
+                }} catch (error) {{
+                    console.error('Auto load error:', error);
+                    document.querySelector('.loading-text').textContent = '加载失败: ' + error.message;
+                    document.querySelector('.spinner').style.display = 'none';
+                }}
+            }}
+
+            // 页面加载后自动开始
+            window.addEventListener('load', autoLoadGame);
+        </script>
+    </body>
+    </html>
+    """
+    return HTMLResponse(content=html_content)
+
+
+
+
+
+
+
+
+@app.get("/direct-start")
+async def direct_start_game():
+    """直接开始游戏 - 无加载界面，直接进入游戏"""
+    try:
+        # 随机生成角色名称
+        random_names = [
+            "测试勇者", "冒险家阿尔法", "探索者贝塔", "勇士伽马", "法师德尔塔",
+            "盗贼艾普西隆", "战士泽塔", "牧师艾塔", "游侠西塔", "野蛮人约塔"
+        ]
+
+        # 随机选择职业
+        character_classes = ["fighter", "wizard", "rogue"]
+
+        # 生成随机角色
+        player_name = random.choice(random_names) + f"_{random.randint(1000, 9999)}"
+        character_class = random.choice(character_classes)
+
+        logger.info(f"Direct starting game with player: {player_name}, class: {character_class}")
+
+        # 创建游戏
+        game_state = await game_engine.create_new_game(
+            player_name=player_name,
+            character_class=character_class
+        )
+
+        # 直接重定向到游戏界面
+        from fastapi.responses import RedirectResponse
+        return RedirectResponse(url=f"/?game_id={game_state.id}", status_code=302)
+
+    except Exception as e:
+        logger.error(f"Failed to direct start game: {e}")
+        # 如果失败，重定向到主页
+        from fastapi.responses import RedirectResponse
+        return RedirectResponse(url="/", status_code=302)
+
+
 # 错误处理器
 @app.exception_handler(404)
 async def not_found_handler(request: Request, exc: HTTPException):

@@ -43,7 +43,42 @@ Object.assign(LabyrinthiaGame.prototype, {
             statusEl.textContent = status;
             progressBar.style.width = '0%';
             overlay.classList.add('show');
+
+            // 启动动态提示系统
+            this.startDynamicTips();
         }
+    },
+
+    startDynamicTips() {
+        const tips = [
+            '💡 提示：游戏世界由AI实时生成，每次冒险都是独一无二的',
+            '🎮 提示：您可以通过点击地图瓦片来移动角色',
+            '⚔️ 提示：战斗策略会影响您的生存几率',
+            '🗝️ 提示：探索每个角落，寻找隐藏的宝藏和秘密',
+            '📜 提示：任务系统会根据您的选择动态调整',
+            '🏰 提示：每个楼层都有独特的挑战和奖励',
+            '🎯 提示：合理使用物品可以在关键时刻救您一命',
+            '🌟 提示：与AI的互动越多，故事就越精彩'
+        ];
+
+        const tipElement = document.getElementById('overlay-tip');
+        if (!tipElement) return;
+
+        let currentTipIndex = 0;
+
+        // 清除之前的定时器
+        if (this.tipInterval) {
+            clearInterval(this.tipInterval);
+        }
+
+        this.tipInterval = setInterval(() => {
+            currentTipIndex = (currentTipIndex + 1) % tips.length;
+            tipElement.textContent = tips[currentTipIndex];
+            tipElement.style.animation = 'none';
+            setTimeout(() => {
+                tipElement.style.animation = 'tipFade 4s ease-in-out infinite';
+            }, 50);
+        }, 4000);
     },
 
     hideFullscreenOverlay() {
@@ -51,18 +86,36 @@ Object.assign(LabyrinthiaGame.prototype, {
         if (overlay) {
             overlay.classList.remove('show');
         }
+
+        // 清理动态提示定时器
+        if (this.tipInterval) {
+            clearInterval(this.tipInterval);
+            this.tipInterval = null;
+        }
     },
 
-    updateOverlayProgress(progress, status = '') {
-        const progressBar = document.getElementById('overlay-progress-bar');
-        const statusEl = document.getElementById('overlay-status');
+    updateOverlayProgress(percentage, text = null) {
+        // 更新全屏遮罩进度
+        const fullProgressBar = document.getElementById('overlay-progress-bar');
+        const fullStatusEl = document.getElementById('overlay-status');
 
-        if (progressBar) {
-            progressBar.style.width = `${Math.min(100, Math.max(0, progress))}%`;
+        if (fullProgressBar) {
+            fullProgressBar.style.width = `${Math.min(100, Math.max(0, percentage))}%`;
         }
 
-        if (statusEl && status) {
-            statusEl.textContent = status;
+        if (fullStatusEl && text) {
+            fullStatusEl.textContent = text;
+        }
+
+        // 更新部分遮罩进度
+        const partialProgressFill = document.getElementById('partial-progress-fill');
+        const partialProgressText = document.getElementById('partial-progress-text');
+
+        if (partialProgressFill) {
+            partialProgressFill.style.width = `${percentage}%`;
+        }
+        if (partialProgressText && text) {
+            partialProgressText.textContent = text;
         }
     },
 
@@ -162,27 +215,5 @@ Object.assign(LabyrinthiaGame.prototype, {
         }
     },
 
-    updateOverlayProgress(percentage, text = null) {
-        // 更新全屏遮罩进度
-        const fullProgressFill = document.getElementById('progress-fill');
-        const fullProgressText = document.getElementById('progress-text');
 
-        if (fullProgressFill) {
-            fullProgressFill.style.width = `${percentage}%`;
-        }
-        if (fullProgressText && text) {
-            fullProgressText.textContent = text;
-        }
-
-        // 更新部分遮罩进度
-        const partialProgressFill = document.getElementById('partial-progress-fill');
-        const partialProgressText = document.getElementById('partial-progress-text');
-
-        if (partialProgressFill) {
-            partialProgressFill.style.width = `${percentage}%`;
-        }
-        if (partialProgressText && text) {
-            partialProgressText.textContent = text;
-        }
-    }
 });

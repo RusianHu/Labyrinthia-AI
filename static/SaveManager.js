@@ -61,13 +61,15 @@ Object.assign(LabyrinthiaGame.prototype, {
         this.showFullscreenOverlay('加载存档', '正在读取您的冒险进度...', '连接到游戏服务器...');
 
         try {
-            this.updateOverlayProgress(20, '验证存档文件...');
+            this.updateOverlayProgress(15, '验证存档文件...');
+            await new Promise(resolve => setTimeout(resolve, 400));
 
+            this.updateOverlayProgress(30, '读取游戏数据...');
             const response = await fetch(`/api/load/${saveId}`, {
                 method: 'POST'
             });
 
-            this.updateOverlayProgress(50, '解析游戏数据...');
+            this.updateOverlayProgress(50, '解析游戏状态...');
             const result = await response.json();
 
             if (result.success) {
@@ -148,10 +150,14 @@ Object.assign(LabyrinthiaGame.prototype, {
         }
 
         this.setLoading(true);
-        this.showFullscreenOverlay('创建新游戏', '正在为您生成独特的冒险世界（一般等20s即可）...', '初始化AI系统...');
+        this.showFullscreenOverlay('创建新游戏', '正在为您生成独特的冒险世界...', '初始化AI系统...');
 
         try {
-            this.updateOverlayProgress(15, '创建角色档案...');
+            this.updateOverlayProgress(10, '验证角色信息...');
+            await new Promise(resolve => setTimeout(resolve, 500));
+
+            this.updateOverlayProgress(20, '创建角色档案...');
+            await new Promise(resolve => setTimeout(resolve, 300));
 
             const response = await fetch('/api/new-game', {
                 method: 'POST',
@@ -164,7 +170,7 @@ Object.assign(LabyrinthiaGame.prototype, {
                 })
             });
 
-            this.updateOverlayProgress(40, 'AI正在生成地下城...');
+            this.updateOverlayProgress(45, 'AI正在生成地下城...');
             const result = await response.json();
 
             if (result.success) {
