@@ -512,10 +512,13 @@ class PromptManager:
 
 请生成任务完成后的情况，包含：
 1. 庆祝完成的描述
-2. 3-4个关于下一步行动的选择
-3. 选项应该限制在当前地图内的活动，如：继续探索当前区域、休息整理装备、寻找隐藏区域、与NPC交流等
-4. 每个选项要有明确的后果和发展方向
-5. **重要限制**：不要生成创建新任务、切换地图、前往新区域等选项
+2. 3-4个关于下一步行动的选择，包括：
+   - 继续在当前区域探索的选项
+   - 寻找新的冒险机会的选项（可以涉及新任务或新区域）
+   - 休息整理装备的选项
+   - 其他符合故事发展的选项
+3. 每个选项要有明确的后果和发展方向
+4. 选项应该为玩家提供多样化的发展路径，包括继续冒险的可能性
 
 请返回JSON格式：
 {{
@@ -526,7 +529,11 @@ class PromptManager:
             "text": "选项文本",
             "description": "选项详细说明",
             "consequences": "可能的后果和发展",
-            "requirements": {{}}
+            "requirements": {{}},
+            "leads_to_new_quest": false,
+            "leads_to_map_transition": false,
+            "quest_theme": "",
+            "map_theme": ""
         }}
     ]
 }}
@@ -701,6 +708,10 @@ class PromptManager:
 选择信息：
 - 选择文本：{choice_text}
 - 选择描述：{choice_description}
+- 是否导向新任务：{leads_to_new_quest}
+- 是否导向地图切换：{leads_to_map_transition}
+- 任务主题：{quest_theme}
+- 地图主题：{map_theme}
 
 已完成任务：{completed_quest_data}
 
@@ -712,13 +723,10 @@ class PromptManager:
 - 地图：{current_map}
 - 深度：第{map_depth}层
 
-请根据玩家的选择生成合理的结果，限制在当前地图内的活动：
-1. 玩家状态调整（如果选择休息）
-2. 当前地图的剧情推进
-3. 发现隐藏区域或物品
-4. 与当前环境的互动
-
-**重要限制**：不要创建新任务或切换地图，只处理当前地图内的活动。
+请根据玩家的选择生成合理的结果：
+1. 如果选择导向新任务，生成新任务的基本信息
+2. 如果选择导向地图切换，生成地图切换的信息
+3. 否则处理当前地图内的活动（玩家状态调整、发现隐藏区域等）
 
 请返回JSON格式：
 {{
@@ -727,7 +735,22 @@ class PromptManager:
     "player_updates": {{
         "stats": {{"hp": 新生命值}}
     }},
-    "quest_updates": {{}}
+    "quest_updates": {{}},
+    "new_quest_data": {{
+        "title": "新任务标题",
+        "description": "新任务描述",
+        "type": "任务类型",
+        "experience_reward": 经验奖励,
+        "objectives": ["目标1", "目标2"],
+        "story_context": "故事背景"
+    }},
+    "map_transition": {{
+        "should_transition": true,
+        "transition_type": "new_area",
+        "target_depth": 目标楼层,
+        "theme": "地图主题",
+        "message": "切换消息"
+    }}
 }}
             """.strip(),
             required_params=[

@@ -305,14 +305,17 @@ async def _process_post_choice_updates(game_state: GameState):
     """处理选择后的游戏状态更新"""
     try:
         # 检查是否需要生成新任务（确保玩家始终有活跃任务）
+        # 注意：如果EventChoiceSystem已经创建了新任务，就不需要再生成
         if hasattr(game_state, 'pending_new_quest_generation') and game_state.pending_new_quest_generation:
             try:
                 # 检查是否还有活跃任务
                 active_quest = next((q for q in game_state.quests if q.is_active), None)
                 if not active_quest:
-                    # 生成新任务
+                    # 生成新任务（作为后备机制）
                     await game_engine._generate_new_quest_for_player(game_state)
-                    logger.info("Generated new quest after choice processing")
+                    logger.info("Generated fallback new quest after choice processing")
+                else:
+                    logger.info("Active quest found, skipping fallback quest generation")
 
                 # 清理新任务生成标志
                 game_state.pending_new_quest_generation = False

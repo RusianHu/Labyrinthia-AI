@@ -212,6 +212,17 @@ class EventChoiceSystem:
                             game_state, choice_data.get("requirements", {})
                         )
                     )
+
+                    # 添加额外的选择元数据
+                    if "leads_to_new_quest" in choice_data:
+                        choice.requirements["leads_to_new_quest"] = choice_data["leads_to_new_quest"]
+                    if "leads_to_map_transition" in choice_data:
+                        choice.requirements["leads_to_map_transition"] = choice_data["leads_to_map_transition"]
+                    if "quest_theme" in choice_data:
+                        choice.requirements["quest_theme"] = choice_data["quest_theme"]
+                    if "map_theme" in choice_data:
+                        choice.requirements["map_theme"] = choice_data["map_theme"]
+
                     context.choices.append(choice)
                 
                 return context
@@ -466,11 +477,22 @@ class EventChoiceSystem:
         """处理任务完成选择"""
         completed_quest_id = context.context_data.get("completed_quest_id")
 
+        # 从选择数据中提取额外信息
+        choice_requirements = choice.requirements or {}
+        leads_to_new_quest = choice_requirements.get("leads_to_new_quest", False)
+        leads_to_map_transition = choice_requirements.get("leads_to_map_transition", False)
+        quest_theme = choice_requirements.get("quest_theme", "")
+        map_theme = choice_requirements.get("map_theme", "")
+
         # 构建LLM提示来处理任务完成选择
         prompt = prompt_manager.format_prompt(
             "process_quest_completion_choice",
             choice_text=choice.text,
             choice_description=choice.description,
+            leads_to_new_quest=leads_to_new_quest,
+            leads_to_map_transition=leads_to_map_transition,
+            quest_theme=quest_theme,
+            map_theme=map_theme,
             completed_quest_data=context.context_data.get("quest_data", {}),
             player_name=game_state.player.name,
             player_level=game_state.player.stats.level,
@@ -494,6 +516,10 @@ class EventChoiceSystem:
 
                 # 应用更新到游戏状态
                 await self._apply_choice_result(game_state, result)
+
+                # 处理新任务创建（如果LLM建议）
+                if llm_response.get("new_quest_data"):
+                    await self._create_new_quest_from_choice(game_state, llm_response["new_quest_data"], choice)
 
                 # 处理地图切换（如果LLM建议）
                 if result.map_transition and result.map_transition.get("should_transition", False):
@@ -524,6 +550,13 @@ class EventChoiceSystem:
                 if target_depth is None:
                     target_depth = game_state.current_map.depth + 1
 
+                # 确保楼层数合理
+                max_floors = config.game.max_quest_floors
+                if target_depth > max_floors:
+                    target_depth = max_floors
+                elif target_depth < 1:
+                    target_depth = 1
+
                 # 获取活跃任务上下文
                 active_quest = next((q for q in game_state.quests if q.is_active), None)
                 quest_context = active_quest.to_dict() if active_quest else None
@@ -538,14 +571,17 @@ class EventChoiceSystem:
                     quest_context=quest_context
                 )
 
+                # 确保新地图的深度正确设置
+                new_map.depth = target_depth
+
                 # 执行地图切换
                 await self._execute_map_transition(game_state, new_map)
 
                 # 添加切换消息
-                transition_message = transition_data.get("message", f"进入了{new_map.name}")
+                transition_message = transition_data.get("message", f"进入了{new_map.name}（第{target_depth}层）")
                 game_state.pending_events.append(transition_message)
 
-                logger.info(f"Quest completion map transition completed: {new_map.name}")
+                logger.info(f"Quest completion map transition completed: {new_map.name} (Depth: {target_depth})")
 
             elif transition_type == "existing_area":
                 # 切换到已存在的区域（如果有的话）
@@ -853,8 +889,73 @@ class EventChoiceSystem:
         except Exception as e:
             logger.error(f"Error handling monster update: {e}")
 
+    async def _create_new_quest_from_choice(self, game_state: GameState, quest_data: Dict[str, Any], choice: EventChoice):
+        """基于玩家选择创建新任务"""
+        try:
+            # 导入必要的模块（避免循环导入）
+            from content_generator import content_generator
+            from data_models import Quest
+
+            # 创建新任务对象
+            new_quest = Quest()
+            new_quest.title = quest_data.get("title", "新的冒险")
+            new_quest.description = quest_data.get("description", "一个新的挑战等待着你...")
+            new_quest.quest_type = quest_data.get("type", "exploration")
+            new_quest.experience_reward = quest_data.get("experience_reward", 500)
+            new_quest.objectives = quest_data.get("objectives", ["完成新的挑战"])
+            new_quest.completed_objectives = [False] * len(new_quest.objectives)
+            new_quest.is_active = True
+            new_quest.is_completed = False
+            new_quest.progress_percentage = 0.0
+            new_quest.story_context = quest_data.get("story_context", "")
+
+            # 添加选择上下文到任务故事背景中
+            choice_context = f"基于你的选择'{choice.text}'，{choice.description}"
+            if new_quest.story_context:
+                new_quest.story_context = f"{new_quest.story_context}\n\n{choice_context}"
+            else:
+                new_quest.story_context = choice_context
+
+            # 如果LLM没有提供完整的任务数据，使用任务生成器补充
+            if not quest_data.get("title") or not quest_data.get("description"):
+                # 使用现有的任务生成系统，传递选择上下文
+                context_for_generation = f"玩家选择了：{choice.text} - {choice.description}"
+                generated_quests = await content_generator.generate_quest_chain(
+                    game_state.player.stats.level, 1, context_for_generation
+                )
+
+                if generated_quests:
+                    generated_quest = generated_quests[0]
+                    # 合并LLM提供的数据和生成的数据
+                    new_quest.title = quest_data.get("title", generated_quest.title)
+                    new_quest.description = quest_data.get("description", generated_quest.description)
+                    new_quest.quest_type = quest_data.get("type", generated_quest.quest_type)
+                    new_quest.experience_reward = quest_data.get("experience_reward", generated_quest.experience_reward)
+                    new_quest.objectives = quest_data.get("objectives", generated_quest.objectives)
+                    new_quest.completed_objectives = [False] * len(new_quest.objectives)
+                    new_quest.special_events = generated_quest.special_events
+                    new_quest.special_monsters = generated_quest.special_monsters
+                    new_quest.target_floors = generated_quest.target_floors
+                    new_quest.map_themes = generated_quest.map_themes
+
+            # 添加到游戏状态
+            game_state.quests.append(new_quest)
+
+            # 添加新任务通知
+            game_state.pending_events.append(f"新任务：{new_quest.title}")
+            game_state.pending_events.append("你的冒险将继续...")
+
+            # 清理新任务生成标志（如果存在）
+            if hasattr(game_state, 'pending_new_quest_generation'):
+                game_state.pending_new_quest_generation = False
+
+            logger.info(f"Created new quest from choice: {new_quest.title}")
+
+        except Exception as e:
+            logger.error(f"Error creating new quest from choice: {e}")
+
     async def _create_new_quest(self, game_state: GameState, quest_data: Dict[str, Any]):
-        """创建新任务"""
+        """创建新任务（通用方法）"""
         try:
             # 导入必要的模块（避免循环导入）
             from content_generator import content_generator
