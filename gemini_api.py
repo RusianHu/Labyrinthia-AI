@@ -215,19 +215,31 @@ class GeminiAPI:
             "generation_config": generation_config
         }
 
-        # 处理编码转换（如果需要）
+        # 处理内容清理和编码转换（如果需要）
         processed_text = text
+        try:
+            # 导入内容清理器（延迟导入避免循环依赖）
+            from content_sanitizer import content_sanitizer
+            if content_sanitizer.enabled:
+                processed_text = content_sanitizer.sanitize_text(text)
+        except ImportError:
+            # 如果内容清理器不可用，继续使用编码转换器
+            pass
+        except Exception as e:
+            # 如果内容清理失败，记录错误但继续
+            print(f"Content sanitization failed, using original text: {e}")
+
         try:
             # 导入编码转换器（延迟导入避免循环依赖）
             from encoding_utils import encoding_converter
             if encoding_converter.enabled:
-                processed_text = encoding_converter.process_text(text)
+                processed_text = encoding_converter.process_text(processed_text)
         except ImportError:
-            # 如果编码转换器不可用，使用原始文本
+            # 如果编码转换器不可用，使用当前文本
             pass
         except Exception as e:
-            # 如果编码转换失败，使用原始文本
-            print(f"Encoding conversion failed, using original text: {e}")
+            # 如果编码转换失败，使用当前文本
+            print(f"Encoding conversion failed, using current text: {e}")
 
         config = self._convert_generation_config(generation_config)
 
@@ -263,19 +275,31 @@ class GeminiAPI:
             "generation_config": gen_cfg
         }
 
-        # 处理编码转换（如果需要）
+        # 处理内容清理和编码转换（如果需要）
         processed_text = text
+        try:
+            # 导入内容清理器（延迟导入避免循环依赖）
+            from content_sanitizer import content_sanitizer
+            if content_sanitizer.enabled:
+                processed_text = content_sanitizer.sanitize_text(text)
+        except ImportError:
+            # 如果内容清理器不可用，继续使用编码转换器
+            pass
+        except Exception as e:
+            # 如果内容清理失败，记录错误但继续
+            print(f"Content sanitization failed, using original text: {e}")
+
         try:
             # 导入编码转换器（延迟导入避免循环依赖）
             from encoding_utils import encoding_converter
             if encoding_converter.enabled:
-                processed_text = encoding_converter.process_text(text)
+                processed_text = encoding_converter.process_text(processed_text)
         except ImportError:
-            # 如果编码转换器不可用，使用原始文本
+            # 如果编码转换器不可用，使用当前文本
             pass
         except Exception as e:
-            # 如果编码转换失败，使用原始文本
-            print(f"Encoding conversion failed, using original text: {e}")
+            # 如果编码转换失败，使用当前文本
+            print(f"Encoding conversion failed, using current text: {e}")
 
         config = self._convert_generation_config(gen_cfg)
 

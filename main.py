@@ -205,6 +205,41 @@ async def get_game_state(game_id: str):
     return state_dict
 
 
+@app.get("/api/game/{game_id}/state")
+async def get_game_state_detailed(game_id: str):
+    """获取详细游戏状态（别名路由）"""
+    return await get_game_state(game_id)
+
+
+@app.get("/api/game/{game_id}/quests")
+async def get_game_quests(game_id: str):
+    """获取游戏任务列表"""
+    if game_id not in game_engine.active_games:
+        raise HTTPException(status_code=404, detail="游戏未找到")
+
+    game_state = game_engine.active_games[game_id]
+
+    # 返回任务列表
+    quests = []
+    for quest in game_state.quests:
+        quest_dict = {
+            "id": quest.id,
+            "title": quest.title,
+            "description": quest.description,
+            "objectives": quest.objectives,
+            "completed_objectives": quest.completed_objectives,
+            "is_active": quest.is_active,
+            "is_completed": quest.is_completed,
+            "progress_percentage": quest.progress_percentage,
+            "quest_type": quest.quest_type,
+            "experience_reward": quest.experience_reward,
+            "story_context": quest.story_context
+        }
+        quests.append(quest_dict)
+
+    return quests
+
+
 @app.post("/api/action")
 async def perform_action(request: ActionRequest):
     """执行游戏行动"""

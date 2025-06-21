@@ -1348,7 +1348,42 @@ class ContentGenerator:
         """
         
         try:
-            result = await llm_service._async_generate_json(main_quest_prompt)
+            # 定义任务生成的JSON schema
+            quest_schema = {
+                "type": "object",
+                "properties": {
+                    "quests": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "title": {"type": "string"},
+                                "description": {"type": "string"},
+                                "objectives": {"type": "array", "items": {"type": "string"}},
+                                "experience_reward": {"type": "integer"},
+                                "story_context": {"type": "string"},
+                                "progress_percentage": {"type": "number"},
+                                "quest_type": {"type": "string"},
+                                "target_floors": {"type": "array", "items": {"type": "integer"}},
+                                "map_themes": {"type": "array", "items": {"type": "string"}},
+                                "special_events": {"type": "array"},
+                                "special_monsters": {"type": "array"}
+                            }
+                        }
+                    }
+                }
+            }
+
+            # 使用复杂内容生成方法，确保在Ubuntu服务器上的兼容性
+            result = await llm_service.generate_complex_content(
+                prompt=main_quest_prompt,
+                context_data={
+                    "player_level": player_level,
+                    "max_floors": max_floors,
+                    "chain_length": chain_length
+                },
+                schema=quest_schema
+            )
             if result and "quests" in result:
                 for i, quest_data in enumerate(result["quests"]):
                     quest = Quest()

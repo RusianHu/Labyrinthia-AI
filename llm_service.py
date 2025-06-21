@@ -6,7 +6,7 @@ LLM service wrapper for the Labyrinthia AI game
 import asyncio
 import json
 import logging
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Union
 from concurrent.futures import ThreadPoolExecutor
 
 from gemini_api import GeminiAPI
@@ -169,6 +169,19 @@ class LLMService:
         
         def _sync_generate():
             try:
+                # 处理内容清理（如果启用）
+                processed_prompt = prompt
+                try:
+                    from content_sanitizer import content_sanitizer
+                    if content_sanitizer.enabled:
+                        processed_prompt = content_sanitizer.sanitize_text(prompt)
+                        if len(processed_prompt) != len(prompt):
+                            logger.debug(f"Prompt sanitized: {len(prompt)} -> {len(processed_prompt)} chars")
+                except ImportError:
+                    pass
+                except Exception as e:
+                    logger.warning(f"Content sanitization failed: {e}")
+
                 generation_config = {}
 
                 # 只有在启用生成参数时才添加temperature和top_p
@@ -184,12 +197,12 @@ class LLMService:
 
                 # 合并用户提供的配置
                 generation_config.update(kwargs.get("generation_config", {}))
-                
+
                 # 根据提供商调用不同的客户端
                 if self.provider == LLMProvider.GEMINI:
                     response = self.client.single_turn(
                         model=config.llm.model_name,
-                        text=prompt,
+                        text=processed_prompt,
                         generation_config=generation_config
                     )
                     
@@ -241,6 +254,19 @@ class LLMService:
         
         def _sync_generate_json():
             try:
+                # 处理内容清理（如果启用）
+                processed_prompt = prompt
+                try:
+                    from content_sanitizer import content_sanitizer
+                    if content_sanitizer.enabled:
+                        processed_prompt = content_sanitizer.sanitize_text(prompt)
+                        if len(processed_prompt) != len(prompt):
+                            logger.debug(f"JSON prompt sanitized: {len(prompt)} -> {len(processed_prompt)} chars")
+                except ImportError:
+                    pass
+                except Exception as e:
+                    logger.warning(f"Content sanitization failed: {e}")
+
                 generation_config = {}
 
                 # 只有在启用生成参数时才添加temperature和top_p
@@ -256,12 +282,12 @@ class LLMService:
 
                 # 合并用户提供的配置
                 generation_config.update(kwargs.get("generation_config", {}))
-                
+
                 # 根据提供商调用不同的客户端
                 if self.provider == LLMProvider.GEMINI:
                     response = self.client.single_turn_json(
                         model=config.llm.model_name,
-                        text=prompt,
+                        text=processed_prompt,
                         schema=schema,
                         generation_config=generation_config
                     )
@@ -524,6 +550,49 @@ class LLMService:
     async def generate_text(self, prompt: str) -> str:
         """生成文本（通用方法）"""
         return await self._async_generate(prompt)
+
+    async def generate_complex_content(self, prompt: str, context_data: Optional[Dict[str, Any]] = None,
+                                     schema: Optional[Dict] = None, **kwargs) -> Union[str, Dict[str, Any]]:
+        """
+        生成复杂内容，专门处理包含大量上下文信息的请求
+        使用内容清理器确保在Ubuntu服务器上的兼容性
+
+        Args:
+            prompt: 基础提示词
+            context_data: 上下文数据（地图、任务信息等）
+            schema: JSON schema（如果需要JSON输出）
+            **kwargs: 其他生成配置
+
+        Returns:
+            生成的内容（文本或JSON）
+        """
+        try:
+            # 使用内容清理器创建安全的提示词
+            from content_sanitizer import content_sanitizer
+            if content_sanitizer.enabled:
+                safe_prompt = content_sanitizer.create_safe_prompt(prompt, context_data)
+                logger.debug(f"Complex content prompt sanitized: {len(prompt)} -> {len(safe_prompt)} chars")
+            else:
+                safe_prompt = prompt
+                # 如果有上下文数据，简单地添加到提示词中
+                if context_data:
+                    import json
+                    context_json = json.dumps(context_data, ensure_ascii=False, indent=2)
+                    safe_prompt += f"\n\n上下文信息：\n{context_json}"
+
+            # 根据是否需要JSON输出选择方法
+            if schema:
+                return await self._async_generate_json(safe_prompt, schema, **kwargs)
+            else:
+                return await self._async_generate(safe_prompt, **kwargs)
+
+        except Exception as e:
+            logger.error(f"Complex content generation failed: {e}")
+            # 回退到基本方法
+            if schema:
+                return await self._async_generate_json(prompt, schema, **kwargs)
+            else:
+                return await self._async_generate(prompt, **kwargs)
 
     async def generate_item_on_pickup(self, game_state: GameState,
                                     pickup_context: str = "") -> Optional[Item]:

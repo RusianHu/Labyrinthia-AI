@@ -89,7 +89,20 @@ class OpenRouterClient:
 
     def chat_once(self, prompt: str, model: Optional[str] = None, **params: Any) -> str:
         """Single-turn chat; returns assistant content."""
-        messages = [{"role": "user", "content": prompt}]
+        # 处理内容清理（如果启用）
+        processed_prompt = prompt
+        try:
+            from content_sanitizer import content_sanitizer
+            if content_sanitizer.enabled:
+                processed_prompt = content_sanitizer.sanitize_text(prompt)
+                if len(processed_prompt) != len(prompt):
+                    logging.debug(f"OpenRouter prompt sanitized: {len(prompt)} -> {len(processed_prompt)} chars")
+        except ImportError:
+            pass
+        except Exception as e:
+            logging.warning(f"OpenRouter content sanitization failed: {e}")
+
+        messages = [{"role": "user", "content": processed_prompt}]
         result = self._chat(messages, model=model, **params)
         return result["choices"][0]["message"]["content"]
 
@@ -168,12 +181,25 @@ class OpenRouterClient:
         Optionally pass a JSON schema (dict) which will be appended to the
         `response_format` field (supported by OpenAI-compatible APIs).
         """
+        # 处理内容清理（如果启用）
+        processed_prompt = prompt
+        try:
+            from content_sanitizer import content_sanitizer
+            if content_sanitizer.enabled:
+                processed_prompt = content_sanitizer.sanitize_text(prompt)
+                if len(processed_prompt) != len(prompt):
+                    logging.debug(f"OpenRouter JSON prompt sanitized: {len(prompt)} -> {len(processed_prompt)} chars")
+        except ImportError:
+            pass
+        except Exception as e:
+            logging.warning(f"OpenRouter JSON content sanitization failed: {e}")
+
         rf: Dict[str, Any] = {"type": "json_object"}
         if schema is not None:
             rf["schema"] = schema
         params.setdefault("response_format", rf)
 
-        messages = [{"role": "user", "content": prompt}]
+        messages = [{"role": "user", "content": processed_prompt}]
         result = self._chat(messages, model=model, **params)
         content = result["choices"][0]["message"]["content"]
         try:
