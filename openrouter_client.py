@@ -89,20 +89,7 @@ class OpenRouterClient:
 
     def chat_once(self, prompt: str, model: Optional[str] = None, **params: Any) -> str:
         """Single-turn chat; returns assistant content."""
-        # 处理内容清理（如果启用）
-        processed_prompt = prompt
-        try:
-            from content_sanitizer import content_sanitizer
-            if content_sanitizer.enabled:
-                processed_prompt = content_sanitizer.sanitize_text(prompt)
-                if len(processed_prompt) != len(prompt):
-                    logging.debug(f"OpenRouter prompt sanitized: {len(prompt)} -> {len(processed_prompt)} chars")
-        except ImportError:
-            pass
-        except Exception as e:
-            logging.warning(f"OpenRouter content sanitization failed: {e}")
-
-        messages = [{"role": "user", "content": processed_prompt}]
+        messages = [{"role": "user", "content": prompt}]
         result = self._chat(messages, model=model, **params)
         return result["choices"][0]["message"]["content"]
 
@@ -181,25 +168,12 @@ class OpenRouterClient:
         Optionally pass a JSON schema (dict) which will be appended to the
         `response_format` field (supported by OpenAI-compatible APIs).
         """
-        # 处理内容清理（如果启用）
-        processed_prompt = prompt
-        try:
-            from content_sanitizer import content_sanitizer
-            if content_sanitizer.enabled:
-                processed_prompt = content_sanitizer.sanitize_text(prompt)
-                if len(processed_prompt) != len(prompt):
-                    logging.debug(f"OpenRouter JSON prompt sanitized: {len(prompt)} -> {len(processed_prompt)} chars")
-        except ImportError:
-            pass
-        except Exception as e:
-            logging.warning(f"OpenRouter JSON content sanitization failed: {e}")
-
         rf: Dict[str, Any] = {"type": "json_object"}
         if schema is not None:
             rf["schema"] = schema
         params.setdefault("response_format", rf)
 
-        messages = [{"role": "user", "content": processed_prompt}]
+        messages = [{"role": "user", "content": prompt}]
         result = self._chat(messages, model=model, **params)
         content = result["choices"][0]["message"]["content"]
         try:
@@ -287,7 +261,10 @@ class OpenRouterClient:
     ) -> Dict[str, Any]:
         payload = self._build_payload(messages, model=model, stream=stream, **params)
         resp = self._post("/chat/completions", payload, stream=False)
+
+        # 处理响应（标准JSON格式）
         response_data = resp.json()
+
         # 保存响应用于调试
         self.last_response_payload = response_data
         return response_data
@@ -311,7 +288,41 @@ class OpenRouterClient:
 
     def _post(self, path: str, payload: Dict[str, Any], *, stream: bool = False) -> requests.Response:
         url = f"{self.base_url}{path}"
-        resp = self._session.post(url, json=payload, timeout=self.timeout, stream=stream)
+
+        # 处理编码转换（如果需要）
+        final_payload = payload
+        extra_headers = {}
+
+        try:
+            # 延迟导入避免循环依赖
+            from encoding_utils import encoding_converter
+            if encoding_converter.enabled:
+                final_payload, extra_headers = encoding_converter.prepare_request_data(payload)
+                logging.debug(f"Encoding enabled: method={encoding_converter.method}")
+
+                # 计算大小影响（调试模式）
+                try:
+                    from config import config
+                    if config.debug.enabled:
+                        size_info = encoding_converter.calculate_size_impact(payload)
+                        logging.info(f"Request size impact: {size_info}")
+                except:
+                    pass
+
+        except ImportError:
+            # 编码转换器不可用
+            pass
+        except Exception as e:
+            logging.warning(f"Encoding conversion failed, using original payload: {e}")
+
+        # 更新请求头
+        headers = {}
+        if extra_headers:
+            headers.update(extra_headers)
+
+        # 发送JSON请求（编码处理后的载荷仍然是JSON格式）
+        resp = self._session.post(url, json=final_payload, headers=headers, timeout=self.timeout, stream=stream)
+
         if not stream:
             self._handle_error(resp)
         return resp

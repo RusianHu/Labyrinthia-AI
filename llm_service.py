@@ -11,6 +11,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 from gemini_api import GeminiAPI
 from openrouter_client import OpenRouterClient, ChatError
+from openai_api_tool import OpenAIAPITool
 from config import config, LLMProvider
 from data_models import Character, Monster, GameMap, Quest, GameState, Item
 from encoding_utils import encoding_converter
@@ -54,6 +55,31 @@ class LLMService:
                 proxies=proxies,
                 referer="https://github.com/Labyrinthia-AI/Labyrinthia-AI", # 使用一个有效的URL作为Referer
                 title=config.game.game_name
+            )
+        elif self.provider == LLMProvider.OPENAI:
+            # 配置代理（OpenAI API工具类使用requests，需要设置环境变量或传递proxies）
+            import os
+            if config.llm.use_proxy and config.llm.proxy_url:
+                # 设置环境变量以便requests使用代理
+                os.environ['HTTP_PROXY'] = config.llm.proxy_url
+                os.environ['HTTPS_PROXY'] = config.llm.proxy_url
+                logger.info(f"Set proxy environment variables for OpenAI: {config.llm.proxy_url}")
+
+            self.client = OpenAIAPITool(
+                api_key=config.llm.api_key,
+                base_url=config.llm.openai_base_url,
+                default_model=config.llm.model_name,
+                default_image_model=config.llm.openai.image_model,
+                default_tts_model=config.llm.openai.tts_model,
+                timeout=config.llm.timeout
+            )
+        elif self.provider == LLMProvider.LMSTUDIO:
+            # LMStudio使用OpenAI兼容API
+            self.client = OpenAIAPITool(
+                api_key=config.llm.api_key,
+                base_url=config.llm.lmstudio_base_url,
+                default_model=config.llm.model_name,
+                timeout=config.llm.timeout
             )
         else:
             raise NotImplementedError(f"LLM provider {self.provider} not implemented yet")
@@ -169,18 +195,8 @@ class LLMService:
         
         def _sync_generate():
             try:
-                # 处理内容清理（如果启用）
+                # 使用原始提示词
                 processed_prompt = prompt
-                try:
-                    from content_sanitizer import content_sanitizer
-                    if content_sanitizer.enabled:
-                        processed_prompt = content_sanitizer.sanitize_text(prompt)
-                        if len(processed_prompt) != len(prompt):
-                            logger.debug(f"Prompt sanitized: {len(prompt)} -> {len(processed_prompt)} chars")
-                except ImportError:
-                    pass
-                except Exception as e:
-                    logger.warning(f"Content sanitization failed: {e}")
 
                 generation_config = {}
 
@@ -232,9 +248,20 @@ class LLMService:
                     # OpenRouter API使用 `max_tokens` 而不是 `max_output_tokens`
                     if "max_output_tokens" in generation_config:
                         generation_config["max_tokens"] = generation_config.pop("max_output_tokens")
-                    
+
                     return self.client.chat_once(
                         prompt=prompt,
+                        model=config.llm.model_name,
+                        **generation_config
+                    )
+
+                elif self.provider == LLMProvider.OPENAI or self.provider == LLMProvider.LMSTUDIO:
+                    # OpenAI API使用 `max_tokens` 而不是 `max_output_tokens`
+                    if "max_output_tokens" in generation_config:
+                        generation_config["max_tokens"] = generation_config.pop("max_output_tokens")
+
+                    return self.client.single_chat(
+                        message=prompt,
                         model=config.llm.model_name,
                         **generation_config
                     )
@@ -254,18 +281,8 @@ class LLMService:
         
         def _sync_generate_json():
             try:
-                # 处理内容清理（如果启用）
+                # 使用原始提示词
                 processed_prompt = prompt
-                try:
-                    from content_sanitizer import content_sanitizer
-                    if content_sanitizer.enabled:
-                        processed_prompt = content_sanitizer.sanitize_text(prompt)
-                        if len(processed_prompt) != len(prompt):
-                            logger.debug(f"JSON prompt sanitized: {len(prompt)} -> {len(processed_prompt)} chars")
-                except ImportError:
-                    pass
-                except Exception as e:
-                    logger.warning(f"Content sanitization failed: {e}")
 
                 generation_config = {}
 
@@ -315,7 +332,30 @@ class LLMService:
                         schema=schema,
                         **generation_config
                     )
-                    
+
+                elif self.provider == LLMProvider.OPENAI or self.provider == LLMProvider.LMSTUDIO:
+                    # OpenAI API使用 `max_tokens` 而不是 `max_output_tokens`
+                    if "max_output_tokens" in generation_config:
+                        generation_config["max_tokens"] = generation_config.pop("max_output_tokens")
+
+                    # 设置response_format为json_object
+                    response_format = {"type": "json_object"}
+                    if schema:
+                        response_format["schema"] = schema
+
+                    # 在提示词中明确要求JSON格式
+                    json_prompt = f"{prompt}\n\n请以JSON格式返回结果。"
+
+                    response_text = self.client.single_chat(
+                        message=json_prompt,
+                        model=config.llm.model_name,
+                        response_format=response_format,
+                        **generation_config
+                    )
+
+                    # 解析JSON响应
+                    return self._parse_json_response(response_text)
+
             except ChatError as e:
                 logger.error(f"LLM JSON generation error (OpenRouter): {e}")
                 return {}
@@ -555,7 +595,6 @@ class LLMService:
                                      schema: Optional[Dict] = None, **kwargs) -> Union[str, Dict[str, Any]]:
         """
         生成复杂内容，专门处理包含大量上下文信息的请求
-        使用内容清理器确保在Ubuntu服务器上的兼容性
 
         Args:
             prompt: 基础提示词
@@ -567,18 +606,13 @@ class LLMService:
             生成的内容（文本或JSON）
         """
         try:
-            # 使用内容清理器创建安全的提示词
-            from content_sanitizer import content_sanitizer
-            if content_sanitizer.enabled:
-                safe_prompt = content_sanitizer.create_safe_prompt(prompt, context_data)
-                logger.debug(f"Complex content prompt sanitized: {len(prompt)} -> {len(safe_prompt)} chars")
-            else:
-                safe_prompt = prompt
-                # 如果有上下文数据，简单地添加到提示词中
-                if context_data:
-                    import json
-                    context_json = json.dumps(context_data, ensure_ascii=False, indent=2)
-                    safe_prompt += f"\n\n上下文信息：\n{context_json}"
+            # 构建完整的提示词
+            safe_prompt = prompt
+            # 如果有上下文数据，添加到提示词中
+            if context_data:
+                import json
+                context_json = json.dumps(context_data, ensure_ascii=False, indent=2)
+                safe_prompt += f"\n\n上下文信息：\n{context_json}"
 
             # 根据是否需要JSON输出选择方法
             if schema:
@@ -733,10 +767,14 @@ class LLMService:
         因为它只保留了最后一次完成的请求的报文。
         在串行调用的场景下（例如测试脚本），这是可靠的。
         """
+        import copy
+
+        # OpenRouter客户端有last_request_payload属性
         if hasattr(self.client, 'last_request_payload'):
-            # 返回一个深拷贝以防止外部修改
-            import copy
             return copy.deepcopy(self.client.last_request_payload)
+
+        # OpenAI API工具类没有内置的请求跟踪，返回None
+        # 如果需要，可以在OpenAIAPITool中添加类似的功能
         return None
 
     def get_last_response_payload(self) -> Optional[Dict[str, Any]]:
@@ -746,10 +784,14 @@ class LLMService:
         因为它只保留了最后一次完成的请求的响应。
         在串行调用的场景下（例如测试脚本），这是可靠的。
         """
+        import copy
+
+        # OpenRouter客户端有last_response_payload属性
         if hasattr(self.client, 'last_response_payload'):
-            # 返回一个深拷贝以防止外部修改
-            import copy
             return copy.deepcopy(self.client.last_response_payload)
+
+        # OpenAI API工具类没有内置的响应跟踪，返回None
+        # 如果需要，可以在OpenAIAPITool中添加类似的功能
         return None
     def _get_nearby_terrain(self, game_state: GameState, x: int, y: int, radius: int = 2) -> List[str]:
         """获取周围地形信息"""

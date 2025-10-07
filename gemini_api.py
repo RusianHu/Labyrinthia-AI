@@ -209,31 +209,31 @@ class GeminiAPI:
     ) -> dict:
         """单轮对话"""
         # 记录请求负载（兼容性）
-        self.last_request_payload = {
+        request_payload = {
             "model": model,
             "contents": [{"role": "user", "parts": [{"text": text}]}],
             "generation_config": generation_config
         }
+        self.last_request_payload = request_payload
 
-        # 处理内容清理和编码转换（如果需要）
+        # 处理编码转换（如果需要）
         processed_text = text
-        try:
-            # 导入内容清理器（延迟导入避免循环依赖）
-            from content_sanitizer import content_sanitizer
-            if content_sanitizer.enabled:
-                processed_text = content_sanitizer.sanitize_text(text)
-        except ImportError:
-            # 如果内容清理器不可用，继续使用编码转换器
-            pass
-        except Exception as e:
-            # 如果内容清理失败，记录错误但继续
-            print(f"Content sanitization failed, using original text: {e}")
-
         try:
             # 导入编码转换器（延迟导入避免循环依赖）
             from encoding_utils import encoding_converter
             if encoding_converter.enabled:
+                # 对于Gemini SDK，我们主要处理文本内容
                 processed_text = encoding_converter.process_text(processed_text)
+
+                # 计算大小影响（调试模式）
+                try:
+                    from config import config
+                    if config.debug.enabled:
+                        size_info = encoding_converter.calculate_size_impact(request_payload)
+                        print(f"Gemini request size impact: {size_info}")
+                except:
+                    pass
+
         except ImportError:
             # 如果编码转换器不可用，使用当前文本
             pass
@@ -269,31 +269,31 @@ class GeminiAPI:
         if schema:
             gen_cfg['response_schema'] = schema
 
-        self.last_request_payload = {
+        request_payload = {
             "model": model,
             "contents": [{"role": "user", "parts": [{"text": text}]}],
             "generation_config": gen_cfg
         }
+        self.last_request_payload = request_payload
 
-        # 处理内容清理和编码转换（如果需要）
+        # 处理编码转换（如果需要）
         processed_text = text
-        try:
-            # 导入内容清理器（延迟导入避免循环依赖）
-            from content_sanitizer import content_sanitizer
-            if content_sanitizer.enabled:
-                processed_text = content_sanitizer.sanitize_text(text)
-        except ImportError:
-            # 如果内容清理器不可用，继续使用编码转换器
-            pass
-        except Exception as e:
-            # 如果内容清理失败，记录错误但继续
-            print(f"Content sanitization failed, using original text: {e}")
-
         try:
             # 导入编码转换器（延迟导入避免循环依赖）
             from encoding_utils import encoding_converter
             if encoding_converter.enabled:
+                # 对于Gemini SDK，我们主要处理文本内容
                 processed_text = encoding_converter.process_text(processed_text)
+
+                # 计算大小影响（调试模式）
+                try:
+                    from config import config
+                    if config.debug.enabled:
+                        size_info = encoding_converter.calculate_size_impact(request_payload)
+                        print(f"Gemini JSON request size impact: {size_info}")
+                except:
+                    pass
+
         except ImportError:
             # 如果编码转换器不可用，使用当前文本
             pass
