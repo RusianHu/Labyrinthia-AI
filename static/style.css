@@ -152,10 +152,76 @@ body {
 .terrain-door { background: #8b4513; }
 .terrain-trap { background: #e74c3c; }
 .terrain-treasure { background: #f1c40f; }
-.terrain-stairs-up { background: #3498db; }
-.terrain-stairs-down { background: #9b59b6; }
+.terrain-stairs_up {
+    background: linear-gradient(135deg, #3498db 0%, #2980b9 100%);
+    position: relative;
+}
+.terrain-stairs_down {
+    background: linear-gradient(135deg, #9b59b6 0%, #8e44ad 100%);
+    position: relative;
+}
 .terrain-water { background: #3498db; }
 .terrain-lava { background: #e67e22; }
+
+/* 楼梯符号显示 */
+.terrain-stairs_up::before {
+    content: '▲';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    font-size: 16px;
+    font-weight: bold;
+    color: #ffffff;
+    text-shadow:
+        0 0 3px rgba(0, 0, 0, 0.9),
+        0 0 6px rgba(52, 152, 219, 0.9),
+        0 0 9px rgba(52, 152, 219, 0.7);
+    animation: stairs-pulse-up 2s ease-in-out infinite;
+    z-index: 15;
+    pointer-events: none;
+}
+
+.terrain-stairs_down::before {
+    content: '▼';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    font-size: 16px;
+    font-weight: bold;
+    color: #ffffff;
+    text-shadow:
+        0 0 3px rgba(0, 0, 0, 0.9),
+        0 0 6px rgba(155, 89, 182, 0.9),
+        0 0 9px rgba(155, 89, 182, 0.7);
+    animation: stairs-pulse-down 2s ease-in-out infinite;
+    z-index: 15;
+    pointer-events: none;
+}
+
+/* 楼梯脉冲动画 */
+@keyframes stairs-pulse-up {
+    0%, 100% {
+        transform: translate(-50%, -50%) scale(1);
+        opacity: 1;
+    }
+    50% {
+        transform: translate(-50%, -50%) scale(1.2);
+        opacity: 0.8;
+    }
+}
+
+@keyframes stairs-pulse-down {
+    0%, 100% {
+        transform: translate(-50%, -50%) scale(1);
+        opacity: 1;
+    }
+    50% {
+        transform: translate(-50%, -50%) scale(1.2);
+        opacity: 0.8;
+    }
+}
 
 /* 房间类型特殊效果 */
 .room-entrance {
