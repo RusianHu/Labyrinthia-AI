@@ -44,7 +44,7 @@ Object.assign(LabyrinthiaGame.prototype, {
             progressBar.style.width = '0%';
             overlay.classList.add('show');
 
-            // 启动动态提示系统
+            // 启动 动态提示系统
             this.startDynamicTips();
         }
     },
@@ -58,7 +58,8 @@ Object.assign(LabyrinthiaGame.prototype, {
             '📜 提示：任务系统会根据您的选择动态调整',
             '🏰 提示：每个楼层都有独特的挑战和奖励',
             '🎯 提示：合理使用物品可以在关键时刻救您一命',
-            '🌟 提示：与AI的互动越多，故事就越精彩'
+            '🌟 提示：与AI的互动越多，故事就越精彩',
+            '🗝️ 提示：长时间的存档注意及时导出存档'
         ];
 
         const tipElement = document.getElementById('overlay-tip');

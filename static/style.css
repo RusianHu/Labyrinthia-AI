@@ -447,16 +447,30 @@ body {
 
 /* 按钮样式 */
 .btn {
-    padding: 10px 20px;
+    padding: 12px 24px;
     border: none;
-    border-radius: 6px;
-    font-size: 0.9rem;
+    border-radius: 8px;
+    font-size: 0.95rem;
     font-weight: 500;
     cursor: pointer;
-    transition: all 0.2s ease;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
     text-decoration: none;
-    display: inline-block;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
     text-align: center;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+}
+
+.btn:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+}
+
+.btn:active {
+    transform: translateY(0);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
 }
 
 .btn-primary {
@@ -465,13 +479,25 @@ body {
 }
 
 .btn-primary:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+    background: linear-gradient(135deg, #7c8ef5, #8a5bb8);
 }
 
 .btn-secondary {
     background: linear-gradient(135deg, #f093fb, #f5576c);
     color: white;
+}
+
+.btn-secondary:hover {
+    background: linear-gradient(135deg, #f5a4ff, #ff6b7f);
+}
+
+.btn-accent {
+    background: linear-gradient(135deg, #4facfe, #00f2fe);
+    color: white;
+}
+
+.btn-accent:hover {
+    background: linear-gradient(135deg, #6bbdff, #1ffbff);
 }
 
 .btn-warning {
@@ -480,8 +506,7 @@ body {
 }
 
 .btn-warning:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 4px 12px rgba(255, 154, 86, 0.4);
+    background: linear-gradient(135deg, #ffaa6b, #ffbd6b);
 }
 
 .btn-success {
@@ -498,6 +523,227 @@ body {
     opacity: 0.6;
     cursor: not-allowed;
     transform: none !important;
+    box-shadow: none !important;
+}
+
+/* 主菜单样式 */
+.main-menu {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: calc(100vh - 200px);
+    padding: 20px;
+}
+
+.menu-panel {
+    background: rgba(255, 255, 255, 0.95);
+    backdrop-filter: blur(20px);
+    border-radius: 16px;
+    padding: 40px;
+    max-width: 500px;
+    width: 100%;
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.3);
+    border: 1px solid rgba(255, 255, 255, 0.5);
+}
+
+.menu-panel h2 {
+    color: #5e35b1;
+    font-size: 1.8rem;
+    font-weight: 600;
+    margin-bottom: 8px;
+    text-align: center;
+    text-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.menu-panel > p {
+    color: #7e57c2;
+    font-size: 1rem;
+    text-align: center;
+    margin-bottom: 32px;
+    font-weight: 400;
+}
+
+/* 主菜单按钮组 */
+.menu-buttons {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    margin-bottom: 24px;
+}
+
+.menu-buttons .btn {
+    width: 100%;
+    padding: 16px 24px;
+    font-size: 1rem;
+}
+
+/* 存档管理按钮 */
+.save-management-buttons {
+    display: flex;
+    justify-content: center;
+    margin-bottom: 20px;
+}
+
+.save-management-buttons .btn {
+    width: 100%;
+}
+
+/* GitHub链接容器 */
+.github-link-container {
+    display: flex;
+    justify-content: center;
+    margin-top: 24px;
+    padding-top: 24px;
+    border-top: 1px solid rgba(94, 53, 177, 0.2);
+}
+
+.github-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 20px;
+    background: rgba(36, 41, 46, 0.95);
+    color: white;
+    text-decoration: none;
+    border-radius: 8px;
+    font-size: 0.9rem;
+    font-weight: 500;
+    transition: all 0.3s ease;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+}
+
+.github-link:hover {
+    background: rgba(36, 41, 46, 1);
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+.github-icon {
+    flex-shrink: 0;
+}
+
+/* 存档列表 */
+.saves-list {
+    margin-top: 24px;
+    max-height: 400px;
+    overflow-y: auto;
+    padding-right: 8px;
+}
+
+.saves-list::-webkit-scrollbar {
+    width: 8px;
+}
+
+.saves-list::-webkit-scrollbar-track {
+    background: rgba(94, 53, 177, 0.1);
+    border-radius: 4px;
+}
+
+.saves-list::-webkit-scrollbar-thumb {
+    background: rgba(94, 53, 177, 0.3);
+    border-radius: 4px;
+}
+
+.saves-list::-webkit-scrollbar-thumb:hover {
+    background: rgba(94, 53, 177, 0.5);
+}
+
+/* 存档项 */
+.save-item {
+    background: linear-gradient(135deg, rgba(94, 53, 177, 0.08), rgba(126, 87, 194, 0.05));
+    border: 1px solid rgba(94, 53, 177, 0.2);
+    border-radius: 12px;
+    padding: 16px;
+    margin-bottom: 12px;
+    transition: all 0.3s ease;
+}
+
+.save-item:hover {
+    background: linear-gradient(135deg, rgba(94, 53, 177, 0.12), rgba(126, 87, 194, 0.08));
+    border-color: rgba(94, 53, 177, 0.4);
+    transform: translateX(4px);
+    box-shadow: 0 4px 12px rgba(94, 53, 177, 0.15);
+}
+
+.save-item h4 {
+    color: #5e35b1;
+    font-size: 1.1rem;
+    font-weight: 600;
+    margin-bottom: 8px;
+}
+
+.save-item p {
+    color: #666;
+    font-size: 0.85rem;
+    margin: 4px 0;
+    line-height: 1.4;
+}
+
+/* 存档项按钮容器 */
+.save-item-buttons {
+    display: flex;
+    gap: 8px;
+    margin-top: 12px;
+}
+
+.save-item-buttons button {
+    flex: 1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    padding: 10px 12px;
+    font-size: 0.85rem;
+    border-radius: 6px;
+    border: none;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    font-weight: 500;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.save-item-buttons button .material-icons {
+    font-size: 18px;
+}
+
+.save-item-buttons button:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+}
+
+.save-item-buttons button:active {
+    transform: translateY(0);
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+/* 加载按钮 */
+.save-item-buttons button:nth-child(1) {
+    background: linear-gradient(135deg, #667eea, #764ba2);
+    color: white;
+}
+
+.save-item-buttons button:nth-child(1):hover {
+    background: linear-gradient(135deg, #7c8ef5, #8a5bb8);
+}
+
+/* 导出按钮 */
+.save-item-buttons button:nth-child(2) {
+    background: linear-gradient(135deg, #4facfe, #00f2fe);
+    color: white;
+}
+
+.save-item-buttons button:nth-child(2):hover {
+    background: linear-gradient(135deg, #6bbdff, #1ffbff);
+}
+
+/* 删除按钮 */
+.save-item-buttons button:nth-child(3) {
+    background: linear-gradient(135deg, #fa709a, #fee140);
+    color: white;
+}
+
+.save-item-buttons button:nth-child(3):hover {
+    background: linear-gradient(135deg, #ff85ab, #ffed5a);
 }
 
 /* 控制面板 */

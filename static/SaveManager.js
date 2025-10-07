@@ -33,11 +33,11 @@ Object.assign(LabyrinthiaGame.prototype, {
         try {
             const response = await fetch('/api/saves');
             const saves = await response.json();
-            
+
             const savesList = document.getElementById('saves-list');
             if (savesList) {
                 savesList.innerHTML = '';
-                
+
                 saves.forEach(save => {
                     const saveElement = document.createElement('div');
                     saveElement.className = 'save-item';
@@ -45,8 +45,20 @@ Object.assign(LabyrinthiaGame.prototype, {
                         <h4>${save.player_name} (等级 ${save.player_level})</h4>
                         <p>${save.map_name} - 回合 ${save.turn_count}</p>
                         <p>最后保存: ${new Date(save.last_saved).toLocaleString()}</p>
-                        <button onclick="game.loadGame('${save.id}')">加载</button>
-                        <button onclick="game.deleteGame('${save.id}')">删除</button>
+                        <div class="save-item-buttons">
+                            <button onclick="game.loadGame('${save.id}')">
+                                <i class="material-icons">play_arrow</i>
+                                加载
+                            </button>
+                            <button onclick="game.exportSave('${save.id}')">
+                                <i class="material-icons">file_download</i>
+                                导出
+                            </button>
+                            <button onclick="game.deleteGame('${save.id}')">
+                                <i class="material-icons">delete</i>
+                                删除
+                            </button>
+                        </div>
                     `;
                     savesList.appendChild(saveElement);
                 });

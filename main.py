@@ -7,13 +7,16 @@ import asyncio
 import logging
 import random
 import time
+import json
+import tempfile
+from datetime import datetime
 from typing import Dict, List, Optional, Any
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Response, UploadFile, File
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -24,6 +27,7 @@ from llm_service import llm_service
 from progress_manager import progress_manager
 from event_choice_system import event_choice_system
 from data_models import GameState
+from user_session_manager import user_session_manager
 
 
 # 配置日志
@@ -162,23 +166,42 @@ async def create_new_game(request: NewGameRequest):
 
 
 @app.post("/api/load/{save_id}")
-async def load_game(save_id: str):
+async def load_game(save_id: str, request: Request, response: Response):
     """加载游戏"""
     try:
         logger.info(f"Loading game: {save_id}")
-        
-        game_state = await game_engine.load_game(save_id)
-        
-        if not game_state:
+
+        # 获取用户ID
+        user_id = user_session_manager.get_or_create_user_id(request, response)
+
+        # 从用户会话管理器加载存档数据
+        save_data = user_session_manager.load_game_for_user(user_id, save_id)
+
+        if not save_data:
             raise HTTPException(status_code=404, detail="存档未找到")
-        
+
+        # 使用data_manager重建GameState对象
+        game_state = data_manager._dict_to_game_state(save_data)
+
+        # 添加到活跃游戏列表
+        game_engine.active_games[game_state.id] = game_state
+        game_engine._start_auto_save(game_state.id)
+
+        # 生成重新进入游戏的叙述
+        try:
+            return_narrative = await llm_service.generate_return_narrative(game_state)
+            game_state.last_narrative = return_narrative
+        except Exception as e:
+            logger.error(f"Failed to generate return narrative: {e}")
+            game_state.last_narrative = f"你重新回到了 {game_state.current_map.name}，继续你的冒险..."
+
         return {
             "success": True,
             "game_id": game_state.id,
             "message": f"游戏已加载：{game_state.player.name}",
             "narrative": game_state.last_narrative
         }
-        
+
     except HTTPException:
         raise
     except Exception as e:
@@ -359,21 +382,62 @@ async def get_pending_choice(game_id: str):
         raise HTTPException(status_code=500, detail=f"获取待处理选择失败: {str(e)}")
 
 
+@app.post("/api/save/import")
+async def import_save(request: Request, response: Response, file: UploadFile = File(...)):
+    """导入存档JSON文件"""
+    try:
+        # 获取用户ID
+        user_id = user_session_manager.get_or_create_user_id(request, response)
+
+        # 读取上传的文件
+        content = await file.read()
+
+        # 解析JSON数据
+        try:
+            save_data = json.loads(content.decode('utf-8'))
+        except json.JSONDecodeError as e:
+            raise HTTPException(status_code=400, detail=f"无效的JSON格式: {str(e)}")
+
+        # 导入存档
+        success = user_session_manager.import_save(user_id, save_data)
+
+        if success:
+            return {
+                "success": True,
+                "message": "存档导入成功",
+                "save_id": save_data.get("id")
+            }
+        else:
+            raise HTTPException(status_code=400, detail="存档数据无效或导入失败")
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to import save: {e}")
+        raise HTTPException(status_code=500, detail=f"导入存档失败: {str(e)}")
+
+
 @app.post("/api/save/{game_id}")
-async def save_game(game_id: str):
+async def save_game(game_id: str, request: Request, response: Response):
     """保存游戏"""
     try:
+        # 获取用户ID
+        user_id = user_session_manager.get_or_create_user_id(request, response)
+
         if game_id not in game_engine.active_games:
             raise HTTPException(status_code=404, detail="游戏未找到")
-        
+
         game_state = game_engine.active_games[game_id]
-        success = data_manager.save_game_state(game_state)
-        
+
+        # 使用用户会话管理器保存游戏
+        game_data = game_state.to_dict()
+        success = user_session_manager.save_game_for_user(user_id, game_data)
+
         if success:
             return {"success": True, "message": "游戏已保存"}
         else:
             raise HTTPException(status_code=500, detail="保存失败")
-            
+
     except HTTPException:
         raise
     except Exception as e:
@@ -382,10 +446,14 @@ async def save_game(game_id: str):
 
 
 @app.get("/api/saves")
-async def list_saves():
-    """获取存档列表"""
+async def list_saves(request: Request, response: Response):
+    """获取当前用户的存档列表"""
     try:
-        saves = data_manager.list_saves()
+        # 获取或创建用户ID
+        user_id = user_session_manager.get_or_create_user_id(request, response)
+
+        # 获取用户的存档列表
+        saves = user_session_manager.list_user_saves(user_id)
         return saves
     except Exception as e:
         logger.error(f"Failed to list saves: {e}")
@@ -396,10 +464,14 @@ async def list_saves():
 
 
 @app.delete("/api/save/{save_id}")
-async def delete_save(save_id: str):
-    """删除存档"""
+async def delete_save(save_id: str, request: Request, response: Response):
+    """删除当前用户的存档"""
     try:
-        success = data_manager.delete_save(save_id)
+        # 获取用户ID
+        user_id = user_session_manager.get_or_create_user_id(request, response)
+
+        # 删除用户的存档
+        success = user_session_manager.delete_save_for_user(user_id, save_id)
 
         if success:
             return {"success": True, "message": "存档已删除"}
@@ -411,6 +483,70 @@ async def delete_save(save_id: str):
     except Exception as e:
         logger.error(f"Failed to delete save: {e}")
         raise HTTPException(status_code=500, detail=f"删除存档失败: {str(e)}")
+
+
+@app.get("/api/save/export/{save_id}")
+async def export_save(save_id: str, request: Request, response: Response):
+    """导出存档为JSON文件"""
+    try:
+        # 获取用户ID
+        user_id = user_session_manager.get_or_create_user_id(request, response)
+
+        # 导出存档数据
+        save_data = user_session_manager.export_save(user_id, save_id)
+
+        if not save_data:
+            raise HTTPException(status_code=404, detail="存档未找到")
+
+        # 生成文件名（包含角色名和时间戳）
+        player_name = save_data.get("player", {}).get("name", "Unknown")
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"Labyrinthia_{player_name}_{timestamp}.json"
+
+        # 返回JSON文件
+        import tempfile
+        import json
+
+        # 创建临时文件
+        temp_file = tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.json', encoding='utf-8')
+        json.dump(save_data, temp_file, ensure_ascii=False, indent=2)
+        temp_file.close()
+
+        # URL编码文件名以支持中文
+        from urllib.parse import quote
+        encoded_filename = quote(filename)
+
+        return FileResponse(
+            path=temp_file.name,
+            filename=filename,
+            media_type='application/json',
+            headers={
+                "Content-Disposition": f'attachment; filename*=UTF-8\'\'{encoded_filename}'
+            }
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to export save: {e}")
+        raise HTTPException(status_code=500, detail=f"导出存档失败: {str(e)}")
+
+
+@app.get("/api/user/stats")
+async def get_user_stats(request: Request, response: Response):
+    """获取当前用户的统计信息"""
+    try:
+        # 获取用户ID
+        user_id = user_session_manager.get_or_create_user_id(request, response)
+
+        # 获取用户统计信息
+        stats = user_session_manager.get_user_stats(user_id)
+
+        return stats
+
+    except Exception as e:
+        logger.error(f"Failed to get user stats: {e}")
+        raise HTTPException(status_code=500, detail=f"获取用户统计失败: {str(e)}")
 
 
 @app.get("/api/config")

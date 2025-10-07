@@ -10,7 +10,7 @@
     <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
     
     <!-- 样式表 -->
-    <link rel="stylesheet" href="/static/style.css">
+    <link rel="stylesheet" href="/static/style.css?v=2">
 </head>
 <body>
     <!-- 头部 -->
@@ -47,6 +47,7 @@
                 <h2>欢迎来到 Labyrinthia AI 老司机地牢</h2>
                 <p>让LLM驱动世界！</p>
 
+                <!-- 主要操作按钮 -->
                 <div class="menu-buttons">
                     <button id="btn-new-game" class="btn btn-primary">
                         <i class="material-icons">add</i>
@@ -56,6 +57,10 @@
                         <i class="material-icons">folder_open</i>
                         加载游戏
                     </button>
+                    <button class="btn btn-accent" onclick="game.showImportDialog()">
+                        <i class="material-icons">file_upload</i>
+                        导入存档
+                    </button>
                     <!-- 调试模式快捷按钮 - 仅在调试模式启用时显示 -->
                     <button id="btn-quick-test" class="btn btn-warning debug-only" style="display: none;" onclick="window.open('/static/quick_test.html', '_blank')">
                         <i class="material-icons">bug_report</i>
@@ -63,7 +68,10 @@
                     </button>
                 </div>
 
-                <!-- GitHub 按钮 -->
+                <!-- 存档列表 -->
+                <div id="saves-list" class="saves-list"></div>
+
+                <!-- GitHub 链接 -->
                 <div class="github-link-container">
                     <a href="https://github.com/RusianHu/Labyrinthia-AI" target="_blank" rel="noopener noreferrer" class="github-link">
                         <svg class="github-icon" viewBox="0 0 16 16" width="20" height="20" fill="currentColor">
@@ -72,9 +80,6 @@
                         <span>在 GitHub 上查看</span>
                     </a>
                 </div>
-
-                <!-- 存档列表 -->
-                <div id="saves-list" class="saves-list"></div>
             </div>
         </div>
 
@@ -387,14 +392,15 @@
 
     <!-- 3. 功能扩展模块 - 按依赖关系顺序加载 -->
     <script src="/static/DebugManager.js"></script>
-    <script src="/static/OverlayManager.js"></script>
-    <script src="/static/EffectsManager.js"></script>
-    <script src="/static/UIManager.js"></script>
-    <script src="/static/MapInteraction.js"></script>
-    <script src="/static/GameActions.js"></script>
-    <script src="/static/SaveManager.js"></script>
-    <script src="/static/EventHandler.js"></script>
-    <script src="/static/EventChoiceManager.js"></script>
+    <script src="/static/OverlayManager.js?v=3"></script>
+    <script src="/static/EffectsManager.js?v=3"></script>
+    <script src="/static/UIManager.js?v=3"></script>
+    <script src="/static/MapInteraction.js?v=3"></script>
+    <script src="/static/GameActions.js?v=3"></script>
+    <script src="/static/SaveManager.js?v=3"></script>
+    <script src="/static/SaveImportExport.js?v=3"></script>
+    <script src="/static/EventHandler.js?v=3"></script>
+    <script src="/static/EventChoiceManager.js?v=3"></script>
 
     <!-- 3. 游戏初始化 - 最后加载 -->
     <script>
@@ -522,7 +528,35 @@
             justify-content: center;
             gap: 8px;
         }
-        
+
+        /* 存档管理按钮样式 */
+        .save-management-buttons {
+            display: flex;
+            gap: 10px;
+            justify-content: center;
+            margin: 20px 0;
+        }
+
+        .save-management-buttons .btn {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            padding: 10px 20px;
+        }
+
+        .btn-accent {
+            background: linear-gradient(135deg, #00bcd4, #0097a7);
+            color: white;
+            border: none;
+        }
+
+        .btn-accent:hover {
+            background: linear-gradient(135deg, #00acc1, #00838f);
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0, 188, 212, 0.4);
+        }
+
         .saves-list {
             max-height: 300px;
             overflow-y: auto;
@@ -651,6 +685,31 @@
         .save-item button {
             margin-right: 10px;
             margin-top: 10px;
+        }
+
+        /* 导出按钮样式 */
+        .export-save-btn {
+            background: linear-gradient(135deg, #00bcd4, #0097a7);
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.9rem;
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            transition: all 0.3s ease;
+        }
+
+        .export-save-btn:hover {
+            background: linear-gradient(135deg, #00acc1, #00838f);
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0, 188, 212, 0.4);
+        }
+
+        .export-save-btn .material-icons {
+            font-size: 18px;
         }
         
         .form-group {
