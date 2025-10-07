@@ -6,29 +6,29 @@
 [![Status](https://img.shields.io/badge/Status-Active-success.svg)](https://github.com/RusianHu/Labyrinthia-AI)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 
-> 一个基于 DND 背景的 AI 驱动 Roguelike 地牢探险游戏，由大语言模型实时生成游戏内容和叙事。
+> 一个基于 DND 背景的 Roguelike 地牢探险游戏，由大语言模型实时生成游戏内容和叙事。
 
 <img width="811" height="1254" alt="image" src="https://github.com/user-attachments/assets/2b5612ce-b522-40e7-b23e-ae1f15b8f4f4" />
 
 ## ✨ 基础功能
 
-### 🤖 AI 驱动的动态内容生成
+### 无限的内容生成
 - **实时叙事生成**：每一次行动都由 LLM 生成独特的故事叙述
 - **动态地图创建**：基于任务上下文智能生成地下城地图
 - **智能怪物生成**：根据玩家等级和任务需求动态创建敌人
 - **任务系统**：LLM 控制的任务进度和剧情发展
 
-### 🎮 Galgame 风格选择系统
+### 事件与风格选择
 - **事件选择框**：类似 Galgame 的选项系统，让玩家做出关键决策
 - **LLM 完全控制**：AI 可以直接修改地图、创建事件、调整角色属性
 - **动态剧情分支**：每个选择都会影响游戏世界和任务进展
 
-### 🗺️ 智能地图系统
+### 完全随机地图系统
 - **任务驱动生成**：地图布局基于当前任务需求动态调整
 - **多样化地形**：房间、走廊、宝藏室、BOSS房等多种地形类型
 - **交互式探索**：点击移动、悬停显示详情、路径高亮
 
-### 🎯 进度管理系统
+### 进度管理与控制
 - **智能进度追踪**：自动记录玩家行为并推进任务进度
 - **事件权重系统**：不同行为对任务进度的贡献度不同
 - **动态难度调整**：根据进度自动调整挑战难度
@@ -91,7 +91,7 @@ python main.py
 http://127.0.0.1:8001/direct-start
 ```
 
-## 🎮 游戏玩法
+## 🎮 基础游戏玩法
 
 ### 基础操作
 - **移动**：点击相邻的瓦片移动角色
@@ -126,24 +126,6 @@ http://127.0.0.1:8001/direct-start
 - **原生 JavaScript**：模块化的游戏逻辑
 - **Material Icons**：丰富的图标库
 - **CSS3 动画**：流畅的视觉效果
-
-### 核心模块
-
-```
-├── main.py                    # FastAPI 主应用
-├── game_engine.py             # 游戏引擎核心
-├── llm_service.py             # LLM 服务封装
-├── event_choice_system.py     # 事件选择系统
-├── content_generator.py       # 内容生成器
-├── progress_manager.py        # 进度管理器
-├── data_models.py             # 数据模型定义
-├── config.py                  # 配置管理
-└── static/
-    ├── GameCore.js            # 游戏核心类
-    ├── EventChoiceManager.js  # 事件选择管理
-    ├── MapInteraction.js      # 地图交互
-    └── UIManager.js           # UI 管理
-```
 
 ## 📝 配置说明
 
