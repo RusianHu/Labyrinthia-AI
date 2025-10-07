@@ -127,12 +127,21 @@
     </script>
     
     <style>
+        body {
+            /* 使用可无限拼接的背景瓦片 */
+            background-color: #4a3a6b;
+            background-image: url('/static/assets/bg-tile-dungeon.png');
+            background-repeat: repeat;
+            background-size: 256px 256px;
+            background-attachment: fixed;
+        }
+
         .container {
             max-width: 800px;
             margin: 0 auto;
             padding: 20px;
         }
-        
+
         .btn {
             margin: 5px;
             padding: 12px 24px;

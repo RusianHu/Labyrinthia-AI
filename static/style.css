@@ -9,7 +9,12 @@
 
 body {
     font-family: 'Roboto', 'Noto Sans CJK SC', sans-serif;
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    /* 使用可无限拼接的背景瓦片 */
+    background-color: #4a3a6b;
+    background-image: url('/static/assets/bg-tile-dungeon.png');
+    background-repeat: repeat;
+    background-size: 256px 256px; /* 调整瓦片大小以获得最佳视觉效果 */
+    background-attachment: fixed; /* 固定背景，滚动时不移动 */
     color: #333;
     min-height: 100vh;
     overflow-x: hidden;
@@ -30,26 +35,73 @@ body {
 
 /* 头部 */
 .header {
-    background: rgba(255, 255, 255, 0.95);
-    backdrop-filter: blur(10px);
-    padding: 15px 0;
+    /* 使用带怪物剪影的黑暗地牢背景 */
+    background-color: rgba(20, 15, 35, 0.95);
+    background-image: url('/static/assets/bg-header-monsters.png');
+    background-repeat: repeat-x;
+    background-size: auto 100%;
+    background-position: center;
+    backdrop-filter: blur(15px);
+    padding: 20px 0;
     margin-bottom: 20px;
     border-radius: 12px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6),
+                inset 0 1px 0 rgba(255, 255, 255, 0.1);
+    border: 2px solid rgba(138, 43, 226, 0.4);
+    position: relative;
+}
+
+/* 标题栏发光效果 */
+.header::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: linear-gradient(180deg,
+        rgba(138, 43, 226, 0.2) 0%,
+        transparent 50%,
+        rgba(0, 0, 0, 0.3) 100%);
+    border-radius: 12px;
+    pointer-events: none;
 }
 
 .header h1 {
     text-align: center;
-    color: #5e35b1;
-    font-size: 2.5rem;
-    font-weight: 300;
-    text-shadow: 2px 2px 4px rgba(0,0,0,0.1);
+    color: #ffffff;
+    font-size: 2.8rem;
+    font-weight: 700;
+    /* 多层文字阴影增强可读性 */
+    text-shadow:
+        0 0 10px rgba(138, 43, 226, 0.8),
+        0 0 20px rgba(138, 43, 226, 0.6),
+        0 0 30px rgba(138, 43, 226, 0.4),
+        2px 2px 4px rgba(0, 0, 0, 0.9),
+        4px 4px 8px rgba(0, 0, 0, 0.7),
+        -1px -1px 2px rgba(0, 0, 0, 0.8);
+    letter-spacing: 3px;
+    position: relative;
+    z-index: 1;
+    /* 文字描边效果 */
+    -webkit-text-stroke: 1px rgba(138, 43, 226, 0.5);
+    filter: drop-shadow(0 0 15px rgba(138, 43, 226, 0.7));
 }
 
 .header .subtitle {
     text-align: center;
-    color: #666;
-    font-size: 1.1rem;
-    margin-top: 5px;
+    color: #e0d0ff;
+    font-size: 1.2rem;
+    margin-top: 8px;
+    font-weight: 500;
+    /* 增强副标题可读性 */
+    text-shadow:
+        0 0 8px rgba(138, 43, 226, 0.6),
+        2px 2px 4px rgba(0, 0, 0, 0.9),
+        -1px -1px 2px rgba(0, 0, 0, 0.7);
+    position: relative;
+    z-index: 1;
+    letter-spacing: 1px;
 }
 
 /* 游戏界面布局 */
@@ -63,13 +115,20 @@ body {
 
 /* 主游戏区域 */
 .game-main {
-    background: rgba(255, 255, 255, 0.95);
+    /* 半透明背景 + 微妙纹理 */
+    background-color: rgba(255, 255, 255, 0.88);
+    background-image: url('/static/assets/bg-panel-texture.png');
+    background-repeat: repeat;
+    background-size: 128px 128px;
+    backdrop-filter: blur(12px);
     border-radius: 12px;
     padding: 20px;
     display: flex;
     flex-direction: column;
     overflow-y: auto;
     min-height: 0; /* 允许flex子项收缩 */
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+    border: 1px solid rgba(255, 255, 255, 0.3);
 }
 
 /* 任务面板特殊样式 */
@@ -78,6 +137,13 @@ body {
     margin-bottom: 15px;
     padding: 20px;
     max-height: none; /* 移除高度限制 */
+    /* 半透明背景效果 */
+    background-color: rgba(94, 53, 177, 0.08);
+    background-image: url('/static/assets/bg-panel-texture.png');
+    background-repeat: repeat;
+    background-size: 128px 128px;
+    border-radius: 8px;
+    border: 1px solid rgba(94, 53, 177, 0.2);
 }
 
 /* 地图容器 */
@@ -319,10 +385,16 @@ body {
 }
 
 .panel {
-    background: rgba(255, 255, 255, 0.95);
+    /* 半透明背景 + 微妙纹理 */
+    background-color: rgba(255, 255, 255, 0.88);
+    background-image: url('/static/assets/bg-panel-texture.png');
+    background-repeat: repeat;
+    background-size: 128px 128px;
     border-radius: 12px;
     padding: 15px;
-    backdrop-filter: blur(10px);
+    backdrop-filter: blur(12px);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+    border: 1px solid rgba(255, 255, 255, 0.3);
 }
 
 .panel h3 {
@@ -588,14 +660,19 @@ body {
     top: 50%;
     left: 50%;
     transform: translate(-50%, -50%);
-    background: rgba(30, 30, 30, 0.95);
-    border: 2px solid #5e35b1;
+    /* 使用地牢怪物阴影背景 */
+    background-color: rgba(20, 15, 35, 0.96);
+    background-image: url('/static/assets/bg-overlay-dungeon.png');
+    background-repeat: repeat;
+    background-size: 200px 200px;
+    border: 2px solid rgba(138, 43, 226, 0.6);
     border-radius: 12px;
     padding: 30px;
     text-align: center;
     min-width: 300px;
     backdrop-filter: blur(10px);
-    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5),
+                0 0 20px rgba(138, 43, 226, 0.3);
     pointer-events: auto;
 }
 
@@ -786,7 +863,12 @@ body {
     left: 0;
     width: 100%;
     height: 100%;
-    background: linear-gradient(135deg, rgba(94, 53, 177, 0.95), rgba(156, 39, 176, 0.95));
+    /* 使用魔法能量流动背景 */
+    background-color: rgba(20, 15, 35, 0.96);
+    background-image: url('/static/assets/bg-loading-overlay.png');
+    background-repeat: repeat;
+    background-size: 256px 256px;
+    background-position: center;
     backdrop-filter: blur(15px);
     z-index: 9999;
     display: none;

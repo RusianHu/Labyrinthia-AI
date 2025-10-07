@@ -18,7 +18,12 @@
 
         body {
             font-family: 'Roboto', sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            /* 使用可无限拼接的背景瓦片 */
+            background-color: #4a3a6b;
+            background-image: url('/static/assets/bg-tile-dungeon.png');
+            background-repeat: repeat;
+            background-size: 256px 256px;
+            background-attachment: fixed;
             min-height: 100vh;
             padding: 20px;
         }
@@ -26,30 +31,70 @@
         .container {
             max-width: 1200px;
             margin: 0 auto;
-            background: rgba(255, 255, 255, 0.95);
+            /* 半透明背景 + 微妙纹理 */
+            background-color: rgba(255, 255, 255, 0.88);
+            background-image: url('/static/assets/bg-panel-texture.png');
+            background-repeat: repeat;
+            background-size: 128px 128px;
             border-radius: 16px;
-            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
-            backdrop-filter: blur(10px);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.3);
             overflow: hidden;
         }
 
         .header {
-            background: linear-gradient(135deg, #ff6b6b, #ffa726);
+            /* 使用带怪物剪影的黑暗地牢背景 */
+            background-color: rgba(255, 107, 107, 0.9);
+            background-image: url('/static/assets/bg-header-monsters.png');
+            background-repeat: repeat-x;
+            background-size: auto 100%;
+            background-position: center;
+            backdrop-filter: blur(15px);
             color: white;
             padding: 24px;
             text-align: center;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
+            border-bottom: 2px solid rgba(255, 255, 255, 0.2);
+            position: relative;
+        }
+
+        .header::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: linear-gradient(180deg,
+                rgba(255, 107, 107, 0.3) 0%,
+                transparent 50%,
+                rgba(0, 0, 0, 0.3) 100%);
+            pointer-events: none;
         }
 
         .header h1 {
             font-size: 2.5rem;
             font-weight: 700;
             margin-bottom: 8px;
-            text-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+            /* 增强文字可读性 */
+            text-shadow:
+                0 0 10px rgba(255, 107, 107, 0.8),
+                0 0 20px rgba(255, 107, 107, 0.5),
+                2px 2px 4px rgba(0, 0, 0, 0.9),
+                4px 4px 8px rgba(0, 0, 0, 0.6);
+            position: relative;
+            z-index: 1;
         }
 
         .header .subtitle {
             font-size: 1.1rem;
-            opacity: 0.9;
+            opacity: 1;
+            text-shadow:
+                2px 2px 4px rgba(0, 0, 0, 0.9),
+                -1px -1px 2px rgba(0, 0, 0, 0.7);
+            position: relative;
+            z-index: 1;
         }
 
         .content {
