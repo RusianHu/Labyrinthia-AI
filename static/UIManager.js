@@ -11,7 +11,13 @@ Object.assign(LabyrinthiaGame.prototype, {
         // 更新基础信息
         document.getElementById('player-name').textContent = player.name;
         document.getElementById('player-level').textContent = stats.level;
-        document.getElementById('player-class').textContent = player.character_class;
+
+        // 使用精灵图系统更新职业显示
+        if (window.characterSprites) {
+            window.characterSprites.updateCharacterClassDisplay(player.character_class);
+        } else {
+            document.getElementById('player-class').textContent = player.character_class;
+        }
 
         // 更新生命值
         document.getElementById('hp-current').textContent = stats.hp;
@@ -42,7 +48,7 @@ Object.assign(LabyrinthiaGame.prototype, {
         }
     },
     
-    updateMap() {
+    async updateMap() {
         const mapContainer = document.getElementById('map-grid');
         const gameMap = this.gameState.current_map;
         const player = this.gameState.player;
@@ -114,32 +120,47 @@ Object.assign(LabyrinthiaGame.prototype, {
                         tile.classList.add('quest-event');
                     }
                     
-                    // 添加角色
+                    // 添加角色 - 使用精灵图系统
                     if (tileData.character_id === player.id) {
-                        const playerIcon = document.createElement('div');
-                        playerIcon.className = 'character-player';
-                        tile.appendChild(playerIcon);
+                        // 添加玩家图标
+                        if (window.characterSprites) {
+                            await window.characterSprites.addCharacterToTile(tile, player, true);
+                        } else {
+                            // 回退到原始方式
+                            const playerIcon = document.createElement('div');
+                            playerIcon.className = 'character-player';
+                            tile.appendChild(playerIcon);
+                        }
                     } else if (tileData.character_id) {
                         // 查找怪物
                         const monster = this.gameState.monsters.find(m => m.id === tileData.character_id);
                         if (monster) {
-                            const monsterIcon = document.createElement('div');
-                            monsterIcon.className = 'character-monster';
+                            // 添加怪物图标
+                            if (window.characterSprites) {
+                                const monsterIcon = await window.characterSprites.addMonsterToTile(tile, monster);
+                                monsterIcon.addEventListener('click', () => {
+                                    this.attackMonster(monster.id);
+                                });
+                            } else {
+                                // 回退到原始方式
+                                const monsterIcon = document.createElement('div');
+                                monsterIcon.className = 'character-monster';
 
-                            // 检查是否为任务怪物
-                            if (this.isQuestMonster(monster)) {
-                                if (monster.is_boss) {
-                                    monsterIcon.classList.add('quest-boss');
-                                } else {
-                                    monsterIcon.classList.add('quest-monster');
+                                // 检查是否为任务怪物
+                                if (this.isQuestMonster(monster)) {
+                                    if (monster.is_boss) {
+                                        monsterIcon.classList.add('quest-boss');
+                                    } else {
+                                        monsterIcon.classList.add('quest-monster');
+                                    }
                                 }
-                            }
 
-                            monsterIcon.title = monster.name;
-                            monsterIcon.addEventListener('click', () => {
-                                this.attackMonster(monster.id);
-                            });
-                            tile.appendChild(monsterIcon);
+                                monsterIcon.title = monster.name;
+                                monsterIcon.addEventListener('click', () => {
+                                    this.attackMonster(monster.id);
+                                });
+                                tile.appendChild(monsterIcon);
+                            }
                         }
                     }
                 }

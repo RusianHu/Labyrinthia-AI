@@ -1,0 +1,101 @@
+{
+  "spriteSheet": "/static/assets/characters/avatars/CharacterClass.png",
+  "spriteSize": {
+    "width": 102,
+    "height": 136
+  },
+  "classes": {
+    "fighter": {
+      "x": 0,
+      "y": 0,
+      "name": "战士",
+      "color": "#3498db",
+      "description": "战士职业"
+    },
+    "wizard": {
+      "x": 102,
+      "y": 0,
+      "name": "法师",
+      "color": "#3498db",
+      "description": "法师职业"
+    },
+    "rogue": {
+      "x": 204,
+      "y": 0,
+      "name": "盗贼",
+      "color": "#3498db",
+      "description": "盗贼职业"
+    },
+    "cleric": {
+      "x": 306,
+      "y": 0,
+      "name": "牧师",
+      "color": "#3498db",
+      "description": "牧师职业"
+    },
+    "ranger": {
+      "x": 0,
+      "y": 136,
+      "name": "游侠",
+      "color": "#3498db",
+      "description": "游侠职业"
+    },
+    "barbarian": {
+      "x": 102,
+      "y": 136,
+      "name": "野蛮人",
+      "color": "#3498db",
+      "description": "野蛮人职业"
+    },
+    "bard": {
+      "x": 204,
+      "y": 136,
+      "name": "吟游诗人",
+      "color": "#3498db",
+      "description": "吟游诗人职业"
+    },
+    "paladin": {
+      "x": 306,
+      "y": 136,
+      "name": "圣骑士",
+      "color": "#3498db",
+      "description": "圣骑士职业"
+    },
+    "sorcerer": {
+      "x": 0,
+      "y": 272,
+      "name": "术士",
+      "color": "#3498db",
+      "description": "术士职业"
+    },
+    "warlock": {
+      "x": 102,
+      "y": 272,
+      "name": "邪术师",
+      "color": "#3498db",
+      "description": "邪术师职业"
+    }
+  },
+  "monsters": {
+    "default": {
+      "image": "/static/assets/characters/monster_default.png",
+      "color": "#e74c3c"
+    },
+    "boss": {
+      "image": "/static/assets/characters/monster_default.png",
+      "color": "#c0392b"
+    },
+    "undead": {
+      "image": "/static/assets/characters/monster_default.png",
+      "color": "#34495e"
+    },
+    "beast": {
+      "image": "/static/assets/characters/monster_default.png",
+      "color": "#16a085"
+    },
+    "dragon": {
+      "image": "/static/assets/characters/monster_default.png",
+      "color": "#d35400"
+    }
+  }
+}

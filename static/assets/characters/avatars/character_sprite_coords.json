@@ -1,0 +1,19 @@
+{
+  "spriteSheet": "static/assets/characters/character_sprites.png",
+  "spriteSize": {
+    "width": 48,
+    "height": 48
+  },
+  "classes": {
+    "FIGHTER": { "x": 25, "y": 30 },
+    "WIZARD": { "x": 100, "y": 30 },
+    "ROGUE": { "x": 175, "y": 30 },
+    "CLERIC": { "x": 250, "y": 30 },
+    "RANGER": { "x": 25, "y": 120 },
+    "BARBARIAN": { "x": 100, "y": 120 },
+    "BARD": { "x": 175, "y": 120 },
+    "PALADIN": { "x": 250, "y": 120 },
+    "SORCERER": { "x": 25, "y": 210 },
+    "WARLOCK": { "x": 100, "y": 210 }
+  }
+}

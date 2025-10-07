@@ -271,6 +271,16 @@ body {
     border-radius: 50%;
     border: 2px solid #27ae60;
     z-index: 10;
+    background-size: cover;
+    background-repeat: no-repeat;
+    background-position: center;
+}
+
+/* 当使用精灵图时，移除圆形边框 */
+.character-player[style*="background-image"] {
+    border-radius: 4px;
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
 }
 
 .character-monster {
@@ -283,6 +293,16 @@ body {
     border-radius: 50%;
     border: 2px solid #c0392b;
     z-index: 9;
+    background-size: cover;
+    background-repeat: no-repeat;
+    background-position: center;
+}
+
+/* 当使用精灵图时，移除圆形边框 */
+.character-monster[style*="background-image"] {
+    border-radius: 4px;
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
 }
 
 .tile-explored { opacity: 1; }

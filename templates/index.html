@@ -382,7 +382,10 @@
     <!-- 1. 核心游戏类 - 必须首先加载 -->
     <script src="/static/GameCore.js"></script>
 
-    <!-- 2. 功能扩展模块 - 按依赖关系顺序加载 -->
+    <!-- 2. 角色精灵图系统 - 在UI模块之前加载 -->
+    <script src="/static/CharacterSprites.js"></script>
+
+    <!-- 3. 功能扩展模块 - 按依赖关系顺序加载 -->
     <script src="/static/DebugManager.js"></script>
     <script src="/static/OverlayManager.js"></script>
     <script src="/static/EffectsManager.js"></script>
