@@ -29,6 +29,7 @@ from event_choice_system import event_choice_system
 from data_models import GameState
 from user_session_manager import user_session_manager
 from async_task_manager import async_task_manager
+from input_validator import input_validator
 
 
 # 配置日志
@@ -179,20 +180,42 @@ async def test_progress(request: Request):
 async def create_new_game(request: NewGameRequest):
     """创建新游戏"""
     try:
-        logger.info(f"Creating new game for player: {request.player_name}")
-        
+        # 验证玩家名称
+        name_validation = input_validator.validate_player_name(request.player_name)
+        if not name_validation.is_valid:
+            raise HTTPException(status_code=400, detail=name_validation.error_message)
+
+        # 验证角色职业
+        class_validation = input_validator.validate_character_class(request.character_class)
+        if not class_validation.is_valid:
+            logger.warning(f"Invalid character class: {request.character_class}, using default")
+
+        # 使用清理后的值
+        sanitized_name = name_validation.sanitized_value
+        sanitized_class = class_validation.sanitized_value
+
+        logger.info(f"Creating new game for player: {sanitized_name} (class: {sanitized_class})")
+
+        # 记录警告信息
+        if name_validation.warnings:
+            for warning in name_validation.warnings:
+                logger.warning(f"Player name validation warning: {warning}")
+
         game_state = await game_engine.create_new_game(
-            player_name=request.player_name,
-            character_class=request.character_class
+            player_name=sanitized_name,
+            character_class=sanitized_class
         )
-        
+
         return {
             "success": True,
             "game_id": game_state.id,
-            "message": f"欢迎 {request.player_name}！你的冒险开始了！",
-            "narrative": game_state.last_narrative
+            "message": f"欢迎 {sanitized_name}！你的冒险开始了！",
+            "narrative": game_state.last_narrative,
+            "warnings": name_validation.warnings if name_validation.warnings else []
         }
-        
+
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Failed to create new game: {e}")
         raise HTTPException(status_code=500, detail=f"创建游戏失败: {str(e)}")
@@ -318,16 +341,51 @@ async def get_game_quests(game_id: str):
 async def perform_action(request: ActionRequest):
     """执行游戏行动"""
     try:
+        # 验证游戏ID
+        game_id_validation = input_validator.validate_game_id(request.game_id)
+        if not game_id_validation.is_valid:
+            raise HTTPException(status_code=400, detail=game_id_validation.error_message)
+
+        # 验证动作类型
+        valid_actions = ["move", "attack", "rest", "interact", "use_item", "drop_item", "pickup_item"]
+        if request.action not in valid_actions:
+            raise HTTPException(status_code=400, detail=f"无效的动作类型: {request.action}")
+
+        # 验证参数
+        sanitized_params = {}
+        if request.action == "move" and "direction" in request.parameters:
+            direction_validation = input_validator.validate_direction(request.parameters["direction"])
+            if not direction_validation.is_valid:
+                raise HTTPException(status_code=400, detail=direction_validation.error_message)
+            sanitized_params["direction"] = direction_validation.sanitized_value
+        elif request.action in ["use_item", "drop_item", "pickup_item"] and "item_id" in request.parameters:
+            # 验证item_id是UUID格式
+            item_id_validation = input_validator.validate_game_id(request.parameters["item_id"])
+            if not item_id_validation.is_valid:
+                raise HTTPException(status_code=400, detail="无效的物品ID")
+            sanitized_params["item_id"] = item_id_validation.sanitized_value
+        elif request.action == "attack" and "target_id" in request.parameters:
+            # 验证target_id是UUID格式
+            target_id_validation = input_validator.validate_game_id(request.parameters["target_id"])
+            if not target_id_validation.is_valid:
+                raise HTTPException(status_code=400, detail="无效的目标ID")
+            sanitized_params["target_id"] = target_id_validation.sanitized_value
+        else:
+            # 其他参数直接传递（如坐标等）
+            sanitized_params = request.parameters
+
         logger.info(f"Processing action: {request.action} for game: {request.game_id}")
-        
+
         result = await game_engine.process_player_action(
             game_id=request.game_id,
             action=request.action,
-            parameters=request.parameters
+            parameters=sanitized_params
         )
-        
+
         return result
-        
+
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Failed to process action: {e}")
         raise HTTPException(status_code=500, detail=f"处理行动失败: {str(e)}")
@@ -499,6 +557,27 @@ async def process_combat_result(game_id: str, request: Request):
 async def process_event_choice(request: EventChoiceRequest):
     """处理事件选择"""
     try:
+        # 记录接收到的请求数据
+        logger.info(f"Received event choice request: game_id={request.game_id}, context_id={request.context_id}, choice_id={request.choice_id}")
+
+        # 验证游戏ID
+        game_id_validation = input_validator.validate_game_id(request.game_id)
+        if not game_id_validation.is_valid:
+            logger.error(f"Game ID validation failed: {game_id_validation.error_message}")
+            raise HTTPException(status_code=400, detail=game_id_validation.error_message)
+
+        # 验证上下文ID
+        context_id_validation = input_validator.validate_uuid(request.context_id)
+        if not context_id_validation.is_valid:
+            logger.error(f"Context ID validation failed: {context_id_validation.error_message}")
+            raise HTTPException(status_code=400, detail=f"无效的上下文ID: {context_id_validation.error_message}")
+
+        # 验证选择ID
+        choice_id_validation = input_validator.validate_choice_id(request.choice_id)
+        if not choice_id_validation.is_valid:
+            logger.error(f"Choice ID validation failed for '{request.choice_id}': {choice_id_validation.error_message}")
+            raise HTTPException(status_code=400, detail=choice_id_validation.error_message)
+
         logger.info(f"Processing event choice: {request.choice_id} for context: {request.context_id}")
 
         if request.game_id not in game_engine.active_games:
@@ -532,6 +611,8 @@ async def process_event_choice(request: EventChoiceRequest):
                 "message": result.message
             }
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Failed to process event choice: {e}")
         raise HTTPException(status_code=500, detail=f"处理事件选择失败: {str(e)}")
@@ -605,21 +686,50 @@ async def import_save(request: Request, response: Response, file: UploadFile = F
         # 读取上传的文件
         content = await file.read()
 
+        # 验证文件上传
+        file_validation = input_validator.validate_file_upload(
+            filename=file.filename,
+            content=content,
+            allowed_extensions=['json'],
+            max_size_mb=10.0
+        )
+
+        if not file_validation.is_valid:
+            raise HTTPException(status_code=400, detail=file_validation.error_message)
+
         # 解析JSON数据
         try:
             save_data = json.loads(content.decode('utf-8'))
         except json.JSONDecodeError as e:
             raise HTTPException(status_code=400, detail=f"无效的JSON格式: {str(e)}")
+        except UnicodeDecodeError as e:
+            raise HTTPException(status_code=400, detail=f"文件编码错误: {str(e)}")
 
-        # 导入存档
-        success = user_session_manager.import_save(user_id, save_data)
+        # 验证存档数据结构
+        save_validation = input_validator.validate_save_data(save_data)
+        if not save_validation.is_valid:
+            raise HTTPException(status_code=400, detail=save_validation.error_message)
+
+        # 记录警告
+        if save_validation.warnings:
+            for warning in save_validation.warnings:
+                logger.warning(f"Save data validation warning: {warning}")
+
+        # 导入存档（使用验证后的数据）
+        success = user_session_manager.import_save(user_id, save_validation.sanitized_value)
 
         if success:
-            return {
+            response_data = {
                 "success": True,
                 "message": "存档导入成功",
-                "save_id": save_data.get("id")
+                "save_id": save_validation.sanitized_value.get("id")
             }
+
+            # 如果有警告，添加到响应中
+            if save_validation.warnings:
+                response_data["warnings"] = save_validation.warnings
+
+            return response_data
         else:
             raise HTTPException(status_code=400, detail="存档数据无效或导入失败")
 
@@ -813,12 +923,50 @@ async def update_config(updates: Dict[str, Any]):
         raise HTTPException(status_code=403, detail="仅在调试模式下可用")
 
     try:
+        # 验证配置更新数据
+        config_validation = input_validator.validate_json_structure(
+            updates,
+            max_size_mb=1.0  # 配置数据不应该太大
+        )
+
+        if not config_validation.is_valid:
+            raise HTTPException(status_code=400, detail=config_validation.error_message)
+
+        # 只允许更新特定的配置节
+        allowed_sections = ["game", "llm", "web", "debug"]
+
         for section, values in updates.items():
+            if section not in allowed_sections:
+                raise HTTPException(status_code=400, detail=f"不允许更新配置节: {section}")
+
             if hasattr(config, section):
+                # 验证值的类型和范围
+                if isinstance(values, dict):
+                    for key, value in values.items():
+                        # 对数值类型进行范围检查
+                        if isinstance(value, (int, float)):
+                            if key in ["port", "timeout", "max_output_tokens"]:
+                                # 端口号范围
+                                if key == "port":
+                                    port_validation = input_validator.validate_integer_range(
+                                        value, min_value=1024, max_value=65535, field_name="端口号"
+                                    )
+                                    if not port_validation.is_valid:
+                                        raise HTTPException(status_code=400, detail=port_validation.error_message)
+                                # 超时时间范围
+                                elif key == "timeout":
+                                    timeout_validation = input_validator.validate_integer_range(
+                                        value, min_value=10, max_value=600, field_name="超时时间"
+                                    )
+                                    if not timeout_validation.is_valid:
+                                        raise HTTPException(status_code=400, detail=timeout_validation.error_message)
+
                 config.update_config(section, **values)
 
         return {"success": True, "message": "配置已更新"}
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Failed to update config: {e}")
         raise HTTPException(status_code=500, detail=f"更新配置失败: {str(e)}")

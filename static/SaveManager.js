@@ -188,6 +188,26 @@ Object.assign(LabyrinthiaGame.prototype, {
                 })
             });
 
+            // 检查响应状态
+            if (!response.ok) {
+                // 处理验证失败（400错误）
+                if (response.status === 400) {
+                    const errorData = await response.json();
+                    const errorMsg = errorData.detail || '输入验证失败';
+
+                    // 根据错误类型显示不同的幽默提示
+                    let funnyMessage = this.getSecurityErrorMessage(errorMsg, playerName);
+
+                    this.hideFullscreenOverlay();
+                    this.showSecurityAlert(funnyMessage, errorMsg);
+                    this.setLoading(false);
+                    return;
+                }
+
+                // 其他HTTP错误
+                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+            }
+
             this.updateOverlayProgress(45, 'AI正在生成地下城...');
             const result = await response.json();
 
@@ -227,6 +247,242 @@ Object.assign(LabyrinthiaGame.prototype, {
             this.hideFullscreenOverlay();
         } finally {
             this.setLoading(false);
+        }
+    },
+
+    /**
+     * 根据错误信息生成幽默的安全提示
+     */
+    getSecurityErrorMessage(errorMsg, playerName) {
+        const lowerError = errorMsg.toLowerCase();
+
+        // SQL注入检测
+        if (lowerError.includes('sql') || lowerError.includes('drop') || lowerError.includes('table')) {
+            return [
+                '🛡️ 哎呀！检测到SQL注入尝试！',
+                '看来有人想当黑客呢~ 不过我们的防护可不是吃素的！',
+                '提示：这里是地牢冒险游戏，不是数据库管理系统哦 😏'
+            ];
+        }
+
+        // XSS攻击检测
+        if (lowerError.includes('xss') || lowerError.includes('script') || lowerError.includes('<')) {
+            return [
+                '🛡️ 检测到XSS攻击尝试！',
+                '想在我们的游戏里运行脚本？真是个大胆的想法！',
+                '不过抱歉，我们只接受勇者的名字，不接受代码 😎'
+            ];
+        }
+
+        // 路径遍历检测
+        if (lowerError.includes('path') || lowerError.includes('traversal') || lowerError.includes('../')) {
+            return [
+                '🛡️ 路径遍历攻击被拦截！',
+                '想去 /etc/passwd 探险？这里只有地牢可以探索哦！',
+                '建议：把你的黑客技能用在游戏里打怪上吧 🗡️'
+            ];
+        }
+
+        // 命令注入检测
+        if (lowerError.includes('command') || lowerError.includes('injection') || lowerError.includes('rm -rf')) {
+            return [
+                '🛡️ 命令注入尝试已阻止！',
+                'rm -rf？在这里唯一能删除的只有怪物的HP！',
+                '温馨提示：请用正常的角色名称，谢谢合作 🙃'
+            ];
+        }
+
+        // 长度超限
+        if (lowerError.includes('20') || lowerError.includes('长度') || lowerError.includes('字符')) {
+            return [
+                '📏 角色名称太长啦！',
+                `"${playerName}" 这个名字太长了，连地牢的告示牌都写不下！`,
+                '请使用1-20个字符的名称（中文、英文、数字都可以）'
+            ];
+        }
+
+        // 非法字符
+        if (lowerError.includes('不允许') || lowerError.includes('非法') || lowerError.includes('字符')) {
+            return [
+                '⚠️ 包含非法字符！',
+                '你的名字里有些奇怪的符号，连魔法师都认不出来！',
+                '建议使用：中文、英文、数字、下划线、空格等常见字符'
+            ];
+        }
+
+        // 空名称
+        if (lowerError.includes('空') || lowerError.includes('empty')) {
+            return [
+                '❓ 名字不能为空！',
+                '没有名字的勇者？这可不行！',
+                '就算是"无名氏"也得有个名字啊 😅'
+            ];
+        }
+
+        // 默认提示
+        return [
+            '🛡️ 输入验证失败！',
+            '你的输入似乎有些问题，我们的安全系统拦截了它。',
+            '请使用正常的角色名称（1-20个字符，支持中英文）'
+        ];
+    },
+
+    /**
+     * 显示安全警告对话框
+     */
+    showSecurityAlert(messages, technicalError) {
+        // 创建警告对话框
+        const alertDiv = document.createElement('div');
+        alertDiv.className = 'security-alert-overlay';
+        alertDiv.innerHTML = `
+            <div class="security-alert-box">
+                <div class="security-alert-icon">🛡️</div>
+                <div class="security-alert-title">${messages[0]}</div>
+                <div class="security-alert-message">${messages[1]}</div>
+                <div class="security-alert-hint">${messages[2]}</div>
+                <div class="security-alert-technical">
+                    <details>
+                        <summary>技术详情</summary>
+                        <code>${technicalError}</code>
+                    </details>
+                </div>
+                <button class="security-alert-button" onclick="this.closest('.security-alert-overlay').remove()">
+                    我知道了
+                </button>
+            </div>
+        `;
+
+        document.body.appendChild(alertDiv);
+
+        // 添加样式（如果还没有）
+        if (!document.getElementById('security-alert-styles')) {
+            const style = document.createElement('style');
+            style.id = 'security-alert-styles';
+            style.textContent = `
+                .security-alert-overlay {
+                    position: fixed;
+                    top: 0;
+                    left: 0;
+                    right: 0;
+                    bottom: 0;
+                    background: rgba(0, 0, 0, 0.8);
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    z-index: 10000;
+                    animation: fadeIn 0.3s ease;
+                }
+
+                .security-alert-box {
+                    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                    border-radius: 20px;
+                    padding: 40px;
+                    max-width: 500px;
+                    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+                    animation: slideIn 0.3s ease;
+                    text-align: center;
+                    color: white;
+                }
+
+                .security-alert-icon {
+                    font-size: 64px;
+                    margin-bottom: 20px;
+                    animation: bounce 0.6s ease;
+                }
+
+                .security-alert-title {
+                    font-size: 24px;
+                    font-weight: bold;
+                    margin-bottom: 15px;
+                    text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.3);
+                }
+
+                .security-alert-message {
+                    font-size: 18px;
+                    margin-bottom: 15px;
+                    line-height: 1.6;
+                }
+
+                .security-alert-hint {
+                    font-size: 14px;
+                    opacity: 0.9;
+                    margin-bottom: 20px;
+                    padding: 15px;
+                    background: rgba(255, 255, 255, 0.1);
+                    border-radius: 10px;
+                    border-left: 4px solid #ffd700;
+                }
+
+                .security-alert-technical {
+                    margin: 20px 0;
+                    text-align: left;
+                }
+
+                .security-alert-technical details {
+                    background: rgba(0, 0, 0, 0.2);
+                    padding: 10px;
+                    border-radius: 8px;
+                    cursor: pointer;
+                }
+
+                .security-alert-technical summary {
+                    font-size: 12px;
+                    opacity: 0.8;
+                    user-select: none;
+                }
+
+                .security-alert-technical code {
+                    display: block;
+                    margin-top: 10px;
+                    padding: 10px;
+                    background: rgba(0, 0, 0, 0.3);
+                    border-radius: 5px;
+                    font-family: 'Courier New', monospace;
+                    font-size: 12px;
+                    word-break: break-all;
+                    color: #ff6b6b;
+                }
+
+                .security-alert-button {
+                    background: white;
+                    color: #667eea;
+                    border: none;
+                    padding: 15px 40px;
+                    border-radius: 25px;
+                    font-size: 16px;
+                    font-weight: bold;
+                    cursor: pointer;
+                    transition: all 0.3s ease;
+                    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+                }
+
+                .security-alert-button:hover {
+                    transform: translateY(-2px);
+                    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.3);
+                }
+
+                @keyframes fadeIn {
+                    from { opacity: 0; }
+                    to { opacity: 1; }
+                }
+
+                @keyframes slideIn {
+                    from {
+                        transform: translateY(-50px);
+                        opacity: 0;
+                    }
+                    to {
+                        transform: translateY(0);
+                        opacity: 1;
+                    }
+                }
+
+                @keyframes bounce {
+                    0%, 100% { transform: translateY(0); }
+                    50% { transform: translateY(-10px); }
+                }
+            `;
+            document.head.appendChild(style);
         }
     }
 });
