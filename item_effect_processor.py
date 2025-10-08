@@ -54,12 +54,19 @@ class ItemEffectProcessor:
             result.item_consumed = llm_response.get("item_consumed", True)
 
             self.logger.info(f"解析的效果数据: {effects}")
-            
+
             # 处理属性变化
             if "stat_changes" in effects:
                 result.stat_changes = effects["stat_changes"]
                 self._apply_stat_changes(game_state.player, result.stat_changes)
-            
+
+                # 检查玩家是否因为物品效果而死亡（例如毒药）
+                if game_state.player.stats.hp <= 0:
+                    game_state.is_game_over = True
+                    game_state.game_over_reason = f"使用{item.name}后死亡"
+                    result.events.append("你因为物品的效果而死亡了！")
+                    self.logger.warning(f"Player died from item effect: {item.name}")
+
             # 处理位置变化（传送效果）
             if "teleport" in effects and effects["teleport"]:
                 teleport_data = effects["teleport"]
@@ -67,20 +74,20 @@ class ItemEffectProcessor:
                     result.position_change = self._process_teleport(
                         game_state, teleport_data
                     )
-            
+
             # 处理地图变化
             if "map_changes" in effects:
                 result.map_changes = effects["map_changes"]
                 self._apply_map_changes(game_state, result.map_changes)
-            
+
             # 处理特殊效果
             if "special_effects" in effects:
                 self._process_special_effects(
                     game_state, effects["special_effects"], result
                 )
-            
+
             return result
-            
+
         except Exception as e:
             self.logger.error(f"处理物品效果时出错: {e}")
             return ItemEffectResult(
@@ -95,7 +102,7 @@ class ItemEffectProcessor:
             if hasattr(player.stats, stat_name):
                 current_value = getattr(player.stats, stat_name)
                 new_value = current_value + change
-                
+
                 # 处理特殊限制
                 if stat_name == "hp":
                     new_value = max(0, min(new_value, player.stats.max_hp))
@@ -105,9 +112,9 @@ class ItemEffectProcessor:
                     new_value = max(1, new_value)
                 elif stat_name == "experience":
                     new_value = max(0, new_value)
-                
+
                 setattr(player.stats, stat_name, new_value)
-                self.logger.info(f"属性变化: {stat_name} {current_value} -> {new_value}")
+                self.logger.info(f"属性变化: {stat_name} {current_value} -> {new_value} (change: {change})")
     
     def _process_teleport(self, game_state: GameState, 
                          teleport_data: Dict[str, Any]) -> Optional[Tuple[int, int]]:

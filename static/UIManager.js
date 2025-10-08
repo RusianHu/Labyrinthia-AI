@@ -19,11 +19,24 @@ Object.assign(LabyrinthiaGame.prototype, {
             document.getElementById('player-class').textContent = player.character_class;
         }
 
-        // 更新生命值
-        document.getElementById('hp-current').textContent = stats.hp;
+        // 更新生命值，确保不显示负数
+        const displayHp = Math.max(0, stats.hp);
+        document.getElementById('hp-current').textContent = displayHp;
         document.getElementById('hp-max').textContent = stats.max_hp;
-        const hpPercent = (stats.hp / stats.max_hp) * 100;
+        const hpPercent = Math.max(0, (displayHp / stats.max_hp) * 100);
         document.getElementById('hp-bar').style.width = `${hpPercent}%`;
+
+        // HP条颜色根据生命值变化
+        const hpBar = document.getElementById('hp-bar');
+        if (hpPercent <= 0) {
+            hpBar.style.backgroundColor = '#000000'; // 黑色表示死亡
+        } else if (hpPercent <= 25) {
+            hpBar.style.backgroundColor = '#e74c3c'; // 红色
+        } else if (hpPercent <= 50) {
+            hpBar.style.backgroundColor = '#f39c12'; // 橙色
+        } else {
+            hpBar.style.backgroundColor = '#2ecc71'; // 绿色
+        }
 
         // 更新法力值
         document.getElementById('mp-current').textContent = stats.mp;

@@ -172,6 +172,13 @@ class LabyrinthiaGame {
             const gameState = await response.json();
 
             this.gameState = gameState;
+
+            // 检查游戏是否结束（在更新UI之前）
+            if (gameState.is_game_over) {
+                this.handleGameOver(gameState.game_over_reason);
+                return; // 游戏结束后不再处理其他逻辑
+            }
+
             this.updateUI();
 
             // 检查是否有待处理的选择上下文，直接显示
@@ -197,6 +204,12 @@ class LabyrinthiaGame {
     updateUI() {
         if (!this.gameState) return;
 
+        // 首先检查游戏是否结束
+        if (this.gameState.is_game_over) {
+            this.handleGameOver(this.gameState.game_over_reason);
+            return; // 游戏结束后不再更新其他UI
+        }
+
         this.updateCharacterStats();
         this.updateMap();
         this.updateInventory();
@@ -215,6 +228,12 @@ class LabyrinthiaGame {
         // 初始化本地引擎（如果还没有）
         if (!this.localEngine && window.LocalGameEngine) {
             this.localEngine = new LocalGameEngine(this);
+        }
+
+        // 检查游戏是否结束（在更新UI之前）
+        if (newGameState.is_game_over) {
+            this.handleGameOver(newGameState.game_over_reason);
+            return; // 游戏结束后不再处理其他逻辑
         }
 
         this.updateUI();
@@ -278,14 +297,31 @@ class LabyrinthiaGame {
     }
 
     handleGameOver(reason) {
+        console.log('[handleGameOver] Game over triggered:', reason);
+
+        // 防止重复触发
+        if (this._gameOverHandled) {
+            console.log('[handleGameOver] Already handled, skipping');
+            return;
+        }
+        this._gameOverHandled = true;
+
         // 显示游戏结束界面
         this.addMessage(`游戏结束：${reason}`, 'error');
+
+        // 停止EventChoiceManager轮询
+        if (window.eventChoiceManager) {
+            window.eventChoiceManager.stopChoicePolling();
+        }
 
         // 禁用所有控制按钮
         const controlButtons = document.querySelectorAll('.control-btn, .dir-btn');
         controlButtons.forEach(btn => {
             btn.disabled = true;
         });
+
+        // 禁用地图点击
+        this.isLoading = true;
 
         // 显示游戏结束模态框
         setTimeout(() => {
@@ -384,20 +420,21 @@ class LabyrinthiaGame {
     updateControlPanel() {
         const controlPanel = document.querySelector('.controls');
         if (!controlPanel) {
-            console.warn('Control panel not found');
+            console.warn('[updateControlPanel] Control panel not found');
+            return;
+        }
+
+        // 检查游戏是否结束，如果结束则不显示任何控制按钮
+        if (this.gameState && this.gameState.is_game_over) {
+            console.log('[updateControlPanel] Game is over, skipping control panel update');
             return;
         }
 
         // 检查是否有待切换的地图
         const hasPendingTransition = this.gameState && this.gameState.pending_map_transition;
 
-        // 调试信息
-        if (this.config && this.config.debug_mode) {
-            console.log('updateControlPanel called');
-            console.log('gameState:', this.gameState);
-            console.log('pending_map_transition:', this.gameState?.pending_map_transition);
-            console.log('hasPendingTransition:', hasPendingTransition);
-        }
+        // 始终输出关键调试信息
+        console.log('[updateControlPanel] Called - hasPendingTransition:', hasPendingTransition, 'value:', this.gameState?.pending_map_transition);
 
         let transitionButton = document.getElementById('transition-button');
 
@@ -407,12 +444,7 @@ class LabyrinthiaGame {
                 transitionButton.id = 'transition-button';
                 transitionButton.className = 'btn btn-warning control-btn transition-btn';
                 controlPanel.appendChild(transitionButton);
-
-                if (this.config && this.config.debug_mode) {
-                    console.log('Transition button created and added to DOM');
-                    console.log('Control panel:', controlPanel);
-                    console.log('Button element:', transitionButton);
-                }
+                console.log('[updateControlPanel] Transition button created and added to DOM');
             }
 
             const transitionType = this.gameState.pending_map_transition;
@@ -427,14 +459,10 @@ class LabyrinthiaGame {
             transitionButton.onclick = () => this.transitionMap(transitionType);
             transitionButton.disabled = this.isLoading;
 
-            if (this.config && this.config.debug_mode) {
-                console.log('Transition button created/updated:', buttonText);
-            }
+            console.log('[updateControlPanel] Transition button updated:', buttonText);
         } else if (transitionButton) {
             transitionButton.remove();
-            if (this.config && this.config.debug_mode) {
-                console.log('Transition button removed');
-            }
+            console.log('[updateControlPanel] Transition button removed');
         }
 
         // 调试模式下添加测试按钮

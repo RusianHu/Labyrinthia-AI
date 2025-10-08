@@ -410,15 +410,17 @@ class LocalGameEngine {
             if (targetTile.terrain === 'stairs_down') {
                 gameState.pending_map_transition = 'stairs_down';
                 this.addMessage('你发现了通往下一层的楼梯。你可以选择进入下一层。', 'system');
+                console.log('[LocalGameEngine] Set pending_map_transition to stairs_down');
             } else if (targetTile.terrain === 'stairs_up') {
                 gameState.pending_map_transition = 'stairs_up';
                 this.addMessage('你发现了通往上一层的楼梯。你可以选择返回上一层。', 'system');
+                console.log('[LocalGameEngine] Set pending_map_transition to stairs_up');
             }
 
             // 本地处理怪物回合
             await this.processMonsterTurns();
 
-            // 更新UI
+            // 更新UI（这会触发updateControlPanel检查pending_map_transition）
             this.game.updateUI();
 
             // 检查是否需要同步

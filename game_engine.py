@@ -862,17 +862,34 @@ class GameEngine:
 
     async def transition_map(self, game_state: GameState, transition_type: str) -> Dict[str, Any]:
         """手动切换地图"""
+        logger.info(f"transition_map called: type={transition_type}, pending={game_state.pending_map_transition}")
+
         if not game_state.pending_map_transition:
+            logger.warning("No pending map transition found")
             return {
                 "success": False,
                 "message": "当前位置无法进行地图切换"
             }
 
         if transition_type != game_state.pending_map_transition:
+            logger.warning(f"Transition type mismatch: requested={transition_type}, pending={game_state.pending_map_transition}")
             return {
                 "success": False,
                 "message": "切换类型不匹配"
             }
+
+        # 验证玩家是否真的在楼梯上
+        player_tile = game_state.current_map.get_tile(*game_state.player.position)
+        if player_tile:
+            expected_terrain = TerrainType.STAIRS_DOWN if transition_type == "stairs_down" else TerrainType.STAIRS_UP
+            if player_tile.terrain != expected_terrain:
+                logger.warning(f"Player not on correct stairs: at {player_tile.terrain}, expected {expected_terrain}")
+                # 清除错误的待切换状态
+                game_state.pending_map_transition = None
+                return {
+                    "success": False,
+                    "message": "你不在楼梯上，无法切换地图"
+                }
 
         events = []
 
@@ -883,6 +900,7 @@ class GameEngine:
 
         # 清除待切换状态
         game_state.pending_map_transition = None
+        logger.info(f"Map transition completed successfully")
 
         return {
             "success": True,

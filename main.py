@@ -31,8 +31,10 @@ from user_session_manager import user_session_manager
 
 
 # 配置日志
+# 服务器核心日志（启动、关闭、错误等）始终使用 INFO 级别
+# 调试模式下可以看到更详细的 DEBUG 级别日志
 logging.basicConfig(
-    level=logging.INFO if config.game.debug_mode else logging.WARNING,
+    level=logging.DEBUG if config.game.debug_mode else logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
@@ -222,10 +224,28 @@ async def load_game(save_id: str, request: Request, response: Response):
 
 
 @app.get("/api/game/{game_id}")
-async def get_game_state(game_id: str):
-    """获取游戏状态"""
+async def get_game_state(game_id: str, request: Request, response: Response):
+    """获取游戏状态（支持自动从磁盘加载）"""
+
+    # 如果游戏不在内存中，尝试从磁盘加载
     if game_id not in game_engine.active_games:
-        raise HTTPException(status_code=404, detail="游戏未找到")
+        logger.info(f"Game {game_id} not in memory, attempting to load from disk...")
+
+        # 获取用户ID
+        user_id = user_session_manager.get_or_create_user_id(request, response)
+
+        # 尝试从用户存档加载
+        save_data = user_session_manager.load_game_for_user(user_id, game_id)
+
+        if save_data:
+            # 重建游戏状态并加载到内存
+            game_state = data_manager._dict_to_game_state(save_data)
+            game_engine.active_games[game_state.id] = game_state
+            game_engine._start_auto_save(game_state.id)
+            logger.info(f"Game {game_id} loaded from disk for user {user_id}")
+        else:
+            # 如果磁盘上也没有，返回404
+            raise HTTPException(status_code=404, detail="游戏未找到")
 
     game_state = game_engine.active_games[game_id]
 
@@ -241,9 +261,9 @@ async def get_game_state(game_id: str):
 
 
 @app.get("/api/game/{game_id}/state")
-async def get_game_state_detailed(game_id: str):
+async def get_game_state_detailed(game_id: str, request: Request, response: Response):
     """获取详细游戏状态（别名路由）"""
-    return await get_game_state(game_id)
+    return await get_game_state(game_id, request, response)
 
 
 @app.get("/api/game/{game_id}/quests")
@@ -569,6 +589,17 @@ async def delete_save(save_id: str, request: Request, response: Response):
         success = user_session_manager.delete_save_for_user(user_id, save_id)
 
         if success:
+            # 同时从内存中移除游戏（如果存在）
+            if save_id in game_engine.active_games:
+                # 停止自动保存任务
+                if save_id in game_engine.auto_save_tasks:
+                    game_engine.auto_save_tasks[save_id].cancel()
+                    del game_engine.auto_save_tasks[save_id]
+
+                # 从内存中移除
+                del game_engine.active_games[save_id]
+                logger.info(f"Game {save_id} removed from memory")
+
             return {"success": True, "message": "存档已删除"}
         else:
             raise HTTPException(status_code=404, detail="存档未找到")

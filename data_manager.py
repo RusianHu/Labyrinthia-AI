@@ -89,34 +89,50 @@ class DataManager:
     def _dict_to_game_state(self, data: Dict[str, Any]) -> GameState:
         """从字典重建GameState对象"""
         game_state = GameState()
-        
+
         # 基础属性
         game_state.id = data.get("id", game_state.id)
         game_state.turn_count = data.get("turn_count", 0)
         game_state.game_time = data.get("game_time", 0)
-        
+
         # 时间属性
         if created_at := data.get("created_at"):
             game_state.created_at = datetime.fromisoformat(created_at)
         if last_saved := data.get("last_saved"):
             game_state.last_saved = datetime.fromisoformat(last_saved)
-        
+
         # 玩家角色
         if player_data := data.get("player"):
             game_state.player = self._dict_to_character(player_data)
-        
+
         # 当前地图
         if map_data := data.get("current_map"):
             game_state.current_map = self._dict_to_game_map(map_data)
-        
+
         # 怪物列表
         if monsters_data := data.get("monsters"):
             game_state.monsters = [self._dict_to_monster(monster_data) for monster_data in monsters_data]
-        
+
         # 任务列表
         if quests_data := data.get("quests"):
             game_state.quests = [self._dict_to_quest(quest_data) for quest_data in quests_data]
-        
+
+        # 游戏状态属性
+        game_state.last_narrative = data.get("last_narrative", "")
+        game_state.is_game_over = data.get("is_game_over", False)
+        game_state.game_over_reason = data.get("game_over_reason", "")
+
+        # 待处理事件和特效
+        game_state.pending_events = data.get("pending_events", [])
+        game_state.pending_effects = data.get("pending_effects", [])
+
+        # 地图切换状态
+        game_state.pending_map_transition = data.get("pending_map_transition", None)
+
+        # 事件选择上下文
+        if choice_context_data := data.get("pending_choice_context"):
+            game_state.pending_choice_context = self._dict_to_event_choice_context(choice_context_data)
+
         return game_state
     
     def _dict_to_character(self, data: Dict[str, Any]) -> Character:
@@ -164,9 +180,9 @@ class DataManager:
     def _dict_to_monster(self, data: Dict[str, Any]) -> Monster:
         """从字典重建Monster对象"""
         monster = Monster()
-        
+
         # 复制Character的属性
-        character_data = {k: v for k, v in data.items() if k not in ["challenge_rating", "behavior", "loot_table", "attack_range"]}
+        character_data = {k: v for k, v in data.items() if k not in ["challenge_rating", "behavior", "loot_table", "attack_range", "is_boss", "quest_monster_id"]}
         character = self._dict_to_character(character_data)
 
         for attr in ["id", "name", "description", "character_class", "creature_type",
@@ -178,7 +194,11 @@ class DataManager:
         monster.behavior = data.get("behavior", "aggressive")
         monster.loot_table = data.get("loot_table", [])
         monster.attack_range = data.get("attack_range", 1)
-        
+
+        # 任务相关属性
+        monster.is_boss = data.get("is_boss", False)
+        monster.quest_monster_id = data.get("quest_monster_id", None)
+
         return monster
     
     def _dict_to_item(self, data: Dict[str, Any]) -> Item:
@@ -286,13 +306,98 @@ class DataManager:
         quest.experience_reward = data.get("experience_reward", 0)
         quest.is_completed = data.get("is_completed", False)
         quest.is_active = data.get("is_active", False)
-        
+
+        # LLM控制的进度系统
+        quest.progress_percentage = data.get("progress_percentage", 0.0)
+        quest.story_context = data.get("story_context", "")
+        quest.llm_notes = data.get("llm_notes", "")
+
+        # 任务专属内容
+        quest.quest_type = data.get("quest_type", "exploration")
+        quest.target_floors = data.get("target_floors", [])
+        quest.map_themes = data.get("map_themes", [])
+
         # 奖励物品
         if rewards_data := data.get("rewards"):
             quest.rewards = [self._dict_to_item(item_data) for item_data in rewards_data]
-        
+
+        # 专属事件
+        if special_events_data := data.get("special_events"):
+            quest.special_events = [self._dict_to_quest_event(event_data) for event_data in special_events_data]
+
+        # 专属怪物
+        if special_monsters_data := data.get("special_monsters"):
+            quest.special_monsters = [self._dict_to_quest_monster(monster_data) for monster_data in special_monsters_data]
+
         return quest
-    
+
+    def _dict_to_quest_event(self, data: Dict[str, Any]) -> 'QuestEvent':
+        """从字典重建QuestEvent对象"""
+        from data_models import QuestEvent
+
+        event = QuestEvent()
+        event.id = data.get("id", event.id)
+        event.event_type = data.get("event_type", "")
+        event.name = data.get("name", "")
+        event.description = data.get("description", "")
+        event.trigger_condition = data.get("trigger_condition", "")
+        event.progress_value = data.get("progress_value", 0.0)
+        event.is_mandatory = data.get("is_mandatory", True)
+        event.location_hint = data.get("location_hint", "")
+
+        return event
+
+    def _dict_to_quest_monster(self, data: Dict[str, Any]) -> 'QuestMonster':
+        """从字典重建QuestMonster对象"""
+        from data_models import QuestMonster
+
+        monster = QuestMonster()
+        monster.id = data.get("id", monster.id)
+        monster.name = data.get("name", "")
+        monster.description = data.get("description", "")
+        monster.challenge_rating = data.get("challenge_rating", 1.0)
+        monster.is_boss = data.get("is_boss", False)
+        monster.progress_value = data.get("progress_value", 0.0)
+        monster.spawn_condition = data.get("spawn_condition", "")
+        monster.location_hint = data.get("location_hint", "")
+
+        return monster
+
+    def _dict_to_event_choice(self, data: Dict[str, Any]) -> 'EventChoice':
+        """从字典重建EventChoice对象"""
+        from data_models import EventChoice
+
+        choice = EventChoice()
+        choice.id = data.get("id", choice.id)
+        choice.text = data.get("text", "")
+        choice.description = data.get("description", "")
+        choice.consequences = data.get("consequences", "")
+        choice.requirements = data.get("requirements", {})
+        choice.is_available = data.get("is_available", True)
+
+        return choice
+
+    def _dict_to_event_choice_context(self, data: Dict[str, Any]) -> 'EventChoiceContext':
+        """从字典重建EventChoiceContext对象"""
+        from data_models import EventChoiceContext
+
+        context = EventChoiceContext()
+        context.id = data.get("id", context.id)
+        context.event_type = data.get("event_type", "")
+        context.title = data.get("title", "")
+        context.description = data.get("description", "")
+        context.context_data = data.get("context_data", {})
+
+        # 重建选项列表
+        if choices_data := data.get("choices"):
+            context.choices = [self._dict_to_event_choice(choice_data) for choice_data in choices_data]
+
+        # 时间属性
+        if created_at := data.get("created_at"):
+            context.created_at = datetime.fromisoformat(created_at)
+
+        return context
+
     def list_saves(self) -> List[Dict[str, Any]]:
         """列出所有存档"""
         saves = []

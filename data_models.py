@@ -281,7 +281,8 @@ class MapTile:
             "event_type": self.event_type,
             "event_data": self.event_data,
             "is_event_hidden": self.is_event_hidden,
-            "event_triggered": self.event_triggered
+            "event_triggered": self.event_triggered,
+            "items_collected": self.items_collected
         }
 
 
