@@ -4,7 +4,7 @@
 // 扩展核心游戏类，添加遮罩和加载管理功能
 Object.assign(LabyrinthiaGame.prototype, {
     
-    setLoading(loading) {
+    setLoading(loading, showOverlay = false) {
         this.isLoading = loading;
         const loadingElements = document.querySelectorAll('.loading-indicator');
         loadingElements.forEach(el => {
@@ -17,14 +17,13 @@ Object.assign(LabyrinthiaGame.prototype, {
             btn.disabled = loading;
         });
 
-        // 当显示"处理中..."时，自动显示LLM遮罩
-        if (loading) {
-            // 检查是否已经有遮罩显示，避免重复显示
+        // 只在明确要求时显示遮罩（用于后端请求）
+        if (loading && showOverlay) {
             const existingOverlay = document.getElementById('partial-overlay');
             if (!existingOverlay || existingOverlay.style.display === 'none') {
                 this.showLLMOverlay('处理中');
             }
-        } else {
+        } else if (!loading) {
             // 当loading结束时，隐藏LLM遮罩
             this.hideLLMOverlay();
         }

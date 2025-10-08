@@ -384,13 +384,16 @@
     <div id="tile-tooltip" class="tile-tooltip"></div>
 
     <!-- 脚本 - 按依赖顺序加载模块化的JavaScript文件 -->
-    <!-- 1. 核心游戏类 - 必须首先加载 -->
+    <!-- 1. 本地游戏引擎 - 必须在核心游戏类之前加载 -->
+    <script src="/static/LocalGameEngine.js"></script>
+
+    <!-- 2. 核心游戏类 -->
     <script src="/static/GameCore.js"></script>
 
-    <!-- 2. 角色精灵图系统 - 在UI模块之前加载 -->
+    <!-- 3. 角色精灵图系统 - 在UI模块之前加载 -->
     <script src="/static/CharacterSprites.js"></script>
 
-    <!-- 3. 功能扩展模块 - 按依赖关系顺序加载 -->
+    <!-- 4. 功能扩展模块 - 按依赖关系顺序加载 -->
     <script src="/static/DebugManager.js"></script>
     <script src="/static/OverlayManager.js?v=3"></script>
     <script src="/static/EffectsManager.js?v=3"></script>

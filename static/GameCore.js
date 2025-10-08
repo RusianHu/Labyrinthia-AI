@@ -14,6 +14,7 @@ class LabyrinthiaGame {
         this.highlightedTiles = [];
         this.currentProgressInterval = null;
         this.config = null;
+        this.localEngine = null; // 本地游戏引擎
 
         this.init();
         this.initializeDebugMode();
@@ -204,6 +205,12 @@ class LabyrinthiaGame {
          * 用于EventChoiceManager等组件更新游戏状态
          */
         this.gameState = newGameState;
+
+        // 初始化本地引擎（如果还没有）
+        if (!this.localEngine && window.LocalGameEngine) {
+            this.localEngine = new LocalGameEngine(this);
+        }
+
         this.updateUI();
 
         // 触发EventChoiceManager立即检查
@@ -214,6 +221,11 @@ class LabyrinthiaGame {
 
     renderGame() {
         this.updateUI();
+
+        // 初始化本地引擎
+        if (!this.localEngine && window.LocalGameEngine) {
+            this.localEngine = new LocalGameEngine(this);
+        }
     }
 
     processPendingEffects() {

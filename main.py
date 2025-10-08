@@ -56,6 +56,18 @@ class EventChoiceRequest(BaseModel):
     choice_id: str
 
 
+class LLMEventRequest(BaseModel):
+    game_id: str
+    event_type: str
+    event_data: Dict[str, Any]
+    game_state: Dict[str, Any]
+
+
+class SyncStateRequest(BaseModel):
+    game_id: str
+    game_state: Dict[str, Any]
+
+
 # 应用生命周期管理
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -280,6 +292,89 @@ async def perform_action(request: ActionRequest):
     except Exception as e:
         logger.error(f"Failed to process action: {e}")
         raise HTTPException(status_code=500, detail=f"处理行动失败: {str(e)}")
+
+
+@app.post("/api/llm-event")
+async def handle_llm_event(request: LLMEventRequest):
+    """处理需要LLM的事件"""
+    try:
+        logger.info(f"Processing LLM event: {request.event_type} for game: {request.game_id}")
+
+        if request.game_id not in game_engine.active_games:
+            raise HTTPException(status_code=404, detail="游戏未找到")
+
+        # 从请求中重建游戏状态
+        from data_manager import data_manager
+        game_state = data_manager._dict_to_game_state(request.game_state)
+
+        # 更新内存中的游戏状态
+        game_engine.active_games[request.game_id] = game_state
+
+        event_type = request.event_type
+        event_data = request.event_data
+
+        # 根据事件类型处理
+        if event_type == 'tile_event':
+            # 处理瓦片事件
+            tile_data = event_data.get('tile', {})
+            position = event_data.get('position', [0, 0])
+
+            # 重建MapTile对象
+            from data_models import MapTile, TerrainType
+            tile = MapTile()
+            tile.x = tile_data.get('x', position[0])
+            tile.y = tile_data.get('y', position[1])
+            tile.terrain = TerrainType(tile_data.get('terrain', 'floor'))
+            tile.has_event = tile_data.get('has_event', False)
+            tile.event_type = tile_data.get('event_type', '')
+            tile.event_data = tile_data.get('event_data', {})
+            tile.event_triggered = tile_data.get('event_triggered', False)
+
+            # 触发事件
+            event_result = await game_engine._trigger_tile_event(game_state, tile)
+
+            return {
+                "success": True,
+                "message": event_result,
+                "events": [event_result],
+                "game_state": game_state.to_dict()
+            }
+
+        else:
+            return {
+                "success": False,
+                "message": f"未知的事件类型: {event_type}"
+            }
+
+    except Exception as e:
+        logger.error(f"Failed to process LLM event: {e}")
+        raise HTTPException(status_code=500, detail=f"处理LLM事件失败: {str(e)}")
+
+
+@app.post("/api/sync-state")
+async def sync_game_state(request: SyncStateRequest):
+    """同步游戏状态（用于存档）"""
+    try:
+        logger.info(f"Syncing game state for game: {request.game_id}")
+
+        # 从请求中重建游戏状态
+        from data_manager import data_manager
+        game_state = data_manager._dict_to_game_state(request.game_state)
+
+        # 更新内存中的游戏状态
+        game_engine.active_games[request.game_id] = game_state
+
+        # 可选：立即保存到文件
+        # data_manager.save_game_state(game_state)
+
+        return {
+            "success": True,
+            "message": "游戏状态已同步"
+        }
+
+    except Exception as e:
+        logger.error(f"Failed to sync game state: {e}")
+        raise HTTPException(status_code=500, detail=f"同步游戏状态失败: {str(e)}")
 
 
 @app.post("/api/event-choice")
@@ -830,9 +925,12 @@ async def auto_load_game(game_id: str):
 
 
 @app.get("/direct-start")
-async def direct_start_game():
+async def direct_start_game(request: Request, response: Response):
     """直接开始游戏 - 无加载界面，直接进入游戏"""
     try:
+        # 获取或创建用户ID
+        user_id = user_session_manager.get_or_create_user_id(request, response)
+
         # 随机生成角色名称
         random_names = [
             "测试勇者", "冒险家阿尔法", "探索者贝塔", "勇士伽马", "法师德尔塔",
@@ -853,6 +951,11 @@ async def direct_start_game():
             player_name=player_name,
             character_class=character_class
         )
+
+        # 保存到用户目录
+        game_data = game_state.to_dict()
+        user_session_manager.save_game_for_user(user_id, game_data)
+        logger.info(f"Game saved for user {user_id}: {game_state.id}")
 
         # 直接重定向到游戏界面
         from fastapi.responses import RedirectResponse

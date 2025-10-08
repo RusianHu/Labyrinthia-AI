@@ -3,11 +3,17 @@
 
 // 扩展核心游戏类，添加游戏动作功能
 Object.assign(LabyrinthiaGame.prototype, {
-    
+
     async movePlayer(direction) {
         if (this.isLoading) return;
-        
-        await this.performAction('move', { direction });
+
+        // 使用本地引擎处理移动
+        if (this.localEngine) {
+            await this.localEngine.movePlayer(direction);
+        } else {
+            // 回退到后端处理
+            await this.performAction('move', { direction });
+        }
     },
     
     async performAction(action, parameters = {}) {
@@ -132,7 +138,13 @@ Object.assign(LabyrinthiaGame.prototype, {
     },
 
     async attackMonster(monsterId) {
-        await this.performAction('attack', { target_id: monsterId });
+        // 使用本地引擎处理攻击
+        if (this.localEngine) {
+            await this.localEngine.attackMonster(monsterId);
+        } else {
+            // 回退到后端处理
+            await this.performAction('attack', { target_id: monsterId });
+        }
     },
 
     async useItem(itemId) {
