@@ -605,7 +605,13 @@ class PromptManager:
 - 地图深度：第{map_depth}层
 - 地图尺寸：{map_width}x{map_height}
 
-当前任务信息：{quest_info}
+当前任务信息：
+{{% if quest_id %}}
+- 任务ID：{quest_id}
+- 任务详情：{quest_info}
+{{% else %}}
+暂无活跃任务
+{{% endif %}}
 
 **重要说明**：你作为AI主持人，拥有完全的权限来修改游戏世界。你可以：
 1. 修改地图上任何位置的地形（如创建隐藏通道、新房间等）
@@ -613,8 +619,10 @@ class PromptManager:
 3. 改变玩家的属性和状态
 4. 推进任务进度
 5. 创建新的事件和互动元素
+6. **直接切换到全新的地图区域**（如发现传送门、进入异次元空间、被传送到新区域等）
 
 请根据玩家的选择生成合理且有趣的结果。如果选择涉及发现隐藏通道、秘密房间等，请大胆地修改地图结构。
+如果选择涉及传送、进入新区域等情况，可以直接切换到新地图。
 
 地图更新格式说明：
 - 使用 "x,y" 格式作为坐标键（如 "15,10"）
@@ -674,16 +682,29 @@ class PromptManager:
         }}
     }},
     "quest_updates": {{
-        "quest_id": {{"progress_percentage": 新进度}}
+        "{quest_id}": {{"progress_percentage": 新进度}}
+    }},
+    "map_transition": {{
+        "should_transition": false,  // 是否需要切换地图
+        "transition_type": "new_area",  // new_area 或 existing_area
+        "target_depth": 目标楼层（可选，默认为当前层+1）,
+        "theme": "新地图主题描述",
+        "message": "地图切换时的提示消息"
     }}
 }}
+
+**地图切换说明**：
+- 只有在选择涉及传送、进入新区域、发现传送门等情况时才设置 should_transition 为 true
+- transition_type 通常使用 "new_area" 来生成全新的地图
+- theme 应该描述新地图的风格和特点（如"神秘的地下湖泊"、"古老的图书馆"等）
+- message 是玩家看到的切换提示
             """.strip(),
             required_params=[
                 "choice_text", "choice_description", "event_context",
                 "player_name", "player_level", "player_hp", "player_max_hp",
                 "current_map", "map_depth", "map_width", "map_height", "tile_position"
             ],
-            optional_params={"quest_info": ""},
+            optional_params={"quest_info": "", "quest_id": ""},
             schema={
                 "type": "object",
                 "properties": {
@@ -704,7 +725,17 @@ class PromptManager:
                         }
                     },
                     "quest_updates": {"type": "object"},
-                    "new_items": {"type": "array"}
+                    "new_items": {"type": "array"},
+                    "map_transition": {
+                        "type": "object",
+                        "properties": {
+                            "should_transition": {"type": "boolean"},
+                            "transition_type": {"type": "string"},
+                            "target_depth": {"type": "integer"},
+                            "theme": {"type": "string"},
+                            "message": {"type": "string"}
+                        }
+                    }
                 },
                 "required": ["message", "events"]
             },

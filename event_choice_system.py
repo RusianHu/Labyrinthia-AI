@@ -470,8 +470,10 @@ class EventChoiceSystem:
         # 获取当前活跃任务信息
         active_quest = next((q for q in game_state.quests if q.is_active), None)
         quest_info = ""
+        quest_id = ""
         if active_quest:
             quest_info = f"任务：{active_quest.title} - {active_quest.description}"
+            quest_id = active_quest.id
 
         # 构建LLM提示来处理选择结果
         prompt = prompt_manager.format_prompt(
@@ -488,7 +490,8 @@ class EventChoiceSystem:
             map_width=game_state.current_map.width,
             map_height=game_state.current_map.height,
             tile_position=context.context_data.get("tile_position", (0, 0)),
-            quest_info=quest_info
+            quest_info=quest_info,
+            quest_id=quest_id
         )
 
         try:
@@ -509,7 +512,8 @@ class EventChoiceSystem:
                     map_updates=llm_response.get("map_updates", {}),
                     player_updates=llm_response.get("player_updates", {}),
                     quest_updates=llm_response.get("quest_updates", {}),
-                    new_items=llm_response.get("new_items", [])
+                    new_items=llm_response.get("new_items", []),
+                    map_transition=llm_response.get("map_transition", {})
                 )
 
                 # 调试日志：显示将要应用的更新
@@ -518,6 +522,11 @@ class EventChoiceSystem:
 
                 # 应用更新到游戏状态
                 await self._apply_choice_result(game_state, result)
+
+                # 处理地图切换（如果LLM建议）
+                if result.map_transition and result.map_transition.get("should_transition", False):
+                    await self._handle_story_event_map_transition(game_state, result.map_transition)
+
                 return result
             else:
                 logger.warning("LLM returned empty response for story choice")
@@ -595,6 +604,63 @@ class EventChoiceSystem:
             message=f"你选择了：{choice.text}",
             events=[choice.consequences or "你的选择为未来的冒险做好了准备..."]
         )
+
+    async def _handle_story_event_map_transition(self, game_state: GameState, transition_data: Dict[str, Any]):
+        """处理故事事件中的地图切换"""
+        try:
+            from game_engine import game_engine
+
+            transition_type = transition_data.get("transition_type", "new_area")
+            target_depth = transition_data.get("target_depth")
+
+            if transition_type == "new_area":
+                # 生成新区域
+                if target_depth is None:
+                    # 故事事件的地图切换可以是同层的不同区域
+                    target_depth = game_state.current_map.depth
+
+                # 确保楼层数合理
+                max_floors = config.game.max_quest_floors
+                if target_depth > max_floors:
+                    target_depth = max_floors
+                elif target_depth < 1:
+                    target_depth = 1
+
+                # 获取活跃任务上下文
+                active_quest = next((q for q in game_state.quests if q.is_active), None)
+                quest_context = active_quest.to_dict() if active_quest else None
+
+                # 生成新地图
+                from content_generator import content_generator
+                new_map = await content_generator.generate_dungeon_map(
+                    width=config.game.default_map_size[0],
+                    height=config.game.default_map_size[1],
+                    depth=target_depth,
+                    theme=transition_data.get("theme", f"神秘区域（第{target_depth}层）"),
+                    quest_context=quest_context
+                )
+
+                # 确保新地图的深度正确设置
+                new_map.depth = target_depth
+
+                # 执行地图切换
+                await self._execute_map_transition(game_state, new_map)
+
+                # 添加切换消息
+                transition_message = transition_data.get("message", f"你被传送到了{new_map.name}（第{target_depth}层）")
+                game_state.pending_events.append(transition_message)
+
+                logger.info(f"Story event map transition completed: {new_map.name} (Depth: {target_depth})")
+
+            elif transition_type == "existing_area":
+                # 切换到已存在的区域（如果有的话）
+                # 这里可以实现切换到之前访问过的地图的逻辑
+                pass
+
+        except Exception as e:
+            logger.error(f"Error handling story event map transition: {e}")
+            # 如果地图切换失败，添加错误消息但不中断游戏
+            game_state.pending_events.append("地图切换遇到了一些问题，但你的冒险将继续...")
 
     async def _handle_quest_completion_map_transition(self, game_state: GameState, transition_data: Dict[str, Any]):
         """处理任务完成后的地图切换"""
