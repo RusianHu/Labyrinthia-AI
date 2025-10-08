@@ -2341,6 +2341,120 @@ if config.game.debug_mode:
             logger.error(f"Debug generate item error: {e}")
             return {"success": False, "message": f"生成物品失败: {str(e)}"}
 
+    @app.post("/api/game/{game_id}/debug/get-treasure")
+    async def debug_get_random_treasure(game_id: str, request: Request):
+        """调试：获得随机宝物（模拟宝箱）"""
+        try:
+            if game_id not in game_engine.active_games:
+                raise HTTPException(status_code=404, detail="游戏未找到")
+
+            game_state = game_engine.active_games[game_id]
+            request_data = await request.json()
+
+            player_position = request_data.get("player_position", game_state.player.position)
+            player_level = request_data.get("player_level", game_state.player.stats.level)
+            quest_context = request_data.get("quest_context")
+
+            # 构建宝箱上下文
+            treasure_context = {
+                "player_level": player_level,
+                "player_class": game_state.player.character_class.value,
+                "current_floor": game_state.current_map.depth,
+                "map_name": game_state.current_map.name,
+                "position": player_position
+            }
+
+            if quest_context:
+                treasure_context["quest_name"] = quest_context.get("name", "")
+                treasure_context["quest_description"] = quest_context.get("description", "")
+
+            # 使用LLM生成宝物
+            from llm_service import llm_service
+
+            prompt = f"""你是一个DND风格地下城游戏的宝箱生成器。玩家打开了一个宝箱，请生成1-3个合适的宝物。
+
+玩家信息：
+- 等级: {player_level}
+- 职业: {treasure_context['player_class']}
+- 当前楼层: {treasure_context['current_floor']}
+- 地图: {treasure_context['map_name']}
+
+{f"当前任务: {treasure_context.get('quest_name', '')}" if quest_context else ""}
+{f"任务描述: {treasure_context.get('quest_description', '')}" if quest_context else ""}
+
+请生成宝物列表，每个宝物包含：
+1. 中文名称（必须是中文）
+2. 详细的功能描述
+3. 物品类型（weapon/armor/consumable/accessory/quest_item）
+4. 稀有度（common/uncommon/rare/epic/legendary）
+
+请以JSON格式返回，格式如下：
+{{
+    "items": [
+        {{
+            "name": "物品名称",
+            "description": "详细描述",
+            "type": "物品类型",
+            "rarity": "稀有度",
+            "effects": {{
+                "stat_bonuses": {{"strength": 2}},
+                "special_abilities": ["特殊能力描述"]
+            }}
+        }}
+    ],
+    "narrative": "发现宝物时的叙述文本"
+}}"""
+
+            # 调用LLM
+            llm_response = await llm_service.generate_text(prompt=prompt)
+
+            if not llm_response:
+                return {"success": False, "message": "LLM生成失败"}
+
+            # 解析LLM响应
+            import json
+            import re
+
+            # 尝试提取JSON
+            json_match = re.search(r'\{[\s\S]*\}', llm_response)
+            if json_match:
+                treasure_data = json.loads(json_match.group())
+            else:
+                return {"success": False, "message": "无法解析LLM响应"}
+
+            # 将物品添加到玩家背包
+            from data_models import Item
+            item_names = []
+
+            for item_data in treasure_data.get("items", []):
+                item = Item(
+                    name=item_data.get("name", "未知物品"),
+                    description=item_data.get("description", ""),
+                    item_type=item_data.get("type", "consumable"),
+                    rarity=item_data.get("rarity", "common"),
+                    properties=item_data.get("effects", {}),
+                    llm_generated=True,
+                    generation_context="宝箱生成"
+                )
+                game_state.player.inventory.append(item)
+                item_names.append(item.name)
+
+            # 获取叙述文本
+            narrative = treasure_data.get("narrative", "你打开了宝箱，发现了一些宝物！")
+
+            # 保存游戏状态
+            await game_engine._save_game_async(game_state)
+
+            return {
+                "success": True,
+                "message": narrative,
+                "items": item_names
+            }
+
+        except Exception as e:
+            logger.error(f"Debug get treasure error: {e}")
+            return {"success": False, "message": f"获取宝物失败: {str(e)}"}
+
     @app.post("/api/game/{game_id}/debug/teleport")
     async def debug_teleport_to_floor(game_id: str, request: Request):
         """调试：传送到指定楼层"""

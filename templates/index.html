@@ -326,6 +326,9 @@
                     <button class="debug-btn" onclick="game.debugGenerateTestItem()" title="在玩家背包中添加随机生成的测试物品">
                         <i class="material-icons">inventory</i>生成测试物品
                     </button>
+                    <button class="debug-btn" onclick="game.debugGetRandomTreasure()" title="模拟打开宝箱，获得随机宝物（由LLM生成）">
+                        <i class="material-icons">redeem</i>获得随机宝物
+                    </button>
                     <div class="debug-teleport-group">
                         <input type="number" id="debug-floor-input" placeholder="楼层数" min="1" max="10" value="1" class="debug-input">
                         <button class="debug-btn" onclick="game.debugTeleportToFloor()" title="传送到指定楼层进行测试">
@@ -401,7 +404,7 @@
     <script src="/static/CharacterSprites.js?v=4"></script>
 
     <!-- 4. 功能扩展模块 - 按依赖关系顺序加载 -->
-    <script src="/static/DebugManager.js?v=4"></script>
+    <script src="/static/DebugManager.js?v=5"></script>
     <script src="/static/OverlayManager.js?v=4"></script>
     <script src="/static/EffectsManager.js?v=4"></script>
     <script src="/static/UIManager.js?v=4"></script>

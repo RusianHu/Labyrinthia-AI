@@ -217,7 +217,11 @@ body {
 .terrain-wall { background: #34495e; }
 .terrain-door { background: #8b4513; }
 .terrain-trap { background: #e74c3c; }
-.terrain-treasure { background: #f1c40f; }
+.terrain-treasure {
+    background: #f1c40f url('/static/assets/terrain/treasure_chest.png') center center no-repeat;
+    background-size: 80%;
+    position: relative;
+}
 .terrain-stairs_up {
     background: linear-gradient(135deg, #3498db 0%, #2980b9 100%);
     position: relative;

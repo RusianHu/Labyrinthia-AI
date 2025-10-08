@@ -281,6 +281,49 @@ const DebugMethods = {
         }
     },
 
+    async debugGetRandomTreasure() {
+        if (!this.gameId || !this.gameState) {
+            this.addMessage('❌ 请先开始游戏');
+            return;
+        }
+
+        try {
+            this.showLLMOverlay('interact');
+
+            const response = await fetch(`/api/game/${this.gameId}/debug/get-treasure`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    player_position: this.gameState.player.position,
+                    player_level: this.gameState.player.stats.level,
+                    quest_context: this.gameState.current_quest ? {
+                        name: this.gameState.current_quest.name,
+                        description: this.gameState.current_quest.description
+                    } : null
+                })
+            });
+
+            const result = await response.json();
+
+            if (result.success) {
+                this.addMessage(`💎 ${result.message}`);
+                if (result.items && result.items.length > 0) {
+                    result.items.forEach(item => {
+                        this.addMessage(`  ✨ 获得: ${item}`, 'success');
+                    });
+                }
+                await this.refreshGameState();
+            } else {
+                this.addMessage(`❌ 获取宝物失败: ${result.message}`);
+            }
+        } catch (error) {
+            console.error('Debug get treasure error:', error);
+            this.addMessage('❌ 获取宝物时发生错误');
+        } finally {
+            this.hideLLMOverlay();
+        }
+    },
+
     async debugTeleportToFloor() {
         if (!this.gameId || !this.gameState) {
             this.addMessage('❌ 请先开始游戏');
