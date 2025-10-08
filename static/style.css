@@ -750,6 +750,298 @@ body {
     background: linear-gradient(135deg, #ff85ab, #ffed5a);
 }
 
+/* 表单样式 */
+.form-group {
+    margin-bottom: 20px;
+    text-align: left;
+}
+
+.form-group label {
+    display: block;
+    margin-bottom: 5px;
+    font-weight: 500;
+    color: #5e35b1;
+}
+
+.form-group input,
+.form-group select {
+    width: 100%;
+    padding: 10px;
+    border: 2px solid #ddd;
+    border-radius: 6px;
+    font-size: 1rem;
+    transition: border-color 0.2s ease;
+}
+
+.form-group input:focus,
+.form-group select:focus {
+    outline: none;
+    border-color: #5e35b1;
+}
+
+.form-buttons {
+    display: flex;
+    gap: 15px;
+    justify-content: center;
+    margin-top: 30px;
+}
+
+/* 角色信息样式 */
+.character-info {
+    margin-bottom: 20px;
+    padding: 15px;
+    background: rgba(94, 53, 177, 0.1);
+    border-radius: 8px;
+}
+
+.character-name {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 5px;
+}
+
+.level {
+    background: #5e35b1;
+    color: white;
+    padding: 2px 8px;
+    border-radius: 12px;
+    font-size: 0.8rem;
+}
+
+.character-class {
+    color: #666;
+    font-style: italic;
+    margin-bottom: 5px;
+}
+
+.character-position {
+    color: #666;
+    font-size: 0.9rem;
+}
+
+.character-floor {
+    color: #666;
+    font-size: 0.9rem;
+}
+
+.character-map {
+    color: #666;
+    font-size: 0.9rem;
+}
+
+/* 状态栏样式 */
+.stat-bar {
+    margin-bottom: 15px;
+}
+
+.stat-label {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    margin-bottom: 5px;
+    font-weight: 500;
+    color: #5e35b1;
+}
+
+.stat-label .material-icons {
+    font-size: 18px;
+}
+
+.stat-value {
+    text-align: right;
+    font-weight: 500;
+    margin-bottom: 5px;
+}
+
+/* 对话框样式 */
+.dialog-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.7);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 1000;
+}
+
+.dialog {
+    background: white;
+    border-radius: 12px;
+    padding: 24px;
+    max-width: 500px;
+    width: 90%;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+}
+
+.dialog h3 {
+    margin-top: 0;
+    color: #5e35b1;
+    text-align: center;
+}
+
+.item-name {
+    font-size: 1.2rem;
+    font-weight: bold;
+    color: #5e35b1;
+    margin-bottom: 10px;
+}
+
+.item-description {
+    color: #666;
+    margin-bottom: 15px;
+    line-height: 1.5;
+}
+
+.item-usage {
+    background: rgba(94, 53, 177, 0.1);
+    padding: 12px;
+    border-radius: 8px;
+    margin-bottom: 20px;
+    border-left: 4px solid #5e35b1;
+}
+
+.dialog-buttons {
+    display: flex;
+    gap: 12px;
+    justify-content: center;
+}
+
+.dialog-buttons .btn {
+    flex: 1;
+    max-width: 100px;
+}
+
+/* 事件选择对话框样式 */
+.event-choice-dialog {
+    max-width: 600px;
+    width: 95%;
+}
+
+.event-description {
+    background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+    padding: 20px;
+    border-radius: 12px;
+    margin-bottom: 24px;
+    border-left: 4px solid #5e35b1;
+    font-size: 16px;
+    line-height: 1.6;
+    color: #2c3e50;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.choice-options {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+.choice-option {
+    background: white;
+    border: 2px solid #e9ecef;
+    border-radius: 12px;
+    padding: 20px;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    position: relative;
+    overflow: hidden;
+}
+
+.choice-option:hover {
+    border-color: #5e35b1;
+    transform: translateY(-2px);
+    box-shadow: 0 4px 16px rgba(94, 53, 177, 0.2);
+}
+
+.choice-option.disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+    background: #f8f9fa;
+}
+
+.choice-option.disabled:hover {
+    transform: none;
+    box-shadow: none;
+    border-color: #e9ecef;
+}
+
+.choice-text {
+    font-weight: 600;
+    font-size: 18px;
+    color: #2c3e50;
+    margin-bottom: 8px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.choice-text::before {
+    content: "▶";
+    color: #5e35b1;
+    font-size: 14px;
+    transition: transform 0.3s ease;
+}
+
+.choice-option:hover .choice-text::before {
+    transform: translateX(4px);
+}
+
+.choice-description {
+    color: #6c757d;
+    font-size: 14px;
+    line-height: 1.5;
+    margin-bottom: 8px;
+}
+
+.choice-consequences {
+    color: #495057;
+    font-size: 13px;
+    font-style: italic;
+    padding: 8px 12px;
+    background: rgba(94, 53, 177, 0.1);
+    border-radius: 6px;
+    border-left: 3px solid #5e35b1;
+}
+
+.choice-requirements {
+    position: absolute;
+    top: 12px;
+    right: 12px;
+    background: #ffc107;
+    color: #212529;
+    padding: 4px 8px;
+    border-radius: 12px;
+    font-size: 11px;
+    font-weight: 600;
+}
+
+.choice-option.disabled .choice-requirements {
+    background: #dc3545;
+    color: white;
+}
+
+/* 选择动画效果 */
+.choice-option.selected {
+    background: linear-gradient(135deg, #5e35b1 0%, #7e57c2 100%);
+    color: white;
+    border-color: #5e35b1;
+    transform: scale(0.98);
+}
+
+.choice-option.selected .choice-text,
+.choice-option.selected .choice-description,
+.choice-option.selected .choice-consequences {
+    color: white;
+}
+
+.choice-option.selected .choice-consequences {
+    background: rgba(255, 255, 255, 0.2);
+    border-left-color: white;
+}
+
 /* 控制面板 */
 .controls {
     display: grid;
@@ -762,6 +1054,18 @@ body {
     padding: 8px;
     font-size: 0.8rem;
     min-height: 36px;
+}
+
+/* 加载指示器 */
+.loading-indicator {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    padding: 10px;
+    margin-top: 10px;
+    color: #5e35b1;
+    font-size: 0.9rem;
 }
 
 /* 方向控制 */
@@ -857,24 +1161,64 @@ body {
     border: 2px solid #5e35b1;
 }
 
+/* ========================================
+   初始隐藏状态 - 通过 JavaScript 控制显示
+   ======================================== */
+#btn-quick-test,
+#game-interface,
+.loading-indicator,
+#item-use-dialog,
+#event-choice-dialog {
+    display: none;
+}
+
+/* 消息日志面板间距 */
+.message-log-panel {
+    margin-top: 15px;
+}
+
+/* 进度条初始宽度 - 通过 JavaScript 动态更新 */
+.progress-fill.progress-hp,
+.progress-fill.progress-mp {
+    width: 100%;
+}
+
+.progress-fill.progress-exp {
+    width: 0%;
+}
+
 /* 响应式设计 */
 @media (max-width: 768px) {
     .game-layout {
         grid-template-columns: 1fr;
         grid-template-rows: 1fr auto;
     }
-    
+
     .sidebar {
         flex-direction: row;
         overflow-x: auto;
     }
-    
+
     .panel {
         min-width: 250px;
     }
-    
+
     .header h1 {
         font-size: 2rem;
+    }
+
+    /* 事件选择对话框响应式样式 */
+    .event-choice-dialog {
+        width: 98%;
+        margin: 10px;
+    }
+
+    .choice-option {
+        padding: 16px;
+    }
+
+    .choice-text {
+        font-size: 16px;
     }
 }
 
@@ -1937,4 +2281,46 @@ body {
 .debug-teleport-group .debug-btn {
     flex: 2;
     margin-bottom: 0;
+}
+
+/* 调试模式快速测试按钮样式 */
+.debug-only {
+    position: relative;
+    overflow: hidden;
+}
+
+.debug-only::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: -100%;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.3), transparent);
+    transition: left 0.5s ease;
+}
+
+.debug-only:hover::before {
+    left: 100%;
+}
+
+.debug-only:hover {
+    transform: translateY(-2px) scale(1.02);
+    box-shadow: 0 6px 20px rgba(255, 154, 86, 0.5);
+}
+
+/* 确保按钮在调试模式下有特殊的视觉效果 */
+#btn-quick-test {
+    background: linear-gradient(135deg, #ff9800, #f57c00);
+    border: 2px solid rgba(255, 152, 0, 0.3);
+    animation: debugPulse 2s infinite;
+}
+
+@keyframes debugPulse {
+    0%, 100% {
+        box-shadow: 0 4px 12px rgba(255, 152, 0, 0.3);
+    }
+    50% {
+        box-shadow: 0 4px 20px rgba(255, 152, 0, 0.6);
+    }
 }

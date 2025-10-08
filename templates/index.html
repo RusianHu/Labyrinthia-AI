@@ -10,7 +10,7 @@
     <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
     
     <!-- 样式表 -->
-    <link rel="stylesheet" href="/static/style.css?v=5">
+    <link rel="stylesheet" href="/static/style.css?v=6">
 </head>
 <body>
     <!-- 头部 -->
@@ -62,7 +62,7 @@
                         导入存档
                     </button>
                     <!-- 调试模式快捷按钮 - 仅在调试模式启用时显示 -->
-                    <button id="btn-quick-test" class="btn btn-warning debug-only" style="display: none;" onclick="window.open('/static/quick_test.html', '_blank')">
+                    <button id="btn-quick-test" class="btn btn-warning debug-only" onclick="window.open('/static/quick_test.html', '_blank')">
                         <i class="material-icons">bug_report</i>
                         快速测试
                     </button>
@@ -84,7 +84,7 @@
         </div>
 
         <!-- 游戏界面 -->
-        <div id="game-interface" class="game-layout" style="display: none;">
+        <div id="game-interface" class="game-layout">
             <!-- 主游戏区域 -->
             <div class="game-main elevation-2">
                 <!-- 任务面板 -->
@@ -102,7 +102,7 @@
                 </div>
 
                 <!-- 消息日志 -->
-                <div class="panel" style="margin-top: 15px;">
+                <div class="panel message-log-panel">
                     <h3>
                         <i class="material-icons">chat</i>
                         消息日志
@@ -142,7 +142,7 @@
                                 <span id="hp-current">100</span>/<span id="hp-max">100</span>
                             </div>
                             <div class="progress-bar">
-                                <div id="hp-bar" class="progress-fill progress-hp" style="width: 100%"></div>
+                                <div id="hp-bar" class="progress-fill progress-hp"></div>
                             </div>
                         </div>
                         
@@ -156,7 +156,7 @@
                                 <span id="mp-current">50</span>/<span id="mp-max">50</span>
                             </div>
                             <div class="progress-bar">
-                                <div id="mp-bar" class="progress-fill progress-mp" style="width: 100%"></div>
+                                <div id="mp-bar" class="progress-fill progress-mp"></div>
                             </div>
                         </div>
                         
@@ -168,7 +168,7 @@
                             </div>
                             <div class="stat-value" id="exp-text">0/1000</div>
                             <div class="progress-bar">
-                                <div id="exp-bar" class="progress-fill progress-exp" style="width: 0%"></div>
+                                <div id="exp-bar" class="progress-fill progress-exp"></div>
                             </div>
                         </div>
                     </div>
@@ -209,8 +209,8 @@
                             菜单
                         </button>
                     </div>
-                    
-                    <div class="loading-indicator" style="display: none;">
+
+                    <div class="loading-indicator">
                         <div class="loading"></div>
                         处理中...
                     </div>
@@ -226,7 +226,7 @@
                 </div>
 
                 <!-- 物品使用确认对话框 -->
-                <div id="item-use-dialog" class="dialog-overlay" style="display: none;">
+                <div id="item-use-dialog" class="dialog-overlay">
                     <div class="dialog">
                         <h3>使用物品</h3>
                         <div id="item-use-content">
@@ -243,7 +243,7 @@
                 </div>
 
                 <!-- 事件选择对话框 -->
-                <div id="event-choice-dialog" class="dialog-overlay" style="display: none;">
+                <div id="event-choice-dialog" class="dialog-overlay">
                     <div class="dialog event-choice-dialog">
                         <h3 id="event-choice-title">事件选择</h3>
                         <div id="event-choice-content">
@@ -483,547 +483,5 @@
             initializeGame();
         }
     </script>
-    
-    <style>
-        /* 额外的样式 */
-        .main-menu {
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            min-height: 60vh;
-        }
-
-        /* .menu-panel 样式已移至 static/style.css */
-
-        /* .menu-panel h2 和 .menu-panel p 样式已移至 static/style.css */
-        
-        .menu-buttons {
-            display: flex;
-            gap: 15px;
-            justify-content: center;
-            margin-bottom: 30px;
-        }
-        
-        .menu-buttons .btn {
-            flex: 1;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 8px;
-        }
-
-        /* 存档管理按钮样式 */
-        .save-management-buttons {
-            display: flex;
-            gap: 10px;
-            justify-content: center;
-            margin: 20px 0;
-        }
-
-        .save-management-buttons .btn {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 8px;
-            padding: 10px 20px;
-        }
-
-        .btn-accent {
-            background: linear-gradient(135deg, #00bcd4, #0097a7);
-            color: white;
-            border: none;
-        }
-
-        .btn-accent:hover {
-            background: linear-gradient(135deg, #00acc1, #00838f);
-            transform: translateY(-2px);
-            box-shadow: 0 4px 12px rgba(0, 188, 212, 0.4);
-        }
-
-        .saves-list {
-            max-height: 300px;
-            overflow-y: auto;
-        }
-
-        /* GitHub 链接容器样式 */
-        .github-link-container {
-            margin: 25px 0 20px 0;
-            display: flex;
-            justify-content: center;
-        }
-
-        .github-link {
-            display: inline-flex;
-            align-items: center;
-            gap: 10px;
-            padding: 12px 24px;
-            background: linear-gradient(135deg, #24292e 0%, #1a1e22 100%);
-            color: white;
-            text-decoration: none;
-            border-radius: 8px;
-            font-weight: 500;
-            font-size: 0.95rem;
-            transition: all 0.3s ease;
-            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
-            position: relative;
-            overflow: hidden;
-        }
-
-        .github-link::before {
-            content: '';
-            position: absolute;
-            top: 0;
-            left: -100%;
-            width: 100%;
-            height: 100%;
-            background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
-            transition: left 0.5s ease;
-        }
-
-        .github-link:hover::before {
-            left: 100%;
-        }
-
-        .github-link:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 4px 16px rgba(36, 41, 46, 0.4);
-            background: linear-gradient(135deg, #2d333b 0%, #24292e 100%);
-        }
-
-        .github-link:active {
-            transform: translateY(0);
-            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
-        }
-
-        .github-icon {
-            flex-shrink: 0;
-            transition: transform 0.3s ease;
-        }
-
-        .github-link:hover .github-icon {
-            transform: rotate(360deg);
-        }
-
-        /* 调试模式快速测试按钮样式 */
-        .debug-only {
-            position: relative;
-            overflow: hidden;
-        }
-
-        .debug-only::before {
-            content: '';
-            position: absolute;
-            top: 0;
-            left: -100%;
-            width: 100%;
-            height: 100%;
-            background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.3), transparent);
-            transition: left 0.5s ease;
-        }
-
-        .debug-only:hover::before {
-            left: 100%;
-        }
-
-        .debug-only:hover {
-            transform: translateY(-2px) scale(1.02);
-            box-shadow: 0 6px 20px rgba(255, 154, 86, 0.5);
-        }
-
-        /* 确保按钮在调试模式下有特殊的视觉效果 */
-        #btn-quick-test {
-            background: linear-gradient(135deg, #ff9800, #f57c00);
-            border: 2px solid rgba(255, 152, 0, 0.3);
-            animation: debugPulse 2s infinite;
-        }
-
-        @keyframes debugPulse {
-            0%, 100% {
-                box-shadow: 0 4px 12px rgba(255, 152, 0, 0.3);
-            }
-            50% {
-                box-shadow: 0 4px 20px rgba(255, 152, 0, 0.6);
-            }
-        }
-        
-        .save-item {
-            background: rgba(94, 53, 177, 0.1);
-            border-radius: 8px;
-            padding: 15px;
-            margin-bottom: 10px;
-            text-align: left;
-        }
-        
-        .save-item h4 {
-            color: #5e35b1;
-            margin-bottom: 5px;
-        }
-        
-        .save-item p {
-            color: #666;
-            font-size: 0.9rem;
-            margin-bottom: 5px;
-        }
-        
-        .save-item button {
-            margin-right: 10px;
-            margin-top: 10px;
-        }
-
-        /* 导出按钮样式 */
-        .export-save-btn {
-            background: linear-gradient(135deg, #00bcd4, #0097a7);
-            color: white;
-            border: none;
-            padding: 8px 16px;
-            border-radius: 6px;
-            cursor: pointer;
-            font-size: 0.9rem;
-            display: inline-flex;
-            align-items: center;
-            gap: 5px;
-            transition: all 0.3s ease;
-        }
-
-        .export-save-btn:hover {
-            background: linear-gradient(135deg, #00acc1, #00838f);
-            transform: translateY(-2px);
-            box-shadow: 0 4px 12px rgba(0, 188, 212, 0.4);
-        }
-
-        .export-save-btn .material-icons {
-            font-size: 18px;
-        }
-        
-        .form-group {
-            margin-bottom: 20px;
-            text-align: left;
-        }
-        
-        .form-group label {
-            display: block;
-            margin-bottom: 5px;
-            font-weight: 500;
-            color: #5e35b1;
-        }
-        
-        .form-group input,
-        .form-group select {
-            width: 100%;
-            padding: 10px;
-            border: 2px solid #ddd;
-            border-radius: 6px;
-            font-size: 1rem;
-            transition: border-color 0.2s ease;
-        }
-        
-        .form-group input:focus,
-        .form-group select:focus {
-            outline: none;
-            border-color: #5e35b1;
-        }
-        
-        .form-buttons {
-            display: flex;
-            gap: 15px;
-            justify-content: center;
-            margin-top: 30px;
-        }
-        
-        .character-info {
-            margin-bottom: 20px;
-            padding: 15px;
-            background: rgba(94, 53, 177, 0.1);
-            border-radius: 8px;
-        }
-        
-        .character-name {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 5px;
-        }
-        
-        .level {
-            background: #5e35b1;
-            color: white;
-            padding: 2px 8px;
-            border-radius: 12px;
-            font-size: 0.8rem;
-        }
-        
-        .character-class {
-            color: #666;
-            font-style: italic;
-            margin-bottom: 5px;
-        }
-        
-        .character-position {
-            color: #666;
-            font-size: 0.9rem;
-        }
-        
-        .stat-bar {
-            margin-bottom: 15px;
-        }
-        
-        .stat-label {
-            display: flex;
-            align-items: center;
-            gap: 5px;
-            margin-bottom: 5px;
-            font-weight: 500;
-            color: #5e35b1;
-        }
-        
-        .stat-label .material-icons {
-            font-size: 18px;
-        }
-        
-        .stat-value {
-            text-align: right;
-            font-weight: 500;
-            margin-bottom: 5px;
-        }
-        
-        /* 任务列表样式 - 与static/style.css保持一致，但添加备用滚动机制 */
-        .quest-list {
-            /* 优先使用static/style.css中的样式，这里只作为备用 */
-            max-height: 80vh; /* 最大不超过视窗高度的80% - 备用机制 */
-            overflow-y: auto; /* 备用滚动机制 */
-            /* 平滑的过渡效果 */
-            transition: max-height 0.3s ease, height 0.3s ease;
-        }
-        
-        .quest-item {
-            background: rgba(94, 53, 177, 0.1);
-            border-radius: 8px;
-            padding: 15px;
-            margin-bottom: 10px;
-        }
-        
-        .quest-item h4 {
-            color: #5e35b1;
-            margin-bottom: 8px;
-        }
-        
-        .quest-objectives {
-            margin-top: 10px;
-        }
-        
-        .objective {
-            padding: 3px 0;
-            font-size: 0.9rem;
-        }
-        
-        .objective.completed {
-            color: #27ae60;
-            text-decoration: line-through;
-        }
-
-        /* 物品使用对话框样式 */
-        .dialog-overlay {
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: rgba(0, 0, 0, 0.7);
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            z-index: 1000;
-        }
-
-        .dialog {
-            background: white;
-            border-radius: 12px;
-            padding: 24px;
-            max-width: 500px;
-            width: 90%;
-            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
-        }
-
-        .dialog h3 {
-            margin-top: 0;
-            color: #5e35b1;
-            text-align: center;
-        }
-
-        .item-name {
-            font-size: 1.2rem;
-            font-weight: bold;
-            color: #5e35b1;
-            margin-bottom: 10px;
-        }
-
-        .item-description {
-            color: #666;
-            margin-bottom: 15px;
-            line-height: 1.5;
-        }
-
-        .item-usage {
-            background: rgba(94, 53, 177, 0.1);
-            padding: 12px;
-            border-radius: 8px;
-            margin-bottom: 20px;
-            border-left: 4px solid #5e35b1;
-        }
-
-        .dialog-buttons {
-            display: flex;
-            gap: 12px;
-            justify-content: center;
-        }
-
-        .dialog-buttons .btn {
-            flex: 1;
-            max-width: 100px;
-        }
-
-        /* 事件选择对话框样式 */
-        .event-choice-dialog {
-            max-width: 600px;
-            width: 95%;
-        }
-
-        .event-description {
-            background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
-            padding: 20px;
-            border-radius: 12px;
-            margin-bottom: 24px;
-            border-left: 4px solid #5e35b1;
-            font-size: 16px;
-            line-height: 1.6;
-            color: #2c3e50;
-            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-        }
-
-        .choice-options {
-            display: flex;
-            flex-direction: column;
-            gap: 16px;
-        }
-
-        .choice-option {
-            background: white;
-            border: 2px solid #e9ecef;
-            border-radius: 12px;
-            padding: 20px;
-            cursor: pointer;
-            transition: all 0.3s ease;
-            position: relative;
-            overflow: hidden;
-        }
-
-        .choice-option:hover {
-            border-color: #5e35b1;
-            transform: translateY(-2px);
-            box-shadow: 0 4px 16px rgba(94, 53, 177, 0.2);
-        }
-
-        .choice-option.disabled {
-            opacity: 0.6;
-            cursor: not-allowed;
-            background: #f8f9fa;
-        }
-
-        .choice-option.disabled:hover {
-            transform: none;
-            box-shadow: none;
-            border-color: #e9ecef;
-        }
-
-        .choice-text {
-            font-weight: 600;
-            font-size: 18px;
-            color: #2c3e50;
-            margin-bottom: 8px;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }
-
-        .choice-text::before {
-            content: "▶";
-            color: #5e35b1;
-            font-size: 14px;
-            transition: transform 0.3s ease;
-        }
-
-        .choice-option:hover .choice-text::before {
-            transform: translateX(4px);
-        }
-
-        .choice-description {
-            color: #6c757d;
-            font-size: 14px;
-            line-height: 1.5;
-            margin-bottom: 8px;
-        }
-
-        .choice-consequences {
-            color: #495057;
-            font-size: 13px;
-            font-style: italic;
-            padding: 8px 12px;
-            background: rgba(94, 53, 177, 0.1);
-            border-radius: 6px;
-            border-left: 3px solid #5e35b1;
-        }
-
-        .choice-requirements {
-            position: absolute;
-            top: 12px;
-            right: 12px;
-            background: #ffc107;
-            color: #212529;
-            padding: 4px 8px;
-            border-radius: 12px;
-            font-size: 11px;
-            font-weight: 600;
-        }
-
-        .choice-option.disabled .choice-requirements {
-            background: #dc3545;
-            color: white;
-        }
-
-        /* 选择动画效果 */
-        .choice-option.selected {
-            background: linear-gradient(135deg, #5e35b1 0%, #7e57c2 100%);
-            color: white;
-            border-color: #5e35b1;
-            transform: scale(0.98);
-        }
-
-        .choice-option.selected .choice-text,
-        .choice-option.selected .choice-description,
-        .choice-option.selected .choice-consequences {
-            color: white;
-        }
-
-        .choice-option.selected .choice-consequences {
-            background: rgba(255, 255, 255, 0.2);
-            border-left-color: white;
-        }
-
-        /* 响应式设计 */
-        @media (max-width: 768px) {
-            .event-choice-dialog {
-                width: 98%;
-                margin: 10px;
-            }
-
-            .choice-option {
-                padding: 16px;
-            }
-
-            .choice-text {
-                font-size: 16px;
-            }
-        }
-    </style>
 </body>
 </html>
