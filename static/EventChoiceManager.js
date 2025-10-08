@@ -26,11 +26,30 @@ class EventChoiceManager {
         this.title = document.getElementById('event-choice-title');
         this.description = document.getElementById('event-choice-description');
         this.optionsContainer = document.getElementById('event-choice-options');
-        
+
         if (!this.dialog || !this.title || !this.description || !this.optionsContainer) {
-            console.error('Event choice dialog elements not found');
+            console.error('[EventChoiceManager] Event choice dialog elements not found:', {
+                dialog: !!this.dialog,
+                title: !!this.title,
+                description: !!this.description,
+                optionsContainer: !!this.optionsContainer
+            });
+
+            // 延迟重试初始化
+            setTimeout(() => {
+                console.log('[EventChoiceManager] Retrying element initialization...');
+                this.initializeElements();
+            }, 1000);
             return;
         }
+
+        // 确保对话框初始状态正确
+        this.dialog.style.display = 'none';
+        this.dialog.classList.remove('show');
+
+        console.log('[EventChoiceManager] Elements initialized successfully, initial state set to hidden');
+
+        console.log('[EventChoiceManager] Elements initialized successfully');
 
         // 添加点击外部关闭功能（但只在没有强制选择时）
         this.dialog.addEventListener('click', (e) => {
@@ -187,10 +206,29 @@ class EventChoiceManager {
     }
 
     showChoiceDialog(choiceContext) {
-        if (this.isVisible()) return; // 已经显示了对话框
+        if (!this.dialog || !this.title || !this.description || !this.optionsContainer) {
+            console.error('[EventChoiceManager] Cannot show dialog - elements not initialized');
+            return;
+        }
+
+        // 检查对话框当前状态
+        const currentDisplay = this.dialog.style.display;
+        const hasShowClass = this.dialog.classList.contains('show');
+        console.log('[EventChoiceManager] Dialog state check:', {
+            display: currentDisplay,
+            hasShowClass: hasShowClass,
+            isVisible: this.isVisible()
+        });
+
+        if (this.isVisible()) {
+            console.warn('[EventChoiceManager] Dialog already visible, skipping. Current context:', this.currentContext?.title);
+            return; // 已经显示了对话框
+        }
+
+        console.log('[EventChoiceManager] Showing choice dialog:', choiceContext.title);
 
         this.currentContext = choiceContext;
-        
+
         // 设置标题和描述
         this.title.textContent = choiceContext.title || '事件选择';
         this.description.textContent = choiceContext.description || '';
@@ -199,23 +237,37 @@ class EventChoiceManager {
         this.optionsContainer.innerHTML = '';
 
         // 创建选项
-        choiceContext.choices.forEach((choice, index) => {
-            const optionElement = this.createChoiceOption(choice, index);
-            this.optionsContainer.appendChild(optionElement);
-        });
+        if (choiceContext.choices && choiceContext.choices.length > 0) {
+            choiceContext.choices.forEach((choice, index) => {
+                const optionElement = this.createChoiceOption(choice, index);
+                this.optionsContainer.appendChild(optionElement);
+            });
+        } else {
+            console.warn('[EventChoiceManager] No choices available in context');
+        }
 
         // 显示对话框
+        console.log('[EventChoiceManager] Setting dialog display to flex');
         this.dialog.style.display = 'flex';
-        
+
         // 添加显示动画
         setTimeout(() => {
+            console.log('[EventChoiceManager] Adding show class');
             this.dialog.classList.add('show');
+
+            // 验证显示状态
+            const finalState = {
+                display: this.dialog.style.display,
+                hasShowClass: this.dialog.classList.contains('show'),
+                isVisible: this.isVisible()
+            };
+            console.log('[EventChoiceManager] Final dialog state:', finalState);
         }, 10);
 
         // 播放音效（如果有）
         this.playChoiceSound();
 
-        console.log('Event choice dialog shown:', choiceContext.title);
+        console.log('[EventChoiceManager] Dialog display initiated');
     }
 
     createChoiceOption(choice, index) {
@@ -402,7 +454,10 @@ class EventChoiceManager {
     }
 
     isVisible() {
-        return this.dialog && this.dialog.style.display !== 'none';
+        // 检查对话框是否真正可见（display不为none且有show类）
+        return this.dialog &&
+               this.dialog.style.display !== 'none' &&
+               this.dialog.classList.contains('show');
     }
 
     canClose() {

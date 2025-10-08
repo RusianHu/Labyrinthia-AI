@@ -246,6 +246,9 @@ class LocalGameEngine {
      * 触发后端事件
      */
     async triggerBackendEvent(eventType, eventData) {
+        console.log('[LocalGameEngine] Triggering backend event:', eventType);
+
+        // 显示LLM遮罩
         this.game.showLLMOverlay(eventType);
 
         try {
@@ -260,6 +263,10 @@ class LocalGameEngine {
                 })
             });
 
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+
             const result = await response.json();
 
             if (result.success) {
@@ -272,6 +279,7 @@ class LocalGameEngine {
             console.error('[LocalGameEngine] 后端事件处理失败:', error);
             this.addMessage('网络错误，请重试', 'error');
         } finally {
+            // 确保隐藏遮罩
             this.game.hideLLMOverlay();
         }
     }
@@ -280,6 +288,8 @@ class LocalGameEngine {
      * 应用后端返回的更新
      */
     applyBackendUpdates(result) {
+        console.log('[LocalGameEngine] Applying backend updates:', result);
+
         // 显示消息
         if (result.message) {
             this.addMessage(result.message, 'action');
@@ -297,13 +307,8 @@ class LocalGameEngine {
 
         // 更新游戏状态
         if (result.game_state) {
+            // 使用updateGameState会自动检查pending_choice_context
             this.game.updateGameState(result.game_state);
-
-            // 检查是否有待处理的选择上下文
-            if (result.game_state.pending_choice_context && window.eventChoiceManager) {
-                // 直接显示选项框
-                window.eventChoiceManager.showChoiceDialog(result.game_state.pending_choice_context);
-            }
         } else {
             // 只刷新UI
             this.game.updateUI();
@@ -345,6 +350,8 @@ class LocalGameEngine {
         const gameState = this.getGameState();
         if (!gameState) return;
 
+        console.log('[LocalGameEngine] Moving player:', direction);
+
         // 计算新位置
         const newPos = this.calculateNewPosition(direction);
         if (!newPos) {
@@ -370,6 +377,16 @@ class LocalGameEngine {
             return;
         }
 
+        // 检查目标瓦片
+        const targetTile = this.getTile(newPos.x, newPos.y);
+
+        // 检查是否需要后端处理（在移动前检查，以便正确显示遮罩）
+        const needsBackend = this.needsBackendProcessing(targetTile);
+
+        if (needsBackend) {
+            console.log('[LocalGameEngine] Tile needs backend processing, showing overlay');
+        }
+
         // 执行移动
         this.updatePlayerPosition(newPos.x, newPos.y);
         this.updateVisibility(newPos.x, newPos.y);
@@ -381,12 +398,9 @@ class LocalGameEngine {
         // 显示移动消息
         this.addMessage(`移动到 (${newPos.x}, ${newPos.y})`, 'action');
 
-        // 检查目标瓦片
-        const targetTile = this.getTile(newPos.x, newPos.y);
-
         // 检查是否需要后端处理
-        if (this.needsBackendProcessing(targetTile)) {
-            // 需要LLM处理的事件
+        if (needsBackend) {
+            // 需要LLM处理的事件 - triggerBackendEvent会自动显示遮罩
             await this.triggerBackendEvent('tile_event', {
                 tile: targetTile,
                 position: [newPos.x, newPos.y]
@@ -591,6 +605,8 @@ class LocalGameEngine {
         const player = gameState.player;
         const monster = this.findMonster(monsterId);
 
+        console.log('[LocalGameEngine] Attacking monster:', monsterId);
+
         if (!monster) {
             this.addMessage('目标未找到', 'error');
             return;
@@ -612,31 +628,39 @@ class LocalGameEngine {
             return;
         }
 
-        // 计算伤害
-        const damage = this.calculateDamage(player, monster);
-        monster.stats.hp -= damage;
+        // 显示攻击遮罩（简短）
+        this.game.showLLMOverlay('attack');
 
-        this.addMessage(`攻击了 ${monster.name}`, 'action');
-        this.addMessage(`对 ${monster.name} 造成了 ${damage} 点伤害`, 'combat');
+        try {
+            // 计算伤害
+            const damage = this.calculateDamage(player, monster);
+            monster.stats.hp -= damage;
 
-        // 检查怪物是否死亡
-        if (monster.stats.hp <= 0) {
-            this.handleMonsterDeath(monster);
-        }
+            this.addMessage(`攻击了 ${monster.name}`, 'action');
+            this.addMessage(`对 ${monster.name} 造成了 ${damage} 点伤害`, 'combat');
 
-        // 增加回合数
-        gameState.turn_count++;
-        gameState.game_time++;
+            // 检查怪物是否死亡
+            if (monster.stats.hp <= 0) {
+                this.handleMonsterDeath(monster);
+            }
 
-        // 处理怪物回合
-        await this.processMonsterTurns();
+            // 增加回合数
+            gameState.turn_count++;
+            gameState.game_time++;
 
-        // 更新UI
-        this.game.updateUI();
+            // 处理怪物回合
+            await this.processMonsterTurns();
 
-        // 检查是否需要同步
-        if (this.shouldSync()) {
-            await this.syncToBackend();
+            // 更新UI
+            this.game.updateUI();
+
+            // 检查是否需要同步
+            if (this.shouldSync()) {
+                await this.syncToBackend();
+            }
+        } finally {
+            // 隐藏攻击遮罩
+            this.game.hideLLMOverlay();
         }
     }
 }

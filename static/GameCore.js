@@ -174,9 +174,15 @@ class LabyrinthiaGame {
             this.gameState = gameState;
             this.updateUI();
 
-            // 触发EventChoiceManager立即检查
-            if (window.eventChoiceManager) {
-                window.eventChoiceManager.triggerImmediateCheck();
+            // 检查是否有待处理的选择上下文，直接显示
+            if (gameState.pending_choice_context && window.eventChoiceManager) {
+                console.log('[GameCore] Found pending_choice_context in refreshed state, showing dialog');
+                window.eventChoiceManager.showChoiceDialog(gameState.pending_choice_context);
+            } else {
+                // 触发EventChoiceManager立即检查（作为备用）
+                if (window.eventChoiceManager) {
+                    window.eventChoiceManager.triggerImmediateCheck();
+                }
             }
         } catch (error) {
             console.error('Failed to refresh game state:', error);
@@ -213,9 +219,15 @@ class LabyrinthiaGame {
 
         this.updateUI();
 
-        // 触发EventChoiceManager立即检查
-        if (window.eventChoiceManager) {
-            window.eventChoiceManager.triggerImmediateCheck();
+        // 检查是否有待处理的选择上下文，直接显示
+        if (newGameState.pending_choice_context && window.eventChoiceManager) {
+            console.log('[GameCore] Found pending_choice_context in updated state, showing dialog');
+            window.eventChoiceManager.showChoiceDialog(newGameState.pending_choice_context);
+        } else {
+            // 触发EventChoiceManager立即检查（作为备用）
+            if (window.eventChoiceManager) {
+                window.eventChoiceManager.triggerImmediateCheck();
+            }
         }
     }
 
