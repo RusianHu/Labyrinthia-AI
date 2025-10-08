@@ -406,7 +406,7 @@ class LocalGameEngine {
                 position: [newPos.x, newPos.y]
             });
         } else {
-            // 检查楼梯
+            // 检查楼梯（前端本地处理，不需要同步到后端）
             if (targetTile.terrain === 'stairs_down') {
                 gameState.pending_map_transition = 'stairs_down';
                 this.addMessage('你发现了通往下一层的楼梯。你可以选择进入下一层。', 'system');
@@ -415,6 +415,12 @@ class LocalGameEngine {
                 gameState.pending_map_transition = 'stairs_up';
                 this.addMessage('你发现了通往上一层的楼梯。你可以选择返回上一层。', 'system');
                 console.log('[LocalGameEngine] Set pending_map_transition to stairs_up');
+            } else {
+                // 离开楼梯时清除待切换标志
+                if (gameState.pending_map_transition) {
+                    console.log('[LocalGameEngine] Clearing pending_map_transition (left stairs)');
+                    gameState.pending_map_transition = null;
+                }
             }
 
             // 本地处理怪物回合
@@ -423,7 +429,7 @@ class LocalGameEngine {
             // 更新UI（这会触发updateControlPanel检查pending_map_transition）
             this.game.updateUI();
 
-            // 检查是否需要同步
+            // 检查是否需要同步（按正常间隔）
             if (this.shouldSync()) {
                 await this.syncToBackend();
             }
@@ -534,7 +540,7 @@ class LocalGameEngine {
     /**
      * 处理怪物死亡
      */
-    handleMonsterDeath(monster) {
+    async handleMonsterDeath(monster) {
         const gameState = this.getGameState();
         const player = gameState.player;
 
@@ -561,6 +567,11 @@ class LocalGameEngine {
         if (tile) {
             tile.character_id = null;
         }
+
+        // 怪物死亡后立即同步状态到后端，避免后续操作时状态不一致
+        // 这样可以确保休息、使用物品等操作时后端有最新的怪物列表
+        console.log('[LocalGameEngine] Monster killed, syncing state immediately');
+        await this.syncToBackend();
     }
 
     /**
@@ -643,7 +654,7 @@ class LocalGameEngine {
 
             // 检查怪物是否死亡
             if (monster.stats.hp <= 0) {
-                this.handleMonsterDeath(monster);
+                await this.handleMonsterDeath(monster);
             }
 
             // 增加回合数

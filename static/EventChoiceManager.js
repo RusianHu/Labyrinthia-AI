@@ -155,6 +155,7 @@ class EventChoiceManager {
                 if (window.game) {
                     window.game.gameId = null;
                     window.game.gameState = null;
+                    window.game.localEngine = null; // 清理本地引擎
                 }
                 this.stopChoicePolling();
 
@@ -331,6 +332,12 @@ class EventChoiceManager {
         this.isProcessing = true;
 
         try {
+            // 【修复】选择前强制同步状态到后端，避免状态不一致
+            if (window.game && window.game.localEngine) {
+                console.log('[EventChoiceManager] Syncing state before processing choice');
+                await window.game.localEngine.syncToBackend();
+            }
+
             // 添加选中效果
             const selectedOption = this.optionsContainer.querySelector(`[data-choice-id="${choiceId}"]`);
             if (selectedOption) {

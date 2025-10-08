@@ -6,16 +6,22 @@ Object.assign(LabyrinthiaGame.prototype, {
     
     async saveGame() {
         if (!this.gameId || this.isLoading) return;
-        
+
         this.setLoading(true);
-        
+
         try {
+            // 保存前强制同步状态到后端，确保保存最新的游戏进度
+            if (this.localEngine) {
+                console.log('[SaveManager] Syncing state before save');
+                await this.localEngine.syncToBackend();
+            }
+
             const response = await fetch(`/api/save/${this.gameId}`, {
                 method: 'POST'
             });
-            
+
             const result = await response.json();
-            
+
             if (result.success) {
                 this.addMessage('游戏已保存', 'success');
             } else {

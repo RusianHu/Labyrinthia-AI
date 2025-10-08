@@ -332,6 +332,13 @@
                             <i class="material-icons">flight_takeoff</i>传送到楼层
                         </button>
                     </div>
+                    <div class="debug-teleport-group">
+                        <input type="number" id="debug-x-input" placeholder="X坐标" min="0" class="debug-input" style="width: 80px;">
+                        <input type="number" id="debug-y-input" placeholder="Y坐标" min="0" class="debug-input" style="width: 80px;">
+                        <button class="debug-btn" onclick="game.debugTeleportToPosition()" title="传送到指定坐标进行测试">
+                            <i class="material-icons">my_location</i>传送到坐标
+                        </button>
+                    </div>
                 </div>
 
                 <!-- 地图与战斗调试 -->

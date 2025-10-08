@@ -286,6 +286,11 @@ class GameEngine:
                     result["game_over"] = True
                     result["game_over_reason"] = game_state.game_over_reason
 
+                # 【修复】检查是否有待处理的选择上下文，立即返回给前端
+                if hasattr(game_state, 'pending_choice_context') and game_state.pending_choice_context:
+                    result["pending_choice_context"] = game_state.pending_choice_context.to_dict()
+                    logger.info(f"Returning pending choice context in action result: {game_state.pending_choice_context.title}")
+
                 # 判断是否需要LLM交互
                 should_generate_narrative = self._should_generate_narrative(action, result)
                 llm_interaction_required = should_generate_narrative or monster_events_occurred
@@ -461,7 +466,8 @@ class GameEngine:
         # 更新周围瓦片的可见性
         self._update_visibility(game_state, new_x, new_y)
 
-        # 检查特殊地形
+        # 检查特殊地形（只处理需要后端LLM的地形）
+        # 楼梯由前端LocalGameEngine处理，后端不需要设置pending_map_transition
         events = []
         if target_tile.terrain == TerrainType.TRAP:
             events.append(await self._trigger_trap(game_state))
@@ -469,13 +475,6 @@ class GameEngine:
             events.append(await self._find_treasure(game_state))
             # 宝藏被发现后变为地板
             target_tile.terrain = TerrainType.FLOOR
-        elif target_tile.terrain == TerrainType.STAIRS_DOWN:
-            # 不自动切换地图，而是设置待切换状态
-            game_state.pending_map_transition = "stairs_down"
-            events.append("你发现了通往下一层的楼梯。你可以选择进入下一层。")
-        elif target_tile.terrain == TerrainType.STAIRS_UP:
-            game_state.pending_map_transition = "stairs_up"
-            events.append("你发现了通往上一层的楼梯。你可以选择返回上一层。")
 
         # 检查瓦片事件
         if target_tile.has_event and not target_tile.event_triggered:
@@ -561,10 +560,28 @@ class GameEngine:
             if tile:
                 tile.character_id = None
 
-            # 触发战斗胜利进度事件
+            # 【修复】触发战斗胜利进度事件，检查是否是任务专属怪物
+            context_data = {
+                "monster_name": target_monster.name,
+                "challenge_rating": target_monster.challenge_rating
+            }
+
+            # 如果是任务专属怪物，使用其专属进度值
+            if hasattr(target_monster, 'quest_monster_id') and target_monster.quest_monster_id:
+                # 查找对应的任务怪物数据以获取进度值
+                active_quest = next((q for q in game_state.quests if q.is_active), None)
+                if active_quest:
+                    quest_monster = next(
+                        (qm for qm in active_quest.special_monsters if qm.id == target_monster.quest_monster_id),
+                        None
+                    )
+                    if quest_monster:
+                        context_data["quest_monster_id"] = target_monster.quest_monster_id
+                        context_data["progress_value"] = quest_monster.progress_value
+                        logger.info(f"Defeated quest monster: {target_monster.name}, progress: {quest_monster.progress_value}%")
+
             await self._trigger_progress_event(
-                game_state, ProgressEventType.COMBAT_VICTORY,
-                {"monster_name": target_monster.name, "challenge_rating": target_monster.challenge_rating}
+                game_state, ProgressEventType.COMBAT_VICTORY, context_data
             )
 
         return {
@@ -861,46 +878,54 @@ class GameEngine:
         }
 
     async def transition_map(self, game_state: GameState, transition_type: str) -> Dict[str, Any]:
-        """手动切换地图"""
-        logger.info(f"transition_map called: type={transition_type}, pending={game_state.pending_map_transition}")
+        """手动切换地图
 
-        if not game_state.pending_map_transition:
-            logger.warning("No pending map transition found")
-            return {
-                "success": False,
-                "message": "当前位置无法进行地图切换"
-            }
-
-        if transition_type != game_state.pending_map_transition:
-            logger.warning(f"Transition type mismatch: requested={transition_type}, pending={game_state.pending_map_transition}")
-            return {
-                "success": False,
-                "message": "切换类型不匹配"
-            }
-
-        # 验证玩家是否真的在楼梯上
-        player_tile = game_state.current_map.get_tile(*game_state.player.position)
-        if player_tile:
-            expected_terrain = TerrainType.STAIRS_DOWN if transition_type == "stairs_down" else TerrainType.STAIRS_UP
-            if player_tile.terrain != expected_terrain:
-                logger.warning(f"Player not on correct stairs: at {player_tile.terrain}, expected {expected_terrain}")
-                # 清除错误的待切换状态
-                game_state.pending_map_transition = None
-                return {
-                    "success": False,
-                    "message": "你不在楼梯上，无法切换地图"
-                }
+        后端专注于"生成型"逻辑：生成新地图、怪物、更新任务进度
+        前端已经完成了所有"计算型"验证（位置检查、地形验证等）
+        """
+        logger.info(f"transition_map called: type={transition_type}")
 
         events = []
 
+        # 直接执行地图切换，不做验证（前端已验证）
         if transition_type == "stairs_down":
             events.append(await self._descend_stairs(game_state))
         elif transition_type == "stairs_up":
             events.append(await self._ascend_stairs(game_state))
+        else:
+            logger.warning(f"Unknown transition type: {transition_type}")
+            return {
+                "success": False,
+                "message": f"未知的切换类型: {transition_type}"
+            }
 
-        # 清除待切换状态
+        # 【修复】地图切换后检查是否有任务完成需要处理选择
+        if hasattr(game_state, 'pending_quest_completion') and game_state.pending_quest_completion:
+            completed_quest = game_state.pending_quest_completion
+            try:
+                # 创建任务完成选择上下文
+                from event_choice_system import event_choice_system
+                choice_context = await event_choice_system.create_quest_completion_choice(
+                    game_state, completed_quest
+                )
+
+                # 将选择上下文存储到游戏状态中
+                game_state.pending_choice_context = choice_context
+                event_choice_system.active_contexts[choice_context.id] = choice_context
+
+                # 清理任务完成标志
+                game_state.pending_quest_completion = None
+
+                logger.info(f"Created quest completion choice after map transition for: {completed_quest.title}")
+
+            except Exception as e:
+                logger.error(f"Error creating quest completion choice after map transition: {e}")
+                # 清理标志，避免重复处理
+                game_state.pending_quest_completion = None
+
+        # 清除待切换状态（重要！）
         game_state.pending_map_transition = None
-        logger.info(f"Map transition completed successfully")
+        logger.info(f"Map transition completed successfully: {transition_type}")
 
         return {
             "success": True,

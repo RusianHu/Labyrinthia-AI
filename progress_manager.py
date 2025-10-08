@@ -76,40 +76,70 @@ class ProgressManager:
             event_type=ProgressEventType.MAP_TRANSITION,
             custom_calculator=self._calculate_map_transition_progress
         )
-        
-        # 战斗胜利规则
+
+        # 【修复】战斗胜利规则 - 支持任务专属怪物的自定义进度值
         self.progress_rules[ProgressEventType.COMBAT_VICTORY] = ProgressRule(
             event_type=ProgressEventType.COMBAT_VICTORY,
             base_increment=5.0,
-            multiplier=1.0
+            multiplier=1.0,
+            custom_calculator=self._calculate_combat_victory_progress
         )
-        
+
         # 探索规则
         self.progress_rules[ProgressEventType.EXPLORATION] = ProgressRule(
             event_type=ProgressEventType.EXPLORATION,
             base_increment=2.0,
             multiplier=1.0
         )
-        
-        # 剧情事件规则
+
+        # 【修复】剧情事件规则 - 支持任务专属事件的自定义进度值
         self.progress_rules[ProgressEventType.STORY_EVENT] = ProgressRule(
             event_type=ProgressEventType.STORY_EVENT,
             base_increment=10.0,
-            multiplier=1.0
+            multiplier=1.0,
+            custom_calculator=self._calculate_story_event_progress
         )
     
     def _calculate_map_transition_progress(self, context: Any, current_progress: float) -> float:
         """计算地图切换的进度增量"""
         if not isinstance(context, int):
             return 0.0
-        
+
         current_depth = context
         # 使用配置的进度系数
         progress_per_floor = config.game.quest_progress_multiplier
         new_progress = current_depth * progress_per_floor
-        
+
         # 返回增量而不是绝对值
         return max(0.0, new_progress - current_progress)
+
+    def _calculate_combat_victory_progress(self, context: Any, current_progress: float) -> float:
+        """计算战斗胜利的进度增量"""
+        if not isinstance(context, dict):
+            return 5.0  # 默认进度值
+
+        # 检查是否是任务专属怪物
+        if 'progress_value' in context:
+            progress_value = context['progress_value']
+            logger.info(f"Quest monster defeated, using custom progress: {progress_value}%")
+            return progress_value
+
+        # 普通怪物使用默认进度值
+        return 5.0
+
+    def _calculate_story_event_progress(self, context: Any, current_progress: float) -> float:
+        """计算剧情事件的进度增量"""
+        if not isinstance(context, dict):
+            return 10.0  # 默认进度值
+
+        # 检查是否是任务专属事件
+        if 'progress_value' in context:
+            progress_value = context['progress_value']
+            logger.info(f"Quest event triggered, using custom progress: {progress_value}%")
+            return progress_value
+
+        # 普通事件使用默认进度值
+        return 10.0
     
     def register_rule(self, rule: ProgressRule):
         """注册进度规则"""

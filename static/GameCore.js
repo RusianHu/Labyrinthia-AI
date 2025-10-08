@@ -160,6 +160,7 @@ class LabyrinthiaGame {
                 console.warn('Game not found on server, clearing game state');
                 this.gameId = null;
                 this.gameState = null;
+                this.localEngine = null; // 清理本地引擎
                 this.addMessage('游戏会话已失效，请重新加载游戏', 'warning');
 
                 // 停止EventChoiceManager轮询
@@ -172,6 +173,12 @@ class LabyrinthiaGame {
             const gameState = await response.json();
 
             this.gameState = gameState;
+
+            // 初始化本地引擎（如果还没有）
+            if (!this.localEngine && window.LocalGameEngine) {
+                this.localEngine = new LocalGameEngine(this);
+                console.log('[GameCore] LocalGameEngine initialized in refreshGameState');
+            }
 
             // 检查游戏是否结束（在更新UI之前）
             if (gameState.is_game_over) {
@@ -228,6 +235,7 @@ class LabyrinthiaGame {
         // 初始化本地引擎（如果还没有）
         if (!this.localEngine && window.LocalGameEngine) {
             this.localEngine = new LocalGameEngine(this);
+            console.log('[updateGameState] LocalGameEngine initialized');
         }
 
         // 检查游戏是否结束（在更新UI之前）
@@ -256,6 +264,7 @@ class LabyrinthiaGame {
         // 初始化本地引擎
         if (!this.localEngine && window.LocalGameEngine) {
             this.localEngine = new LocalGameEngine(this);
+            console.log('[renderGame] LocalGameEngine initialized');
         }
     }
 
@@ -368,6 +377,12 @@ class LabyrinthiaGame {
         this.showPartialOverlay('地图切换', '正在进入新区域...', '准备继续你的冒险...');
 
         try {
+            // 地图切换前强制同步状态到后端，确保使用最新状态生成新地图
+            if (this.localEngine) {
+                console.log('[GameCore] Syncing state before map transition');
+                await this.localEngine.syncToBackend();
+            }
+
             const response = await fetch(`/api/game/${this.gameId}/transition`, {
                 method: 'POST',
                 headers: {
@@ -383,8 +398,14 @@ class LabyrinthiaGame {
             if (result.success) {
                 this.updateOverlayProgress(70, '加载新地图...');
 
-                // 更新游戏状态
+                // 更新游戏状态 - 使用updateGameState确保本地引擎正确初始化
                 this.gameState = result.game_state;
+
+                // 初始化本地引擎（如果还没有）
+                if (!this.localEngine && window.LocalGameEngine) {
+                    this.localEngine = new LocalGameEngine(this);
+                    console.log('[transitionMap] LocalGameEngine initialized');
+                }
 
                 this.updateOverlayProgress(90, '更新界面...');
 
@@ -402,6 +423,12 @@ class LabyrinthiaGame {
 
                 setTimeout(() => {
                     this.hidePartialOverlay();
+
+                    // 【修复】检查是否有待处理的选择上下文（任务完成等）
+                    if (result.pending_choice_context && window.eventChoiceManager) {
+                        console.log('[transitionMap] Found pending_choice_context, showing dialog');
+                        window.eventChoiceManager.showChoiceDialog(result.pending_choice_context);
+                    }
                 }, 500);
             } else {
                 this.addMessage(result.message || '地图切换失败', 'error');
@@ -439,27 +466,47 @@ class LabyrinthiaGame {
         let transitionButton = document.getElementById('transition-button');
 
         if (hasPendingTransition) {
-            if (!transitionButton) {
-                transitionButton = document.createElement('button');
-                transitionButton.id = 'transition-button';
-                transitionButton.className = 'btn btn-warning control-btn transition-btn';
-                controlPanel.appendChild(transitionButton);
-                console.log('[updateControlPanel] Transition button created and added to DOM');
-            }
-
             const transitionType = this.gameState.pending_map_transition;
             const buttonText = transitionType === 'stairs_down' ? '进入下一层' : '返回上一层';
             const iconName = transitionType === 'stairs_down' ? 'keyboard_arrow_down' : 'keyboard_arrow_up';
 
-            transitionButton.innerHTML = `
-                <i class="material-icons">${iconName}</i>
-                ${buttonText}
-            `;
+            if (!transitionButton) {
+                // 创建新按钮
+                transitionButton = document.createElement('button');
+                transitionButton.id = 'transition-button';
+                transitionButton.className = 'btn btn-warning control-btn transition-btn';
 
-            transitionButton.onclick = () => this.transitionMap(transitionType);
+                // 设置按钮内容
+                transitionButton.innerHTML = `
+                    <i class="material-icons">${iconName}</i>
+                    ${buttonText}
+                `;
+
+                // 使用addEventListener而不是onclick，确保事件绑定稳定
+                transitionButton.addEventListener('click', () => {
+                    console.log('[Transition Button] Clicked! Type:', this.gameState.pending_map_transition);
+                    this.transitionMap(this.gameState.pending_map_transition);
+                });
+
+                controlPanel.appendChild(transitionButton);
+                console.log('[updateControlPanel] Transition button created and added to DOM');
+            } else {
+                // 按钮已存在，只更新内容和状态（不重新绑定事件）
+                // 检查是否需要更新内容（避免不必要的DOM操作）
+                const currentText = transitionButton.textContent.trim();
+                if (!currentText.includes(buttonText)) {
+                    transitionButton.innerHTML = `
+                        <i class="material-icons">${iconName}</i>
+                        ${buttonText}
+                    `;
+                    console.log('[updateControlPanel] Transition button content updated:', buttonText);
+                }
+            }
+
+            // 更新按钮禁用状态
             transitionButton.disabled = this.isLoading;
 
-            console.log('[updateControlPanel] Transition button updated:', buttonText);
+            console.log('[updateControlPanel] Transition button ready:', buttonText, 'disabled:', this.isLoading);
         } else if (transitionButton) {
             transitionButton.remove();
             console.log('[updateControlPanel] Transition button removed');

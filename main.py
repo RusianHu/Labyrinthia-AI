@@ -742,12 +742,19 @@ async def transition_map(game_id: str, transition_data: Dict[str, Any]):
         if result["success"]:
             # 返回更新后的游戏状态
             game_state = game_engine.active_games[game_id]
-            return {
+            response_data = {
                 "success": True,
                 "message": result["message"],
                 "events": result["events"],
                 "game_state": game_state.to_dict()
             }
+
+            # 【修复】检查是否有待处理的选择上下文，立即返回给前端
+            if hasattr(game_state, 'pending_choice_context') and game_state.pending_choice_context:
+                response_data["pending_choice_context"] = game_state.pending_choice_context.to_dict()
+                logger.info(f"Returning pending choice context in transition result: {game_state.pending_choice_context.title}")
+
+            return response_data
         else:
             return result
 
@@ -2155,6 +2162,64 @@ if config.game.debug_mode:
 
         except Exception as e:
             logger.error(f"Debug teleport error: {e}")
+            return {"success": False, "message": f"传送失败: {str(e)}"}
+
+    @app.post("/api/game/{game_id}/debug/teleport-position")
+    async def debug_teleport_to_position(game_id: str, request: Request):
+        """调试：传送到指定坐标"""
+        try:
+            from data_models import TerrainType
+
+            if game_id not in game_engine.active_games:
+                raise HTTPException(status_code=404, detail="游戏未找到")
+
+            game_state = game_engine.active_games[game_id]
+            request_data = await request.json()
+
+            target_x = request_data.get("x")
+            target_y = request_data.get("y")
+
+            if target_x is None or target_y is None:
+                return {"success": False, "message": "缺少坐标参数"}
+
+            # 检查坐标是否在地图范围内
+            if (target_x < 0 or target_x >= game_state.current_map.width or
+                target_y < 0 or target_y >= game_state.current_map.height):
+                return {
+                    "success": False,
+                    "message": f"坐标超出地图范围 (0-{game_state.current_map.width-1}, 0-{game_state.current_map.height-1})"
+                }
+
+            # 检查目标位置是否可通行
+            target_tile = game_state.current_map.get_tile(target_x, target_y)
+            if not target_tile:
+                return {"success": False, "message": "目标位置无效"}
+
+            if target_tile.terrain == TerrainType.WALL:
+                return {"success": False, "message": "目标位置是墙壁，无法传送"}
+
+            # 清除旧位置的角色标记
+            old_tile = game_state.current_map.get_tile(*game_state.player.position)
+            if old_tile:
+                old_tile.character_id = None
+
+            # 传送玩家
+            game_state.player.position = (target_x, target_y)
+            target_tile.character_id = game_state.player.id
+            target_tile.is_explored = True
+            target_tile.is_visible = True
+
+            # 更新周围瓦片的可见性
+            game_engine._update_visibility(game_state, target_x, target_y)
+
+            return {
+                "success": True,
+                "message": f"已传送到坐标 ({target_x}, {target_y})",
+                "position": [target_x, target_y]
+            }
+
+        except Exception as e:
+            logger.error(f"Debug teleport position error: {e}")
             return {"success": False, "message": f"传送失败: {str(e)}"}
 
     @app.post("/api/game/{game_id}/debug/spawn-enemy")

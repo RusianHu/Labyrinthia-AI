@@ -19,6 +19,11 @@ Object.assign(LabyrinthiaGame.prototype, {
     async performAction(action, parameters = {}) {
         if (this.isLoading || !this.gameId) return;
 
+        // 休息前强制同步状态到后端，避免怪物"复活"问题
+        if (action === 'rest' && this.localEngine) {
+            await this.localEngine.syncToBackend();
+        }
+
         // 检查是否需要显示特定的LLM遮罩（特殊地形或事件触发时）
         const needsSpecificLLMOverlay = this.shouldShowLLMOverlay(action, parameters);
 
@@ -105,6 +110,12 @@ Object.assign(LabyrinthiaGame.prototype, {
                     this.addMessage(result.narrative, 'narrative');
                 }
 
+                // 【修复】检查是否有待处理的选择上下文，立即显示
+                if (result.pending_choice_context && window.eventChoiceManager) {
+                    console.log('[GameActions] Found pending_choice_context in action result, showing dialog immediately');
+                    window.eventChoiceManager.showChoiceDialog(result.pending_choice_context);
+                }
+
                 // 检查游戏是否结束
                 if (result.game_over) {
                     this.handleGameOver(result.game_over_reason);
@@ -148,10 +159,18 @@ Object.assign(LabyrinthiaGame.prototype, {
     },
 
     async useItem(itemId) {
+        // 使用物品前强制同步状态到后端，避免状态不一致
+        if (this.localEngine) {
+            await this.localEngine.syncToBackend();
+        }
         await this.performAction('use_item', { item_id: itemId });
     },
 
     async dropItem(itemId) {
+        // 丢弃物品前强制同步状态到后端，避免状态不一致
+        if (this.localEngine) {
+            await this.localEngine.syncToBackend();
+        }
         await this.performAction('drop_item', { item_id: itemId });
     },
 

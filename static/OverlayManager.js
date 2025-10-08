@@ -11,11 +11,14 @@ Object.assign(LabyrinthiaGame.prototype, {
             el.style.display = loading ? 'inline-block' : 'none';
         });
 
-        // 禁用/启用控制按钮
-        const controlButtons = document.querySelectorAll('.control-btn, .dir-btn');
+        // 禁用/启用控制按钮（但不包括地图切换按钮，它有自己的状态管理）
+        const controlButtons = document.querySelectorAll('.control-btn:not(#transition-button), .dir-btn');
         controlButtons.forEach(btn => {
             btn.disabled = loading;
         });
+
+        // 地图切换按钮的状态由updateControlPanel单独管理
+        // 这样可以避免竞态条件
 
         // 只在明确要求时显示遮罩（用于后端请求）
         if (loading && showOverlay) {

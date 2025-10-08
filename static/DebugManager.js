@@ -322,6 +322,50 @@ const DebugMethods = {
         }
     },
 
+    async debugTeleportToPosition() {
+        if (!this.gameId || !this.gameState) {
+            this.addMessage('❌ 请先开始游戏');
+            return;
+        }
+
+        const xInput = document.getElementById('debug-x-input');
+        const yInput = document.getElementById('debug-y-input');
+        const targetX = parseInt(xInput.value);
+        const targetY = parseInt(yInput.value);
+
+        if (isNaN(targetX) || isNaN(targetY)) {
+            this.addMessage('❌ 请输入有效的坐标');
+            return;
+        }
+
+        try {
+            this.showLLMOverlay('interact');
+
+            const response = await fetch(`/api/game/${this.gameId}/debug/teleport-position`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    x: targetX,
+                    y: targetY
+                })
+            });
+
+            const result = await response.json();
+
+            if (result.success) {
+                this.addMessage(`📍 已传送到坐标 (${targetX}, ${targetY})`);
+                await this.refreshGameState();
+            } else {
+                this.addMessage(`❌ 传送失败: ${result.message}`);
+            }
+        } catch (error) {
+            console.error('Debug teleport position error:', error);
+            this.addMessage('❌ 传送时发生错误');
+        } finally {
+            this.hideLLMOverlay();
+        }
+    },
+
     // ==================== 地图与战斗调试 ====================
 
     async debugSpawnEnemyNearby() {
