@@ -229,17 +229,91 @@ class LocalGameEngine {
     needsBackendProcessing(tile) {
         if (!tile) return false;
 
-        // 特殊地形需要LLM处理
-        if (tile.terrain === 'trap' || tile.terrain === 'treasure') {
-            return true;
-        }
-
-        // 未触发的事件需要LLM处理
+        // 陷阱和宝藏现在由前端本地处理，不需要后端
+        // 只有未触发的事件需要LLM处理
         if (tile.has_event && !tile.event_triggered) {
             return true;
         }
 
         return false;
+    }
+
+    /**
+     * 处理陷阱（前端计算效果，后端生成描述）
+     */
+    async handleTrap(tile) {
+        const gameState = this.getGameState();
+        const player = gameState.player;
+        const eventData = tile.event_data || {};
+        const trapType = eventData.trap_type || 'damage';
+        const damage = eventData.damage || 15;
+
+        // 前端先计算陷阱效果
+        let trapResult = {
+            type: trapType,
+            damage: 0,
+            teleported: false,
+            newPosition: null,
+            playerDied: false
+        };
+
+        if (trapType === 'damage') {
+            player.stats.hp -= damage;
+            trapResult.damage = damage;
+            this.addMessage(`触发了陷阱！受到了 ${damage} 点伤害！`, 'combat');
+
+            // 检查玩家是否死亡
+            if (player.stats.hp <= 0) {
+                this.addMessage('你被陷阱杀死了！游戏结束！', 'error');
+                gameState.is_game_over = true;
+                gameState.game_over_reason = '被陷阱杀死';
+                trapResult.playerDied = true;
+                if (this.game.handleGameOver) {
+                    this.game.handleGameOver(gameState.game_over_reason);
+                }
+            }
+        } else if (trapType === 'debuff') {
+            this.addMessage('触发了减速陷阱！移动变得困难！', 'system');
+            // TODO: 实现减速效果
+        } else if (trapType === 'teleport') {
+            // 随机传送
+            const randomX = this.randomInt(0, gameState.current_map.width - 1);
+            const randomY = this.randomInt(0, gameState.current_map.height - 1);
+            const targetTile = this.getTile(randomX, randomY);
+
+            if (targetTile && targetTile.terrain !== 'wall' && !targetTile.character_id) {
+                this.updatePlayerPosition(randomX, randomY);
+                this.updateVisibility(randomX, randomY);
+                trapResult.teleported = true;
+                trapResult.newPosition = [randomX, randomY];
+                this.addMessage(`触发了传送陷阱！被传送到了 (${randomX}, ${randomY})！`, 'system');
+            } else {
+                this.addMessage('触发了传送陷阱，但传送失败了！', 'system');
+            }
+        }
+
+        // 调用后端生成描述性文本（可选，增强体验）
+        if (!trapResult.playerDied) {
+            await this.triggerBackendEvent('trap_narrative', {
+                tile: tile,
+                position: [tile.x, tile.y],
+                trap_result: trapResult
+            });
+        }
+    }
+
+    /**
+     * 处理宝藏（前端本地处理，但物品生成需要后端LLM）
+     */
+    async handleTreasure(tile) {
+        // 宝藏物品生成需要LLM，所以还是要调用后端
+        await this.triggerBackendEvent('treasure', {
+            tile: tile,
+            position: [tile.x, tile.y]
+        });
+
+        // 宝藏被发现后变为地板
+        tile.terrain = 'floor';
     }
 
     /**
@@ -398,15 +472,21 @@ class LocalGameEngine {
         // 显示移动消息
         this.addMessage(`移动到 (${newPos.x}, ${newPos.y})`, 'action');
 
-        // 检查是否需要后端处理
-        if (needsBackend) {
-            // 需要LLM处理的事件 - triggerBackendEvent会自动显示遮罩
+        // 检查特殊地形（前端本地处理）
+        if (targetTile.terrain === 'trap') {
+            // 陷阱由前端本地处理
+            this.handleTrap(targetTile);
+        } else if (targetTile.terrain === 'treasure') {
+            // 宝藏需要LLM生成物品
+            await this.handleTreasure(targetTile);
+        } else if (needsBackend) {
+            // 需要LLM处理的事件
             await this.triggerBackendEvent('tile_event', {
                 tile: targetTile,
                 position: [newPos.x, newPos.y]
             });
         } else {
-            // 检查楼梯（前端本地处理，不需要同步到后端）
+            // 检查楼梯（前端本地处理）
             if (targetTile.terrain === 'stairs_down') {
                 gameState.pending_map_transition = 'stairs_down';
                 this.addMessage('你发现了通往下一层的楼梯。你可以选择进入下一层。', 'system');
@@ -426,10 +506,10 @@ class LocalGameEngine {
             // 本地处理怪物回合
             await this.processMonsterTurns();
 
-            // 更新UI（这会触发updateControlPanel检查pending_map_transition）
+            // 更新UI
             this.game.updateUI();
 
-            // 检查是否需要同步（按正常间隔）
+            // 检查是否需要同步
             if (this.shouldSync()) {
                 await this.syncToBackend();
             }

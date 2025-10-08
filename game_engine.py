@@ -408,85 +408,57 @@ class GameEngine:
         return True
 
     async def _handle_move(self, game_state: GameState, parameters: Dict[str, Any]) -> Dict[str, Any]:
-        """处理移动行动"""
+        """处理移动行动 - 后端仅处理生成型逻辑
+
+        注意：所有计算型验证(边界检查、地形检查、碰撞检测等)已由前端LocalGameEngine完成
+        后端专注于生成型逻辑：LLM交互、事件生成、叙述生成
+        """
+        # 前端已完成所有验证，后端直接信任前端传来的位置
+        # 这是一个遗留接口，主要用于不支持LocalGameEngine的旧版本客户端
+        logger.warning("_handle_move called - this should be handled by frontend LocalGameEngine")
+
+        # 如果前端没有处理，提供基本的回退支持
         direction = parameters.get("direction", "")
-        
-        # 方向映射
         direction_map = {
             "north": (0, -1), "south": (0, 1),
             "east": (1, 0), "west": (-1, 0),
             "northeast": (1, -1), "northwest": (-1, -1),
             "southeast": (1, 1), "southwest": (-1, 1)
         }
-        
+
         if direction not in direction_map:
             return {"success": False, "message": "无效的移动方向"}
-        
+
         dx, dy = direction_map[direction]
         current_x, current_y = game_state.player.position
         new_x, new_y = current_x + dx, current_y + dy
-        
-        # 检查边界
+
+        # 简单验证（前端应该已经做过）
         if (new_x < 0 or new_x >= game_state.current_map.width or
             new_y < 0 or new_y >= game_state.current_map.height):
             return {"success": False, "message": "无法移动到地图边界外"}
-        
-        # 检查目标瓦片
-        target_tile = game_state.current_map.get_tile(new_x, new_y)
-        if not target_tile:
-            return {"success": False, "message": "目标位置无效"}
-        
-        # 检查地形
-        if target_tile.terrain == TerrainType.WALL:
-            return {"success": False, "message": "无法穿过墙壁"}
 
-        # 检查是否有其他角色
-        if target_tile.character_id and target_tile.character_id != game_state.player.id:
-            # 检查是否是怪物，如果是则提示攻击
-            monster = None
-            for m in game_state.monsters:
-                if m.id == target_tile.character_id:
-                    monster = m
-                    break
-            if monster:
-                return {"success": False, "message": f"该位置有 {monster.name}，请使用攻击命令"}
-            else:
-                return {"success": False, "message": "该位置已被占据"}
-        
-        # 执行移动
+        target_tile = game_state.current_map.get_tile(new_x, new_y)
+        if not target_tile or target_tile.terrain == TerrainType.WALL:
+            return {"success": False, "message": "无法移动到该位置"}
+
+        # 执行移动（更新状态）
         old_tile = game_state.current_map.get_tile(current_x, current_y)
         if old_tile:
             old_tile.character_id = None
-        
+
         target_tile.character_id = game_state.player.id
         target_tile.is_explored = True
         target_tile.is_visible = True
         game_state.player.position = (new_x, new_y)
-        
-        # 更新周围瓦片的可见性
+
+        # 更新可见性
         self._update_visibility(game_state, new_x, new_y)
 
-        # 检查特殊地形（只处理需要后端LLM的地形）
-        # 楼梯由前端LocalGameEngine处理，后端不需要设置pending_map_transition
-        events = []
-        if target_tile.terrain == TerrainType.TRAP:
-            events.append(await self._trigger_trap(game_state))
-        elif target_tile.terrain == TerrainType.TREASURE:
-            events.append(await self._find_treasure(game_state))
-            # 宝藏被发现后变为地板
-            target_tile.terrain = TerrainType.FLOOR
-
-        # 检查瓦片事件
-        if target_tile.has_event and not target_tile.event_triggered:
-            event_result = await self._trigger_tile_event(game_state, target_tile)
-            if event_result:
-                events.append(event_result)
-                target_tile.event_triggered = True
-        
         return {
             "success": True,
             "message": f"移动到 ({new_x}, {new_y})",
-            "events": events,
+            "events": [],
             "new_position": (new_x, new_y)
         }
     
@@ -504,7 +476,14 @@ class GameEngine:
                             tile.is_explored = True
     
     async def _handle_attack(self, game_state: GameState, parameters: Dict[str, Any]) -> Dict[str, Any]:
-        """处理攻击行动"""
+        """处理攻击行动 - 后端仅处理生成型逻辑
+
+        注意：所有计算型逻辑(距离检查、视线检查、伤害计算、升级检查等)已由前端LocalGameEngine完成
+        后端专注于生成型逻辑：任务进度更新、LLM叙述生成
+        """
+        logger.warning("_handle_attack called - this should be handled by frontend LocalGameEngine")
+
+        # 这是一个遗留接口，主要用于不支持LocalGameEngine的旧版本客户端
         target_id = parameters.get("target_id", "")
 
         # 查找目标怪物
@@ -517,23 +496,15 @@ class GameEngine:
         if not target_monster:
             return {"success": False, "message": "目标未找到"}
 
-        # 检查距离和视线
+        # 简单的距离检查（前端应该已经做过）
         player_x, player_y = game_state.player.position
         monster_x, monster_y = target_monster.position
-
-        # 检查攻击距离（包括对角线）
-        dx = abs(player_x - monster_x)
-        dy = abs(player_y - monster_y)
-        max_distance = max(dx, dy)  # 切比雪夫距离，允许对角线攻击
+        max_distance = max(abs(player_x - monster_x), abs(player_y - monster_y))
 
         if max_distance > 1:
-            return {"success": False, "message": "目标距离太远，无法攻击"}
+            return {"success": False, "message": "目标距离太远"}
 
-        # 检查视线（简单实现：检查是否有墙壁阻挡）
-        if not self._has_line_of_sight(game_state.current_map, player_x, player_y, monster_x, monster_y):
-            return {"success": False, "message": "视线被阻挡，无法攻击"}
-
-        # 计算伤害
+        # 计算伤害（前端也会计算，这里是备份）
         damage = self._calculate_damage(game_state.player, target_monster)
         target_monster.stats.hp -= damage
 
@@ -543,32 +514,27 @@ class GameEngine:
         if target_monster.stats.hp <= 0:
             events.append(f"{target_monster.name} 被击败了！")
 
-            # 获得经验
+            # 经验值和升级
             exp_gain = int(target_monster.challenge_rating * 100)
             game_state.player.stats.experience += exp_gain
             events.append(f"获得了 {exp_gain} 点经验")
 
-            # 检查升级
             if self._check_level_up(game_state.player):
                 events.append("恭喜升级！")
 
             # 移除怪物
             game_state.monsters.remove(target_monster)
-
-            # 清除地图上的怪物标记
             tile = game_state.current_map.get_tile(monster_x, monster_y)
             if tile:
                 tile.character_id = None
 
-            # 【修复】触发战斗胜利进度事件，检查是否是任务专属怪物
+            # 【生成型逻辑】触发任务进度事件
             context_data = {
                 "monster_name": target_monster.name,
                 "challenge_rating": target_monster.challenge_rating
             }
 
-            # 如果是任务专属怪物，使用其专属进度值
             if hasattr(target_monster, 'quest_monster_id') and target_monster.quest_monster_id:
-                # 查找对应的任务怪物数据以获取进度值
                 active_quest = next((q for q in game_state.quests if q.is_active), None)
                 if active_quest:
                     quest_monster = next(
@@ -1115,32 +1081,32 @@ class GameEngine:
         return result_message
 
     async def _handle_trap_event(self, game_state: GameState, tile: MapTile) -> str:
-        """处理陷阱事件"""
+        """处理陷阱事件 - 遗留接口，前端LocalGameEngine已处理
+
+        注意：陷阱的计算型逻辑(伤害计算、传送位置等)已由前端LocalGameEngine完成
+        后端保留此方法仅用于不支持LocalEngine的旧版本客户端
+        """
+        logger.warning("_handle_trap_event called - this should be handled by frontend LocalGameEngine")
+
         event_data = tile.event_data
         trap_type = event_data.get("trap_type", "damage")
         damage = event_data.get("damage", 15)
 
         if trap_type == "damage":
             game_state.player.stats.hp -= damage
-
-            # 检查玩家是否死亡
             if game_state.player.stats.hp <= 0:
                 game_state.is_game_over = True
                 game_state.game_over_reason = "被陷阱杀死"
                 return f"触发了陷阱！受到了 {damage} 点伤害！你被陷阱杀死了！"
-
             return f"触发了陷阱！受到了 {damage} 点伤害！"
         elif trap_type == "debuff":
-            # 简化处理，减少移动速度
             return "触发了减速陷阱！移动变得困难！"
         elif trap_type == "teleport":
-            # 随机传送到其他位置
             spawn_positions = content_generator.get_spawn_positions(game_state.current_map, 1)
             if spawn_positions:
                 old_tile = game_state.current_map.get_tile(*game_state.player.position)
                 if old_tile:
                     old_tile.character_id = None
-
                 new_pos = spawn_positions[0]
                 game_state.player.position = new_pos
                 new_tile = game_state.current_map.get_tile(*new_pos)
@@ -1148,10 +1114,55 @@ class GameEngine:
                     new_tile.character_id = game_state.player.id
                     new_tile.is_explored = True
                     new_tile.is_visible = True
-
                 return f"触发了传送陷阱！被传送到了 ({new_pos[0]}, {new_pos[1]})！"
 
         return "触发了一个神秘的陷阱！"
+
+    async def _generate_trap_narrative(self, game_state: GameState, trap_result: Dict[str, Any]) -> str:
+        """生成陷阱触发的描述性文本（生成型逻辑）
+
+        前端已经计算了陷阱效果，这里只生成描述性文本来增强游戏体验
+        """
+        try:
+            trap_type = trap_result.get('type', 'damage')
+            damage = trap_result.get('damage', 0)
+            teleported = trap_result.get('teleported', False)
+            new_position = trap_result.get('newPosition')
+
+            # 构建提示词
+            prompt = f"""你是一个DND风格地下城游戏的叙述者。玩家触发了一个陷阱，请生成一段生动的描述性文本。
+
+陷阱类型: {trap_type}
+"""
+            if trap_type == 'damage' and damage > 0:
+                prompt += f"造成伤害: {damage}点\n"
+            elif trap_type == 'teleport' and teleported and new_position:
+                prompt += f"传送到: ({new_position[0]}, {new_position[1]})\n"
+
+            prompt += f"""
+当前场景:
+- 地图: {game_state.current_map.name}
+- 楼层: {game_state.current_map.depth}
+- 玩家位置: {game_state.player.position}
+- 玩家HP: {game_state.player.stats.hp}/{game_state.player.stats.max_hp}
+
+请生成一段简短但生动的描述（2-3句话），描述陷阱触发的场景和效果。要有画面感和紧张感。
+"""
+
+            # 调用LLM生成叙述
+            narrative = await llm_service.generate_text(prompt)
+
+            return narrative.strip()
+
+        except Exception as e:
+            logger.error(f"Failed to generate trap narrative: {e}")
+            # 返回默认描述
+            if trap_result.get('type') == 'damage':
+                return "陷阱突然触发，锋利的机关从地面弹出！"
+            elif trap_result.get('type') == 'teleport':
+                return "一阵眩晕感袭来，周围的景象开始扭曲变形..."
+            else:
+                return "你触发了一个隐藏的机关！"
 
     async def _handle_mystery_event(self, game_state: GameState, tile: MapTile) -> str:
         """处理神秘事件"""

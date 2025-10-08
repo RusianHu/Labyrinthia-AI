@@ -360,6 +360,41 @@ async def handle_llm_event(request: LLMEventRequest):
                 "game_state": game_state.to_dict()
             }
 
+        elif event_type == 'treasure':
+            # 处理宝藏事件 - 使用LLM生成物品
+            position = event_data.get('position', [0, 0])
+            tile_data = event_data.get('tile', {})
+
+            # 生成宝藏物品
+            treasure_result = await game_engine._find_treasure(game_state)
+
+            # 更新地图上的瓦片（宝藏变为地板）
+            tile = game_state.current_map.get_tile(position[0], position[1])
+            if tile:
+                from data_models import TerrainType
+                tile.terrain = TerrainType.FLOOR
+
+            return {
+                "success": True,
+                "message": treasure_result,
+                "events": [treasure_result],
+                "game_state": game_state.to_dict()
+            }
+
+        elif event_type == 'trap_narrative':
+            # 处理陷阱叙述生成 - 前端已计算效果，后端生成描述性文本
+            position = event_data.get('position', [0, 0])
+            trap_result = event_data.get('trap_result', {})
+
+            # 使用LLM生成陷阱触发的描述性文本
+            narrative = await game_engine._generate_trap_narrative(game_state, trap_result)
+
+            return {
+                "success": True,
+                "narrative": narrative,
+                "game_state": game_state.to_dict()
+            }
+
         else:
             return {
                 "success": False,
