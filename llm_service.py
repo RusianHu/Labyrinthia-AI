@@ -16,6 +16,7 @@ from config import config, LLMProvider
 from data_models import Character, Monster, GameMap, Quest, GameState, Item
 from encoding_utils import encoding_converter
 from prompt_manager import prompt_manager
+from async_task_manager import async_task_manager, async_performance_monitor, TaskType
 
 
 logger = logging.getLogger(__name__)
@@ -23,10 +24,16 @@ logger = logging.getLogger(__name__)
 
 class LLMService:
     """LLM服务封装类"""
-    
+
     def __init__(self):
         self.provider = config.llm.provider
-        self.executor = ThreadPoolExecutor(max_workers=config.game.max_concurrent_llm_requests)
+
+        # 初始化异步任务管理器（如果还未初始化）
+        if not async_task_manager._initialized:
+            async_task_manager.initialize()
+
+        # 使用统一的线程池管理器
+        self.executor = async_task_manager.llm_executor
 
         # 准备代理配置
         proxies = {}
@@ -189,182 +196,232 @@ class LLMService:
 
         return json.loads(fixed_text)
 
-    async def _async_generate(self, prompt: str, **kwargs) -> str:
-        """异步生成内容"""
-        loop = asyncio.get_event_loop()
-        
-        def _sync_generate():
-            try:
-                # 使用原始提示词
-                processed_prompt = prompt
+    async def _async_generate(self, prompt: str, timeout: Optional[float] = None, **kwargs) -> str:
+        """
+        异步生成内容（带并发控制和超时）
 
-                generation_config = {}
+        Args:
+            prompt: 提示词
+            timeout: 超时时间（秒），None表示使用配置的默认超时
+            **kwargs: 其他参数
 
-                # 只有在启用生成参数时才添加temperature和top_p
-                if config.llm.use_generation_params:
-                    generation_config.update({
-                        "temperature": config.llm.temperature,
-                        "top_p": config.llm.top_p,
-                    })
+        Returns:
+            生成的文本
+        """
+        # 使用信号量控制并发
+        async with async_task_manager.llm_semaphore:
+            loop = asyncio.get_event_loop()
 
-                # 如果设置了max_output_tokens，则添加到配置中
-                if config.llm.max_output_tokens:
-                    generation_config["max_output_tokens"] = config.llm.max_output_tokens
+            def _sync_generate():
+                try:
+                    # 使用原始提示词
+                    processed_prompt = prompt
 
-                # 合并用户提供的配置
-                generation_config.update(kwargs.get("generation_config", {}))
+                    generation_config = {}
 
-                # 根据提供商调用不同的客户端
-                if self.provider == LLMProvider.GEMINI:
-                    response = self.client.single_turn(
-                        model=config.llm.model_name,
-                        text=processed_prompt,
-                        generation_config=generation_config
-                    )
-                    
-                    # 提取生成的文本
-                    if response.get("candidates") and response["candidates"][0].get("content"):
-                        parts = response["candidates"][0]["content"].get("parts", [])
-                        if parts and parts[0].get("text"):
-                            return parts[0]["text"]
+                    # 只有在启用生成参数时才添加temperature和top_p
+                    if config.llm.use_generation_params:
+                        generation_config.update({
+                            "temperature": config.llm.temperature,
+                            "top_p": config.llm.top_p,
+                        })
 
-                    # 检查是否因为其他原因（如MAX_TOKENS）导致没有文本内容
-                    if response.get("candidates"):
-                        candidate = response["candidates"][0]
-                        finish_reason = candidate.get("finishReason", "")
-                        if finish_reason in ["MAX_TOKENS", "STOP"]:
-                            logger.warning(f"LLM response finished with reason: {finish_reason}")
-                            # 尝试从content中获取任何可用文本
-                            content = candidate.get("content", {})
-                            if content.get("parts"):
-                                for part in content["parts"]:
-                                    if part.get("text"):
-                                        return part["text"]
+                    # 如果设置了max_output_tokens，则添加到配置中
+                    if config.llm.max_output_tokens:
+                        generation_config["max_output_tokens"] = config.llm.max_output_tokens
 
-                    logger.warning("LLM response format unexpected")
+                    # 合并用户提供的配置
+                    generation_config.update(kwargs.get("generation_config", {}))
+
+                    # 根据提供商调用不同的客户端
+                    if self.provider == LLMProvider.GEMINI:
+                        response = self.client.single_turn(
+                            model=config.llm.model_name,
+                            text=processed_prompt,
+                            generation_config=generation_config
+                        )
+
+                        # 提取生成的文本
+                        if response.get("candidates") and response["candidates"][0].get("content"):
+                            parts = response["candidates"][0]["content"].get("parts", [])
+                            if parts and parts[0].get("text"):
+                                return parts[0]["text"]
+
+                        # 检查是否因为其他原因（如MAX_TOKENS）导致没有文本内容
+                        if response.get("candidates"):
+                            candidate = response["candidates"][0]
+                            finish_reason = candidate.get("finishReason", "")
+                            if finish_reason in ["MAX_TOKENS", "STOP"]:
+                                logger.warning(f"LLM response finished with reason: {finish_reason}")
+                                # 尝试从content中获取任何可用文本
+                                content = candidate.get("content", {})
+                                if content.get("parts"):
+                                    for part in content["parts"]:
+                                        if part.get("text"):
+                                            return part["text"]
+
+                        logger.warning("LLM response format unexpected")
+                        return ""
+
+                    elif self.provider == LLMProvider.OPENROUTER:
+                        # OpenRouter API使用 `max_tokens` 而不是 `max_output_tokens`
+                        if "max_output_tokens" in generation_config:
+                            generation_config["max_tokens"] = generation_config.pop("max_output_tokens")
+
+                        return self.client.chat_once(
+                            prompt=prompt,
+                            model=config.llm.model_name,
+                            **generation_config
+                        )
+
+                    elif self.provider == LLMProvider.OPENAI or self.provider == LLMProvider.LMSTUDIO:
+                        # OpenAI API使用 `max_tokens` 而不是 `max_output_tokens`
+                        if "max_output_tokens" in generation_config:
+                            generation_config["max_tokens"] = generation_config.pop("max_output_tokens")
+
+                        return self.client.single_chat(
+                            message=prompt,
+                            model=config.llm.model_name,
+                            **generation_config
+                        )
+
+                except ChatError as e:
+                    logger.error(f"LLM generation error (OpenRouter): {e}")
                     return ""
-                
-                elif self.provider == LLMProvider.OPENROUTER:
-                    # OpenRouter API使用 `max_tokens` 而不是 `max_output_tokens`
-                    if "max_output_tokens" in generation_config:
-                        generation_config["max_tokens"] = generation_config.pop("max_output_tokens")
+                except Exception as e:
+                    logger.error(f"LLM generation error: {e}")
+                    return ""
 
-                    return self.client.chat_once(
-                        prompt=prompt,
-                        model=config.llm.model_name,
-                        **generation_config
-                    )
+            # 使用超时控制
+            if timeout is None:
+                timeout = config.llm.timeout
 
-                elif self.provider == LLMProvider.OPENAI or self.provider == LLMProvider.LMSTUDIO:
-                    # OpenAI API使用 `max_tokens` 而不是 `max_output_tokens`
-                    if "max_output_tokens" in generation_config:
-                        generation_config["max_tokens"] = generation_config.pop("max_output_tokens")
-
-                    return self.client.single_chat(
-                        message=prompt,
-                        model=config.llm.model_name,
-                        **generation_config
-                    )
-
-            except ChatError as e:
-                logger.error(f"LLM generation error (OpenRouter): {e}")
-                return ""
-            except Exception as e:
-                logger.error(f"LLM generation error: {e}")
-                return ""
-        
-        return await loop.run_in_executor(self.executor, _sync_generate)
-    
-    async def _async_generate_json(self, prompt: str, schema: Optional[Dict] = None, **kwargs) -> Dict[str, Any]:
-        """异步生成JSON格式内容"""
-        loop = asyncio.get_event_loop()
-        
-        def _sync_generate_json():
             try:
-                # 使用原始提示词
-                processed_prompt = prompt
+                result = await asyncio.wait_for(
+                    loop.run_in_executor(self.executor, _sync_generate),
+                    timeout=timeout
+                )
+                return result
+            except asyncio.TimeoutError:
+                logger.error(f"LLM request timed out after {timeout}s")
+                return ""
+    
+    async def _async_generate_json(self, prompt: str, schema: Optional[Dict] = None, timeout: Optional[float] = None, **kwargs) -> Dict[str, Any]:
+        """
+        异步生成JSON格式内容（带并发控制和超时）
 
-                generation_config = {}
+        Args:
+            prompt: 提示词
+            schema: JSON schema
+            timeout: 超时时间（秒），None表示使用配置的默认超时
+            **kwargs: 其他参数
 
-                # 只有在启用生成参数时才添加temperature和top_p
-                if config.llm.use_generation_params:
-                    generation_config.update({
-                        "temperature": config.llm.temperature,
-                        "top_p": config.llm.top_p,
-                    })
+        Returns:
+            生成的JSON字典
+        """
+        # 使用信号量控制并发
+        async with async_task_manager.llm_semaphore:
+            loop = asyncio.get_event_loop()
 
-                # 如果设置了max_output_tokens，则添加到配置中
-                if config.llm.max_output_tokens:
-                    generation_config["max_output_tokens"] = config.llm.max_output_tokens
+            def _sync_generate_json():
+                try:
+                    # 使用原始提示词
+                    processed_prompt = prompt
 
-                # 合并用户提供的配置
-                generation_config.update(kwargs.get("generation_config", {}))
+                    generation_config = {}
 
-                # 根据提供商调用不同的客户端
-                if self.provider == LLMProvider.GEMINI:
-                    response = self.client.single_turn_json(
-                        model=config.llm.model_name,
-                        text=processed_prompt,
-                        schema=schema,
-                        generation_config=generation_config
-                    )
-                    
-                    # 提取生成的JSON
-                    if response.get("candidates") and response["candidates"][0].get("content"):
-                        parts = response["candidates"][0]["content"].get("parts", [])
-                        if parts and parts[0].get("text"):
-                            # 使用健壮的JSON解析方法
-                            parsed_json = self._parse_json_response(parts[0]["text"])
-                            if parsed_json:
-                                return parsed_json
+                    # 只有在启用生成参数时才添加temperature和top_p
+                    if config.llm.use_generation_params:
+                        generation_config.update({
+                            "temperature": config.llm.temperature,
+                            "top_p": config.llm.top_p,
+                        })
 
-                    logger.warning("LLM JSON response format unexpected")
+                    # 如果设置了max_output_tokens，则添加到配置中
+                    if config.llm.max_output_tokens:
+                        generation_config["max_output_tokens"] = config.llm.max_output_tokens
+
+                    # 合并用户提供的配置
+                    generation_config.update(kwargs.get("generation_config", {}))
+
+                    # 根据提供商调用不同的客户端
+                    if self.provider == LLMProvider.GEMINI:
+                        response = self.client.single_turn_json(
+                            model=config.llm.model_name,
+                            text=processed_prompt,
+                            schema=schema,
+                            generation_config=generation_config
+                        )
+
+                        # 提取生成的JSON
+                        if response.get("candidates") and response["candidates"][0].get("content"):
+                            parts = response["candidates"][0]["content"].get("parts", [])
+                            if parts and parts[0].get("text"):
+                                # 使用健壮的JSON解析方法
+                                parsed_json = self._parse_json_response(parts[0]["text"])
+                                if parsed_json:
+                                    return parsed_json
+
+                        logger.warning("LLM JSON response format unexpected")
+                        return {}
+
+                    elif self.provider == LLMProvider.OPENROUTER:
+                        # OpenRouter API使用 `max_tokens` 而不是 `max_output_tokens`
+                        if "max_output_tokens" in generation_config:
+                            generation_config["max_tokens"] = generation_config.pop("max_output_tokens")
+
+                        return self.client.chat_json_once(
+                            prompt=prompt,
+                            model=config.llm.model_name,
+                            schema=schema,
+                            **generation_config
+                        )
+
+                    elif self.provider == LLMProvider.OPENAI or self.provider == LLMProvider.LMSTUDIO:
+                        # OpenAI API使用 `max_tokens` 而不是 `max_output_tokens`
+                        if "max_output_tokens" in generation_config:
+                            generation_config["max_tokens"] = generation_config.pop("max_output_tokens")
+
+                        # 设置response_format为json_object
+                        response_format = {"type": "json_object"}
+                        if schema:
+                            response_format["schema"] = schema
+
+                        # 在提示词中明确要求JSON格式
+                        json_prompt = f"{prompt}\n\n请以JSON格式返回结果。"
+
+                        response_text = self.client.single_chat(
+                            message=json_prompt,
+                            model=config.llm.model_name,
+                            response_format=response_format,
+                            **generation_config
+                        )
+
+                        # 解析JSON响应
+                        return self._parse_json_response(response_text)
+
+                except ChatError as e:
+                    logger.error(f"LLM JSON generation error (OpenRouter): {e}")
+                    return {}
+                except Exception as e:
+                    logger.error(f"LLM JSON generation error: {e}")
                     return {}
 
-                elif self.provider == LLMProvider.OPENROUTER:
-                    # OpenRouter API使用 `max_tokens` 而不是 `max_output_tokens`
-                    if "max_output_tokens" in generation_config:
-                        generation_config["max_tokens"] = generation_config.pop("max_output_tokens")
+            # 使用超时控制
+            if timeout is None:
+                timeout = config.llm.timeout
 
-                    return self.client.chat_json_once(
-                        prompt=prompt,
-                        model=config.llm.model_name,
-                        schema=schema,
-                        **generation_config
-                    )
-
-                elif self.provider == LLMProvider.OPENAI or self.provider == LLMProvider.LMSTUDIO:
-                    # OpenAI API使用 `max_tokens` 而不是 `max_output_tokens`
-                    if "max_output_tokens" in generation_config:
-                        generation_config["max_tokens"] = generation_config.pop("max_output_tokens")
-
-                    # 设置response_format为json_object
-                    response_format = {"type": "json_object"}
-                    if schema:
-                        response_format["schema"] = schema
-
-                    # 在提示词中明确要求JSON格式
-                    json_prompt = f"{prompt}\n\n请以JSON格式返回结果。"
-
-                    response_text = self.client.single_chat(
-                        message=json_prompt,
-                        model=config.llm.model_name,
-                        response_format=response_format,
-                        **generation_config
-                    )
-
-                    # 解析JSON响应
-                    return self._parse_json_response(response_text)
-
-            except ChatError as e:
-                logger.error(f"LLM JSON generation error (OpenRouter): {e}")
+            try:
+                result = await asyncio.wait_for(
+                    loop.run_in_executor(self.executor, _sync_generate_json),
+                    timeout=timeout
+                )
+                return result
+            except asyncio.TimeoutError:
+                logger.error(f"LLM JSON request timed out after {timeout}s")
                 return {}
-            except Exception as e:
-                logger.error(f"LLM JSON generation error: {e}")
-                return {}
-        
-        return await loop.run_in_executor(self.executor, _sync_generate_json)
     
+    @async_performance_monitor
     async def generate_character(self, character_type: str = "npc", context: str = "") -> Optional[Character]:
         """生成角色"""
         prompt = f"""
@@ -449,6 +506,7 @@ class LLMService:
         
         return None
     
+    @async_performance_monitor
     async def generate_monster(self, challenge_rating: float = 1.0, context: str = "") -> Optional[Monster]:
         """生成怪物"""
         # 使用PromptManager构建提示词
@@ -492,6 +550,7 @@ class LLMService:
 
         return None
     
+    @async_performance_monitor
     async def generate_map_description(self, map_data: GameMap, context: str = "") -> str:
         """生成地图描述"""
         # 使用PromptManager构建提示词
@@ -501,6 +560,7 @@ class LLMService:
         prompt = prompt_manager.format_prompt("map_description", **map_context)
         return await self._async_generate(prompt)
     
+    @async_performance_monitor
     async def generate_quest(self, player_level: int = 1, context: str = "") -> Optional[Quest]:
         """生成任务"""
         # 使用PromptManager构建提示词
@@ -808,7 +868,8 @@ class LLMService:
 
     def close(self):
         """关闭服务"""
-        self.executor.shutdown(wait=True)
+        # 不再需要手动关闭executor，由async_task_manager统一管理
+        logger.info("LLMService close() called - executor managed by AsyncTaskManager")
 
 
 # 全局LLM服务实例

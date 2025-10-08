@@ -28,6 +28,7 @@ from progress_manager import progress_manager
 from event_choice_system import event_choice_system
 from data_models import GameState
 from user_session_manager import user_session_manager
+from async_task_manager import async_task_manager
 
 
 # 配置日志
@@ -75,27 +76,45 @@ class SyncStateRequest(BaseModel):
 async def lifespan(app: FastAPI):
     """应用启动和关闭时的处理"""
     logger.info("Starting Labyrinthia AI server...")
-    
+
     # 启动时的初始化
     try:
-        # 这里可以添加启动时的初始化逻辑
+        # 初始化异步任务管理器
+        async_task_manager.initialize()
+        logger.info("AsyncTaskManager initialized")
+
         logger.info("Server started successfully")
         yield
+
     finally:
         # 关闭时的清理
         logger.info("Shutting down Labyrinthia AI server...")
-        
-        # 保存所有活跃游戏
-        for game_id, game_state in game_engine.active_games.items():
+
+        # 1. 先取消所有自动保存任务
+        logger.info("Cancelling all auto-save tasks...")
+        game_ids = list(game_engine.active_games.keys())
+        for game_id in game_ids:
+            if game_id in game_engine.auto_save_tasks:
+                try:
+                    await game_engine.close_game(game_id)
+                except Exception as e:
+                    logger.error(f"Error closing game {game_id}: {e}")
+
+        # 2. 保存所有剩余的活跃游戏（如果有的话）
+        for game_id, game_state in list(game_engine.active_games.items()):
             try:
-                data_manager.save_game_state(game_state)
+                logger.info(f"Saving game: {game_id}")
+                await game_engine._save_game_async(game_state)
                 logger.info(f"Saved game: {game_id}")
             except Exception as e:
                 logger.error(f"Failed to save game {game_id}: {e}")
-        
-        # 关闭LLM服务
+
+        # 3. 关闭LLM服务
         llm_service.close()
-        
+
+        # 4. 关闭异步任务管理器（会取消所有剩余任务并关闭线程池）
+        await async_task_manager.shutdown()
+
         logger.info("Server shutdown complete")
 
 

@@ -18,6 +18,7 @@ from data_models import (
 )
 from llm_service import llm_service
 from prompt_manager import prompt_manager
+from async_task_manager import async_performance_monitor
 
 
 logger = logging.getLogger(__name__)
@@ -100,6 +101,7 @@ class ContentGenerator:
     def __init__(self):
         self.cache = {}  # 简单的内存缓存
     
+    @async_performance_monitor
     async def generate_dungeon_map(self, width: int = 20, height: int = 20,
                                  depth: int = 1, theme: str = "classic",
                                  quest_context: Optional[Dict[str, Any]] = None) -> GameMap:
@@ -1127,6 +1129,7 @@ class ContentGenerator:
 
         return entrance_tiles
 
+    @async_performance_monitor
     async def generate_encounter_monsters(self, player_level: int,
                                         encounter_difficulty: str = "medium") -> List[Monster]:
         """生成遭遇怪物"""
@@ -1164,29 +1167,33 @@ class ContentGenerator:
         
         return monsters
     
-    async def generate_random_items(self, count: int = 1, 
+    @async_performance_monitor
+    async def generate_random_items(self, count: int = 1,
                                   item_level: int = 1) -> List[Item]:
-        """生成随机物品"""
-        items = []
-        
+        """生成随机物品（使用并发生成提高效率）"""
         item_types = ["weapon", "armor", "consumable", "misc"]
         rarities = ["common", "uncommon", "rare", "epic", "legendary"]
-        
+
         # 根据物品等级调整稀有度权重
         rarity_weights = [50, 30, 15, 4, 1]  # 基础权重
         if item_level > 5:
             rarity_weights = [30, 40, 20, 8, 2]
         if item_level > 10:
             rarity_weights = [20, 30, 30, 15, 5]
-        
+
+        # 准备所有物品的生成参数
+        item_params = []
         for _ in range(count):
             item_type = random.choice(item_types)
             rarity = random.choices(rarities, weights=rarity_weights)[0]
-            
-            # 使用LLM生成物品
+            item_params.append((item_type, rarity))
+
+        # 定义单个物品生成函数
+        async def generate_single_item(item_type: str, rarity: str) -> Optional[Item]:
+            """生成单个物品"""
             prompt = f"""
             生成一个DnD风格的{item_type}物品，稀有度为{rarity}，适合等级{item_level}的角色。
-            
+
             请返回JSON格式：
             {{
                 "name": "物品名称",
@@ -1200,7 +1207,7 @@ class ContentGenerator:
                 }}
             }}
             """
-            
+
             try:
                 result = await llm_service._async_generate_json(prompt)
                 if result:
@@ -1212,7 +1219,7 @@ class ContentGenerator:
                     item.weight = result.get("weight", 1.0)
                     item.rarity = rarity
                     item.properties = result.get("properties", {})
-                    items.append(item)
+                    return item
             except Exception as e:
                 logger.error(f"Failed to generate item: {e}")
                 # 创建默认物品
@@ -1221,32 +1228,59 @@ class ContentGenerator:
                 item.description = "一个神秘的物品"
                 item.item_type = item_type
                 item.rarity = rarity
-                items.append(item)
-        
+                return item
+
+        # 并发生成所有物品
+        tasks = [generate_single_item(item_type, rarity) for item_type, rarity in item_params]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        # 收集成功生成的物品
+        items = []
+        for result in results:
+            if isinstance(result, Item):
+                items.append(result)
+            elif isinstance(result, Exception):
+                logger.error(f"Failed to generate item: {result}")
+
         return items
 
     async def generate_loot_items(self, player_level: int, rarity: str = "common",
                                 item_types: Optional[List[str]] = None, count: int = 1) -> List[Item]:
-        """生成战利品物品（兼容性方法，调用generate_random_items）"""
-        # 如果指定了物品类型，过滤生成的物品
+        """生成战利品物品（使用并发生成提高效率）"""
+        # 如果指定了物品类型，使用并发生成
         if item_types:
-            items = []
+            # 准备生成任务
+            tasks = []
             for _ in range(count):
-                # 为每个指定类型生成物品
                 for item_type in item_types:
-                    generated_items = await self.generate_random_items(1, player_level)
-                    if generated_items:
-                        item = generated_items[0]
-                        item.item_type = item_type  # 强制设置为指定类型
-                        item.rarity = rarity  # 设置稀有度
-                        items.append(item)
-                    if len(items) >= count:
+                    tasks.append(self.generate_random_items(1, player_level))
+                    if len(tasks) >= count:
                         break
+                if len(tasks) >= count:
+                    break
+
+            # 并发生成所有物品
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+
+            # 收集成功生成的物品并设置类型和稀有度
+            items = []
+            type_index = 0
+            for result in results:
+                if isinstance(result, list) and result:
+                    item = result[0]
+                    item.item_type = item_types[type_index % len(item_types)]
+                    item.rarity = rarity
+                    items.append(item)
+                    type_index += 1
+                elif isinstance(result, Exception):
+                    logger.error(f"Failed to generate loot item: {result}")
+
                 if len(items) >= count:
                     break
+
             return items[:count]
         else:
-            # 使用原有的generate_random_items方法
+            # 使用原有的generate_random_items方法（已经是并发的）
             items = await self.generate_random_items(count, player_level)
             # 设置稀有度
             for item in items:

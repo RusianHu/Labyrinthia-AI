@@ -24,6 +24,7 @@ from llm_interaction_manager import (
 )
 from prompt_manager import prompt_manager
 from event_choice_system import event_choice_system, ChoiceEventType
+from async_task_manager import async_task_manager, TaskType, async_performance_monitor
 
 
 logger = logging.getLogger(__name__)
@@ -1633,33 +1634,98 @@ class GameEngine:
             target_tile.character_id = monster.id
             monster.position = (new_x, new_y)
     
-    async def _save_game_async(self, game_state: GameState):
-        """异步保存游戏"""
+    @async_performance_monitor
+    async def _save_game_async(self, game_state: GameState, retry_count: int = 3):
+        """
+        异步保存游戏（带重试机制）
+
+        Args:
+            game_state: 游戏状态
+            retry_count: 重试次数
+        """
         loop = asyncio.get_event_loop()
-        await loop.run_in_executor(None, data_manager.save_game_state, game_state)
-    
+
+        for attempt in range(retry_count):
+            try:
+                # 使用统一的IO线程池
+                await loop.run_in_executor(
+                    async_task_manager.io_executor,
+                    data_manager.save_game_state,
+                    game_state
+                )
+
+                if attempt > 0:
+                    logger.info(f"Game {game_state.id} saved successfully after {attempt + 1} attempts")
+
+                return
+
+            except Exception as e:
+                if attempt < retry_count - 1:
+                    logger.warning(f"Failed to save game {game_state.id} (attempt {attempt + 1}/{retry_count}): {e}")
+                    await asyncio.sleep(1)  # 等待1秒后重试
+                else:
+                    logger.error(f"Failed to save game {game_state.id} after {retry_count} attempts: {e}")
+                    raise
+
     def _start_auto_save(self, game_id: str):
         """启动自动保存"""
         async def auto_save_loop():
+            """自动保存循环（带错误处理）"""
+            logger.info(f"Auto-save started for game {game_id}")
+
             while game_id in self.active_games:
-                await asyncio.sleep(config.game.auto_save_interval)
-                if game_id in self.active_games:
-                    await self._save_game_async(self.active_games[game_id])
-        
-        task = asyncio.create_task(auto_save_loop())
+                try:
+                    await asyncio.sleep(config.game.auto_save_interval)
+
+                    if game_id in self.active_games:
+                        logger.debug(f"Auto-saving game {game_id}...")
+                        await self._save_game_async(self.active_games[game_id])
+                        logger.debug(f"Auto-save completed for game {game_id}")
+
+                except asyncio.CancelledError:
+                    logger.info(f"Auto-save cancelled for game {game_id}")
+                    raise
+
+                except Exception as e:
+                    logger.error(f"Auto-save error for game {game_id}: {e}")
+                    # 继续循环，不中断自动保存
+                    await asyncio.sleep(5)  # 出错后等待5秒再继续
+
+        # 使用任务管理器创建任务
+        task = async_task_manager.create_task(
+            auto_save_loop(),
+            task_type=TaskType.AUTO_SAVE,
+            description=f"Auto-save for game {game_id}",
+            task_id=f"auto_save_{game_id}"
+        )
+
         self.auto_save_tasks[game_id] = task
     
-    def close_game(self, game_id: str):
-        """关闭游戏"""
-        if game_id in self.active_games:
-            # 保存游戏状态
-            data_manager.save_game_state(self.active_games[game_id])
-            del self.active_games[game_id]
-        
-        # 取消自动保存任务
+    async def close_game(self, game_id: str):
+        """
+        关闭游戏（异步版本，正确处理任务取消）
+
+        Args:
+            game_id: 游戏ID
+        """
+        # 先取消自动保存任务
         if game_id in self.auto_save_tasks:
-            self.auto_save_tasks[game_id].cancel()
+            task_id = f"auto_save_{game_id}"
+            logger.info(f"Cancelling auto-save task for game {game_id}")
+            await async_task_manager.cancel_task(task_id, wait=True)
             del self.auto_save_tasks[game_id]
+
+        # 然后保存游戏状态
+        if game_id in self.active_games:
+            try:
+                logger.info(f"Saving game {game_id} before closing...")
+                await self._save_game_async(self.active_games[game_id])
+                logger.info(f"Game {game_id} saved successfully")
+            except Exception as e:
+                logger.error(f"Failed to save game {game_id} on close: {e}")
+
+            del self.active_games[game_id]
+            logger.info(f"Game {game_id} closed")
 
 
 # 全局游戏引擎实例

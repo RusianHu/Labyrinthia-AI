@@ -519,6 +519,11 @@ class PromptManager:
    - 其他符合故事发展的选项
 3. 每个选项要有明确的后果和发展方向
 4. 选项应该为玩家提供多样化的发展路径，包括继续冒险的可能性
+5. **重要**：每个选项必须在 requirements 对象中设置以下字段：
+   - leads_to_new_quest: 是否导向新任务（true/false）
+   - leads_to_map_transition: 是否导向地图切换（true/false）
+   - quest_theme: 如果导向新任务，新任务的主题（字符串）
+   - map_theme: 如果导向地图切换，新地图的主题（字符串）
 
 请返回JSON格式：
 {{
@@ -529,11 +534,12 @@ class PromptManager:
             "text": "选项文本",
             "description": "选项详细说明",
             "consequences": "可能的后果和发展",
-            "requirements": {{}},
-            "leads_to_new_quest": false,
-            "leads_to_map_transition": false,
-            "quest_theme": "",
-            "map_theme": ""
+            "requirements": {{
+                "leads_to_new_quest": true,
+                "leads_to_map_transition": true,
+                "quest_theme": "探索矿井深处的秘密",
+                "map_theme": "矿井深层"
+            }}
         }}
     ]
 }}
@@ -555,7 +561,15 @@ class PromptManager:
                                 "text": {"type": "string"},
                                 "description": {"type": "string"},
                                 "consequences": {"type": "string"},
-                                "requirements": {"type": "object"}
+                                "requirements": {
+                                    "type": "object",
+                                    "properties": {
+                                        "leads_to_new_quest": {"type": "boolean"},
+                                        "leads_to_map_transition": {"type": "boolean"},
+                                        "quest_theme": {"type": "string"},
+                                        "map_theme": {"type": "string"}
+                                    }
+                                }
                             },
                             "required": ["text", "description", "consequences"]
                         }
@@ -763,7 +777,28 @@ class PromptManager:
                     "message": {"type": "string"},
                     "events": {"type": "array", "items": {"type": "string"}},
                     "player_updates": {"type": "object"},
-                    "quest_updates": {"type": "object"}
+                    "quest_updates": {"type": "object"},
+                    "new_quest_data": {
+                        "type": "object",
+                        "properties": {
+                            "title": {"type": "string"},
+                            "description": {"type": "string"},
+                            "type": {"type": "string"},
+                            "experience_reward": {"type": "integer"},
+                            "objectives": {"type": "array", "items": {"type": "string"}},
+                            "story_context": {"type": "string"}
+                        }
+                    },
+                    "map_transition": {
+                        "type": "object",
+                        "properties": {
+                            "should_transition": {"type": "boolean"},
+                            "transition_type": {"type": "string"},
+                            "target_depth": {"type": "integer"},
+                            "theme": {"type": "string"},
+                            "message": {"type": "string"}
+                        }
+                    }
                 },
                 "required": ["message", "events"]
             },

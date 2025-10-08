@@ -15,6 +15,7 @@ from data_models import (
 from llm_service import llm_service
 from prompt_manager import prompt_manager
 from config import config
+from async_task_manager import async_task_manager, TaskType
 
 
 logger = logging.getLogger(__name__)
@@ -85,6 +86,52 @@ class EventChoiceSystem:
         self.choice_handlers[ChoiceEventType.MAP_TRANSITION] = self._handle_map_transition_choice
         self.choice_handlers[ChoiceEventType.ITEM_USE] = self._handle_item_use_choice
         self.choice_handlers[ChoiceEventType.NPC_INTERACTION] = self._handle_npc_interaction_choice
+
+    async def _call_llm_with_retry(
+        self,
+        llm_func: Callable,
+        *args,
+        max_retries: int = 2,
+        timeout: float = 30.0,
+        **kwargs
+    ) -> Optional[Any]:
+        """
+        带重试机制的LLM调用
+
+        Args:
+            llm_func: LLM函数
+            *args: 位置参数
+            max_retries: 最大重试次数
+            timeout: 超时时间（秒）
+            **kwargs: 关键字参数
+
+        Returns:
+            LLM响应或None
+        """
+        for attempt in range(max_retries + 1):
+            try:
+                # 添加超时参数
+                result = await llm_func(*args, timeout=timeout, **kwargs)
+
+                if result:
+                    if attempt > 0:
+                        logger.info(f"LLM call succeeded after {attempt + 1} attempts")
+                    return result
+                else:
+                    logger.warning(f"LLM returned empty response (attempt {attempt + 1}/{max_retries + 1})")
+
+            except asyncio.TimeoutError:
+                logger.warning(f"LLM call timed out after {timeout}s (attempt {attempt + 1}/{max_retries + 1})")
+
+            except Exception as e:
+                logger.error(f"LLM call error (attempt {attempt + 1}/{max_retries + 1}): {e}")
+
+            # 如果不是最后一次尝试，等待后重试
+            if attempt < max_retries:
+                await asyncio.sleep(1.0 * (attempt + 1))  # 递增等待时间
+
+        logger.error(f"LLM call failed after {max_retries + 1} attempts")
+        return None
     
     async def create_story_event_choice(self, game_state: GameState, tile: MapTile) -> EventChoiceContext:
         """创建故事事件选择"""
@@ -131,11 +178,16 @@ class EventChoiceSystem:
             **quest_info  # 展开任务信息
         )
         
-        try:
-            # 使用LLM生成选择上下文
-            llm_response = await llm_service._async_generate_json(prompt)
-            
-            if llm_response:
+        # 使用重试机制调用LLM
+        llm_response = await self._call_llm_with_retry(
+            llm_service._async_generate_json,
+            prompt,
+            max_retries=2,
+            timeout=30.0
+        )
+
+        if llm_response:
+            try:
                 context = EventChoiceContext(
                     event_type=ChoiceEventType.STORY_EVENT.value,
                     title=llm_response.get("title", "神秘事件"),
@@ -146,7 +198,7 @@ class EventChoiceSystem:
                         "event_data": event_data
                     }
                 )
-                
+
                 # 创建选择选项
                 choices_data = llm_response.get("choices", [])
                 for choice_data in choices_data:
@@ -160,13 +212,14 @@ class EventChoiceSystem:
                         )
                     )
                     context.choices.append(choice)
-                
+
                 return context
-                
-        except Exception as e:
-            logger.error(f"Error creating story event choice: {e}")
-        
+
+            except Exception as e:
+                logger.error(f"Error parsing LLM response for story event: {e}")
+
         # 降级处理：创建默认选择
+        logger.warning("Using fallback default story choice")
         return self._create_default_story_choice(game_state, tile)
     
     async def create_quest_completion_choice(self, game_state: GameState, completed_quest: Quest) -> EventChoiceContext:
@@ -185,11 +238,16 @@ class EventChoiceSystem:
             map_depth=game_state.current_map.depth
         )
         
-        try:
-            # 使用LLM生成任务完成选择
-            llm_response = await llm_service._async_generate_json(prompt)
-            
-            if llm_response:
+        # 使用重试机制调用LLM
+        llm_response = await self._call_llm_with_retry(
+            llm_service._async_generate_json,
+            prompt,
+            max_retries=2,
+            timeout=30.0
+        )
+
+        if llm_response:
+            try:
                 context = EventChoiceContext(
                     event_type=ChoiceEventType.QUEST_COMPLETION.value,
                     title=llm_response.get("title", f"任务完成：{completed_quest.title}"),
@@ -199,7 +257,7 @@ class EventChoiceSystem:
                         "quest_data": completed_quest.to_dict()
                     }
                 )
-                
+
                 # 创建选择选项
                 choices_data = llm_response.get("choices", [])
                 for choice_data in choices_data:
@@ -224,13 +282,14 @@ class EventChoiceSystem:
                         choice.requirements["map_theme"] = choice_data["map_theme"]
 
                     context.choices.append(choice)
-                
+
                 return context
-                
-        except Exception as e:
-            logger.error(f"Error creating quest completion choice: {e}")
-        
+
+            except Exception as e:
+                logger.error(f"Error parsing LLM response for quest completion: {e}")
+
         # 降级处理：创建默认任务完成选择
+        logger.warning("Using fallback default quest completion choice")
         return self._create_default_quest_completion_choice(game_state, completed_quest)
     
     async def process_choice(self, game_state: GameState, context_id: str, choice_id: str) -> ChoiceResult:
