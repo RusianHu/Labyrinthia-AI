@@ -215,8 +215,16 @@ body {
 /* 地形类型样式 */
 .terrain-floor { background: #ecf0f1; }
 .terrain-wall { background: #34495e; }
-.terrain-door { background: #8b4513; }
-.terrain-trap { background: #e74c3c; }
+.terrain-door {
+    background: #8b4513 url('/static/assets/terrain/door_icon.png') center center no-repeat;
+    background-size: 80%;
+    position: relative;
+}
+.terrain-trap {
+    background: #e74c3c url('/static/assets/terrain/trap_icon.png') center center no-repeat;
+    background-size: 80%;
+    position: relative;
+}
 .terrain-treasure {
     background: #f1c40f url('/static/assets/terrain/treasure_chest.png') center center no-repeat;
     background-size: 80%;
