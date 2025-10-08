@@ -432,6 +432,50 @@ async def sync_game_state(request: SyncStateRequest):
         raise HTTPException(status_code=500, detail=f"同步游戏状态失败: {str(e)}")
 
 
+@app.post("/api/game/{game_id}/combat-result")
+async def process_combat_result(game_id: str, request: Request):
+    """处理战斗结果（怪物被击败）"""
+    try:
+        logger.info(f"Processing combat result for game: {game_id}")
+
+        if game_id not in game_engine.active_games:
+            raise HTTPException(status_code=404, detail="游戏未找到")
+
+        game_state = game_engine.active_games[game_id]
+        request_data = await request.json()
+
+        monster_id = request_data.get("monster_id")
+        damage_dealt = request_data.get("damage_dealt", 0)
+
+        if not monster_id:
+            raise HTTPException(status_code=400, detail="缺少怪物ID")
+
+        # 查找怪物
+        monster = None
+        for m in game_state.monsters:
+            if m.id == monster_id:
+                monster = m
+                break
+
+        if not monster:
+            raise HTTPException(status_code=404, detail="怪物未找到")
+
+        # 使用战斗结果管理器处理
+        from combat_result_manager import combat_result_manager
+        combat_result = await combat_result_manager.process_monster_defeat(
+            game_state, monster, damage_dealt
+        )
+
+        # 返回战斗结果
+        return combat_result.to_dict()
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to process combat result: {e}")
+        raise HTTPException(status_code=500, detail=f"处理战斗结果失败: {str(e)}")
+
+
 @app.post("/api/event-choice")
 async def process_event_choice(request: EventChoiceRequest):
     """处理事件选择"""

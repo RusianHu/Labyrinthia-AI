@@ -299,6 +299,17 @@ class LocalGameEngine {
                 position: [tile.x, tile.y],
                 trap_result: trapResult
             });
+
+            // 【修复】处理怪物回合（triggerBackendEvent已经更新了UI）
+            await this.processMonsterTurns();
+
+            // 【修复】检查是否需要同步
+            if (this.shouldSync()) {
+                await this.syncToBackend();
+            }
+        } else {
+            // 玩家死亡，只更新UI显示游戏结束状态
+            this.game.updateUI();
         }
     }
 
@@ -314,6 +325,14 @@ class LocalGameEngine {
 
         // 宝藏被发现后变为地板
         tile.terrain = 'floor';
+
+        // 【修复】处理怪物回合（triggerBackendEvent已经更新了UI）
+        await this.processMonsterTurns();
+
+        // 【修复】检查是否需要同步
+        if (this.shouldSync()) {
+            await this.syncToBackend();
+        }
     }
 
     /**
@@ -475,16 +494,24 @@ class LocalGameEngine {
         // 检查特殊地形（前端本地处理）
         if (targetTile.terrain === 'trap') {
             // 陷阱由前端本地处理
-            this.handleTrap(targetTile);
+            await this.handleTrap(targetTile);
+            // handleTrap内部调用triggerBackendEvent，已经更新了UI
+            // 不需要继续处理
+            return;
         } else if (targetTile.terrain === 'treasure') {
             // 宝藏需要LLM生成物品
             await this.handleTreasure(targetTile);
+            // handleTreasure内部调用triggerBackendEvent，已经更新了UI
+            // 不需要继续处理
+            return;
         } else if (needsBackend) {
             // 需要LLM处理的事件
             await this.triggerBackendEvent('tile_event', {
                 tile: targetTile,
                 position: [newPos.x, newPos.y]
             });
+            // triggerBackendEvent已经更新了UI，不需要继续处理
+            return;
         } else {
             // 检查楼梯（前端本地处理）
             if (targetTile.terrain === 'stairs_down') {
@@ -506,7 +533,7 @@ class LocalGameEngine {
             // 本地处理怪物回合
             await this.processMonsterTurns();
 
-            // 更新UI
+            // 【修复】只在普通移动时更新UI（陷阱、宝藏、后端事件都已经在各自的处理函数中更新了UI）
             this.game.updateUI();
 
             // 检查是否需要同步
@@ -620,38 +647,118 @@ class LocalGameEngine {
     /**
      * 处理怪物死亡
      */
-    async handleMonsterDeath(monster) {
+    async handleMonsterDeath(monster, damageDealt = 0) {
         const gameState = this.getGameState();
         const player = gameState.player;
 
-        this.addMessage(`${monster.name} 被击败了！`, 'combat');
+        console.log('[LocalGameEngine] Processing monster death:', monster.name);
 
-        // 获得经验值
-        const expGain = Math.floor(monster.challenge_rating * 100);
-        player.stats.experience += expGain;
-        this.addMessage(`获得了 ${expGain} 点经验`, 'system');
-
-        // 检查升级
-        if (this.checkLevelUp(player)) {
-            this.addMessage('恭喜升级！', 'success');
-        }
-
-        // 从怪物列表中移除
+        // 【修复】检查怪物是否已经被处理过
         const monsterIndex = gameState.monsters.findIndex(m => m.id === monster.id);
-        if (monsterIndex !== -1) {
-            gameState.monsters.splice(monsterIndex, 1);
+        if (monsterIndex === -1) {
+            console.warn('[LocalGameEngine] Monster already removed:', monster.id);
+            return; // 怪物已经被移除，直接返回
         }
 
-        // 清除地图上的怪物标记
-        const tile = this.getTile(monster.position[0], monster.position[1]);
-        if (tile) {
-            tile.character_id = null;
+        // 【重要】标记怪物为"正在处理"，防止重复处理
+        if (monster._processing) {
+            console.warn('[LocalGameEngine] Monster already being processed:', monster.id);
+            return;
         }
+        monster._processing = true;
 
-        // 怪物死亡后立即同步状态到后端，避免后续操作时状态不一致
-        // 这样可以确保休息、使用物品等操作时后端有最新的怪物列表
-        console.log('[LocalGameEngine] Monster killed, syncing state immediately');
-        await this.syncToBackend();
+        // 显示LLM遮罩，准备生成战斗叙述
+        this.game.showLLMOverlay('combat_victory');
+
+        try {
+            // 【重要】先调用后端战斗结果管理器（此时怪物还在列表中）
+            const response = await fetch(`/api/game/${gameState.id}/combat-result`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    monster_id: monster.id,
+                    damage_dealt: damageDealt
+                })
+            });
+
+            if (!response.ok) {
+                throw new Error('Failed to process combat result');
+            }
+
+            const combatResult = await response.json();
+            console.log('[LocalGameEngine] Combat result:', combatResult);
+
+            // 应用战斗结果到本地状态
+            if (combatResult.experience_gained) {
+                player.stats.experience += combatResult.experience_gained;
+            }
+
+            // 添加战利品到背包
+            if (combatResult.loot_items && combatResult.loot_items.length > 0) {
+                for (const item of combatResult.loot_items) {
+                    player.inventory.push(item);
+                }
+            }
+
+            // 显示战斗事件
+            if (combatResult.events && combatResult.events.length > 0) {
+                for (const event of combatResult.events) {
+                    this.addMessage(event, 'combat');
+                }
+            }
+
+            // 显示LLM生成的战斗叙述
+            if (combatResult.narrative) {
+                this.addMessage(combatResult.narrative, 'narrative');
+            }
+
+            // 检查升级（前端也检查一次，确保UI更新）
+            if (combatResult.level_up) {
+                this.checkLevelUp(player);
+            }
+
+            // 【修复】不在这里更新UI，等到finally块中统一更新
+            // this.game.updateUI(); // 移除这里的UI更新
+
+        } catch (error) {
+            console.error('[LocalGameEngine] Error processing monster death:', error);
+
+            // 降级处理：使用本地逻辑
+            this.addMessage(`${monster.name} 被击败了！`, 'combat');
+
+            // 获得经验值
+            const expGain = Math.floor(monster.challenge_rating * 100);
+            player.stats.experience += expGain;
+            this.addMessage(`获得了 ${expGain} 点经验`, 'system');
+
+            // 检查升级
+            if (this.checkLevelUp(player)) {
+                this.addMessage('恭喜升级！', 'success');
+            }
+        } finally {
+            // 【重要】现在才从怪物列表中移除（无论成功还是失败）
+            const finalIndex = gameState.monsters.findIndex(m => m.id === monster.id);
+            if (finalIndex !== -1) {
+                gameState.monsters.splice(finalIndex, 1);
+            }
+
+            // 清除地图上的怪物标记
+            const tile = this.getTile(monster.position[0], monster.position[1]);
+            if (tile) {
+                tile.character_id = null;
+            }
+
+            // 隐藏LLM遮罩
+            this.game.hideLLMOverlay();
+
+            // 【修复】只在这里更新一次UI，此时怪物已经被正确移除
+            this.game.updateUI();
+
+            // 同步状态到后端
+            await this.syncToBackend();
+        }
     }
 
     /**
@@ -733,11 +840,17 @@ class LocalGameEngine {
             this.addMessage(`对 ${monster.name} 造成了 ${damage} 点伤害`, 'combat');
 
             // 检查怪物是否死亡
-            if (monster.stats.hp <= 0) {
-                await this.handleMonsterDeath(monster);
+            const monsterDied = monster.stats.hp <= 0;
+
+            if (monsterDied) {
+                // 传递伤害值给怪物死亡处理
+                await this.handleMonsterDeath(monster, damage);
+                // 怪物死亡后，handleMonsterDeath已经处理了UI更新和同步
+                // 不需要继续处理怪物回合
+                return;
             }
 
-            // 增加回合数
+            // 增加回合数（只有怪物没死才增加）
             gameState.turn_count++;
             gameState.game_time++;
 

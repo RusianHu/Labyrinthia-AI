@@ -101,6 +101,15 @@
       "optional_params": {"context": ""},
       "description": "生成详细的地图环境描述",
       "version": "1.0"
+    },
+    "combat_victory_narrative": {
+      "name": "combat_victory_narrative",
+      "category": "combat_system",
+      "template": "玩家刚刚在战斗中击败了一个敌人，请生成一段生动的战斗胜利叙述。\n\n玩家信息：\n- 名称：{player_name}\n- 等级：{player_level}\n- 生命值：{player_hp}/{player_max_hp}\n\n被击败的敌人：\n- 名称：{monster_name}\n- 描述：{monster_description}\n- 是否为Boss：{is_boss}\n- 是否为任务怪物：{is_quest_monster}\n\n战斗结果：\n- 造成伤害：{damage_dealt}\n- 获得经验：{experience_gained}\n- 是否升级：{level_up}\n- 掉落物品：{loot_items}\n- 任务进度：{quest_progress}%\n\n当前位置：\n- 地图：{map_name}\n- 层数：{map_depth}{quest_info}\n\n请生成一段80-150字的战斗胜利叙述，要求：\n1. 描述战斗的激烈程度和玩家的表现\n2. 突出敌人的特点和被击败的过程\n3. 如果是Boss或任务怪物，要强调其重要性\n4. 如果升级了，要体现玩家的成长\n5. 如果有掉落物品，可以简单提及\n6. 语气要符合DnD冒险风格，富有史诗感\n7. 使用第二人称（你）来称呼玩家",
+      "required_params": ["player_name", "player_level", "player_hp", "player_max_hp", "monster_name", "monster_description", "is_boss", "is_quest_monster", "damage_dealt", "experience_gained", "level_up", "loot_items", "quest_progress", "map_name", "map_depth"],
+      "optional_params": {"quest_info": ""},
+      "description": "生成战斗胜利后的叙述文本",
+      "version": "1.0"
     }
   },
   "fallback_messages": {

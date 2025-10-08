@@ -151,7 +151,8 @@ Object.assign(LabyrinthiaGame.prototype, {
                             // 添加怪物图标
                             if (window.characterSprites) {
                                 const monsterIcon = await window.characterSprites.addMonsterToTile(tile, monster);
-                                monsterIcon.addEventListener('click', () => {
+                                monsterIcon.addEventListener('click', (e) => {
+                                    e.stopPropagation(); // 阻止事件冒泡到瓦片
                                     this.attackMonster(monster.id);
                                 });
                             } else {
@@ -169,7 +170,8 @@ Object.assign(LabyrinthiaGame.prototype, {
                                 }
 
                                 monsterIcon.title = monster.name;
-                                monsterIcon.addEventListener('click', () => {
+                                monsterIcon.addEventListener('click', (e) => {
+                                    e.stopPropagation(); // 阻止事件冒泡到瓦片
                                     this.attackMonster(monster.id);
                                 });
                                 tile.appendChild(monsterIcon);
