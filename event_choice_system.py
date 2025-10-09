@@ -467,6 +467,9 @@ class EventChoiceSystem:
     # 选择处理器方法
     async def _handle_story_choice(self, game_state: GameState, context: EventChoiceContext, choice: EventChoice) -> ChoiceResult:
         """处理故事选择"""
+        # 获取事件瓦片位置
+        tile_position = context.context_data.get("tile_position", (0, 0))
+
         # 获取当前活跃任务信息
         active_quest = next((q for q in game_state.quests if q.is_active), None)
         quest_info = ""
@@ -489,7 +492,7 @@ class EventChoiceSystem:
             map_depth=game_state.current_map.depth,
             map_width=game_state.current_map.width,
             map_height=game_state.current_map.height,
-            tile_position=context.context_data.get("tile_position", (0, 0)),
+            tile_position=tile_position,
             quest_info=quest_info,
             quest_id=quest_id
         )
@@ -519,6 +522,12 @@ class EventChoiceSystem:
                 # 调试日志：显示将要应用的更新
                 if config.game.show_llm_debug:
                     logger.info(f"Applying choice result: {result}")
+
+                # 标记事件瓦片已触发（在应用其他更新之前）
+                event_tile = game_state.current_map.get_tile(*tile_position)
+                if event_tile and event_tile.has_event:
+                    event_tile.event_triggered = True
+                    logger.info(f"Marked story event as triggered at {tile_position}")
 
                 # 应用更新到游戏状态
                 await self._apply_choice_result(game_state, result)
@@ -882,6 +891,10 @@ class EventChoiceSystem:
                             tile = MapTile(x=x, y=y)
                             current_map.set_tile(x, y, tile)
 
+                        # 记录瓦片原本是否有事件
+                        had_event = tile.has_event
+                        was_triggered = tile.event_triggered
+
                         # 更新瓦片属性
                         for attr_name, value in tile_data.items():
                             if attr_name == "terrain":
@@ -910,6 +923,12 @@ class EventChoiceSystem:
                                 setattr(tile, attr_name, value)
                             else:
                                 logger.debug(f"Unknown tile attribute: {attr_name}")
+
+                        # 如果瓦片原本有事件且已触发，确保更新后仍然保持触发状态
+                        # 除非LLM明确设置了event_triggered为False（表示重置事件）
+                        if had_event and was_triggered and "event_triggered" not in tile_data:
+                            tile.event_triggered = True
+                            logger.debug(f"Preserved event_triggered=True for tile at ({x}, {y})")
 
                         logger.info(f"Updated tile at ({x}, {y}) with data: {tile_data}")
 

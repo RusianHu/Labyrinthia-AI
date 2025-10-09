@@ -980,6 +980,12 @@ class GameEngine:
     async def _trigger_tile_event(self, game_state: GameState, tile: MapTile) -> str:
         """触发瓦片事件"""
         try:
+            # 标记事件已触发（在游戏状态的地图中）
+            map_tile = game_state.current_map.get_tile(tile.x, tile.y)
+            if map_tile:
+                map_tile.event_triggered = True
+                logger.info(f"Marked event as triggered at ({tile.x}, {tile.y})")
+
             if tile.event_type == "combat":
                 return await self._handle_combat_event(game_state, tile)
             elif tile.event_type == "treasure":
