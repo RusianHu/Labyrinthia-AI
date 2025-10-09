@@ -1388,6 +1388,20 @@ if config.game.debug_mode:
             logger.error(f"Failed to generate content: {e}")
             raise HTTPException(status_code=500, detail=str(e))
 
+    # ==================== 地图信息接口 ====================
+
+    @app.get("/api/debug/map/{game_id}")
+    async def debug_get_map_detail(game_id: str, request: Request, response: Response):
+        """调试：获取地图详细信息（包含所有瓦片数据）"""
+        user_id = user_session_manager.get_or_create_user_id(request, response)
+        return debug_api.get_map_detail(user_id, game_id)
+
+    @app.get("/api/debug/map/{game_id}/summary")
+    async def debug_get_map_summary(game_id: str, request: Request, response: Response):
+        """调试：获取地图摘要信息（轻量级，不包含所有瓦片）"""
+        user_id = user_session_manager.get_or_create_user_id(request, response)
+        return debug_api.get_map_summary(user_id, game_id)
+
     # ==================== 存档管理接口 ====================
 
     @app.get("/api/debug/saves/{user_id}")

@@ -432,6 +432,202 @@ class DebugAPI:
             }
 
 
+    @staticmethod
+    def get_map_detail(user_id: str, game_id: str) -> Dict[str, Any]:
+        """获取地图详细信息"""
+        try:
+            game_key = (user_id, game_id)
+
+            if game_key not in game_engine.active_games:
+                return {
+                    "success": False,
+                    "error": "游戏未找到"
+                }
+
+            game_state = game_engine.active_games[game_key]
+            current_map = game_state.current_map
+
+            # 基本地图信息
+            map_info = {
+                "id": current_map.id,
+                "name": current_map.name,
+                "width": current_map.width,
+                "height": current_map.height,
+                "depth": current_map.depth,
+                "total_tiles": len(current_map.tiles)
+            }
+
+            # 统计地形类型
+            terrain_stats = {}
+            explored_count = 0
+            visible_count = 0
+
+            # 收集所有瓦片信息
+            tiles_data = []
+            for position, tile in current_map.tiles.items():
+                # 统计地形
+                terrain_name = tile.terrain.value
+                terrain_stats[terrain_name] = terrain_stats.get(terrain_name, 0) + 1
+
+                # 统计探索和可见
+                if tile.is_explored:
+                    explored_count += 1
+                if tile.is_visible:
+                    visible_count += 1
+
+                # 收集瓦片详细信息
+                tile_info = {
+                    "position": [tile.x, tile.y],
+                    "terrain": terrain_name,
+                    "is_explored": tile.is_explored,
+                    "is_visible": tile.is_visible
+                }
+
+                # 添加房间信息
+                if tile.room_type:
+                    tile_info["room_type"] = tile.room_type
+                if tile.room_id:
+                    tile_info["room_id"] = tile.room_id
+
+                # 添加角色信息
+                if tile.character_id:
+                    tile_info["character_id"] = tile.character_id
+
+                # 添加物品信息
+                if tile.items:
+                    tile_info["items"] = [
+                        {
+                            "id": item.id,
+                            "name": item.name,
+                            "type": item.item_type.value
+                        }
+                        for item in tile.items
+                    ]
+
+                # 添加事件信息
+                if tile.has_event:
+                    tile_info["has_event"] = True
+                    tile_info["event_type"] = tile.event_type
+                    tile_info["event_triggered"] = tile.event_triggered
+                    if tile.event_data:
+                        tile_info["event_data"] = tile.event_data
+
+                tiles_data.append(tile_info)
+
+            # 统计信息
+            stats = {
+                "terrain_distribution": terrain_stats,
+                "explored_tiles": explored_count,
+                "visible_tiles": visible_count,
+                "exploration_percentage": round(explored_count / len(current_map.tiles) * 100, 2)
+            }
+
+            # 查找特殊位置
+            special_positions = {
+                "stairs_up": [],
+                "stairs_down": [],
+                "doors": [],
+                "chests": [],
+                "events": []
+            }
+
+            for position, tile in current_map.tiles.items():
+                pos = [tile.x, tile.y]
+
+                if tile.terrain.value == "stairs_up":
+                    special_positions["stairs_up"].append(pos)
+                elif tile.terrain.value == "stairs_down":
+                    special_positions["stairs_down"].append(pos)
+                elif tile.terrain.value == "door":
+                    special_positions["doors"].append(pos)
+                elif tile.terrain.value == "chest":
+                    special_positions["chests"].append(pos)
+
+                if tile.has_event:
+                    special_positions["events"].append({
+                        "position": pos,
+                        "type": tile.event_type,
+                        "triggered": tile.event_triggered
+                    })
+
+            return {
+                "success": True,
+                "timestamp": datetime.now().isoformat(),
+                "user_id": user_id,
+                "game_id": game_id,
+                "map_info": map_info,
+                "statistics": stats,
+                "special_positions": special_positions,
+                "tiles": tiles_data
+            }
+
+        except Exception as e:
+            logger.error(f"Failed to get map detail: {e}")
+            return {
+                "success": False,
+                "error": str(e)
+            }
+
+    @staticmethod
+    def get_map_summary(user_id: str, game_id: str) -> Dict[str, Any]:
+        """获取地图摘要信息（不包含所有瓦片数据，更轻量）"""
+        try:
+            game_key = (user_id, game_id)
+
+            if game_key not in game_engine.active_games:
+                return {
+                    "success": False,
+                    "error": "游戏未找到"
+                }
+
+            game_state = game_engine.active_games[game_key]
+            current_map = game_state.current_map
+
+            # 基本信息
+            map_info = {
+                "id": current_map.id,
+                "name": current_map.name,
+                "width": current_map.width,
+                "height": current_map.height,
+                "depth": current_map.depth
+            }
+
+            # 统计信息
+            terrain_stats = {}
+            explored_count = 0
+
+            for position, tile in current_map.tiles.items():
+                terrain_name = tile.terrain.value
+                terrain_stats[terrain_name] = terrain_stats.get(terrain_name, 0) + 1
+                if tile.is_explored:
+                    explored_count += 1
+
+            # 特殊位置统计
+            special_counts = {
+                "stairs_up": sum(1 for t in current_map.tiles.values() if t.terrain.value == "stairs_up"),
+                "stairs_down": sum(1 for t in current_map.tiles.values() if t.terrain.value == "stairs_down"),
+                "doors": sum(1 for t in current_map.tiles.values() if t.terrain.value == "door"),
+                "chests": sum(1 for t in current_map.tiles.values() if t.terrain.value == "chest"),
+                "events": sum(1 for t in current_map.tiles.values() if t.has_event)
+            }
+
+            return {
+                "success": True,
+                "timestamp": datetime.now().isoformat(),
+                "map_info": map_info,
+                "terrain_distribution": terrain_stats,
+                "exploration_percentage": round(explored_count / len(current_map.tiles) * 100, 2),
+                "special_counts": special_counts
+            }
+
+        except Exception as e:
+            logger.error(f"Failed to get map summary: {e}")
+            return {
+                "success": False,
+                "error": str(e)
+            }
+
+
 # 全局调试API实例
 debug_api = DebugAPI()
 
