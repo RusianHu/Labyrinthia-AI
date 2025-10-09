@@ -1307,18 +1307,47 @@ body {
 
 /* 响应式设计 */
 @media (max-width: 768px) {
+    .container {
+        padding: 10px; /* 统一调整移动端内边距 */
+    }
+
     .game-layout {
         grid-template-columns: 1fr;
         grid-template-rows: 1fr auto;
     }
 
     .sidebar {
-        flex-direction: row;
+        display: grid;
+        grid-auto-flow: column; /* 让网格项水平排列 */
+        grid-auto-columns: minmax(280px, 1fr); /* 每个面板最小宽度280px，但可扩展 */
+        gap: 15px;
         overflow-x: auto;
+        padding: 10px 0; /* 为滚动区域添加垂直内边距 */
+        /* 美化滚动条 */
+        scrollbar-width: thin;
+        scrollbar-color: #5e35b1 rgba(0,0,0,0.1);
+    }
+
+    .sidebar::-webkit-scrollbar {
+        height: 8px;
+    }
+
+    .sidebar::-webkit-scrollbar-track {
+        background: rgba(0,0,0,0.1);
+        border-radius: 4px;
+    }
+
+    .sidebar::-webkit-scrollbar-thumb {
+        background-color: #5e35b1;
+        border-radius: 4px;
     }
 
     .panel {
-        min-width: 250px;
+        min-width: 0; /* 重置最小宽度，由Grid布局管理 */
+    }
+
+    .controls-panel {
+        min-width: auto; /* 移除最小宽度限制，允许其自适应内容 */
     }
 
     .header {
@@ -1385,6 +1414,8 @@ body {
 
     .controls {
         gap: 10px;
+        grid-template-columns: repeat(3, auto); /* 使用auto代替1fr，使其自适应内容 */
+        justify-content: center; /* 居中按钮 */
     }
 
     /* 地图容器移动端优化 */
@@ -1448,6 +1479,10 @@ body {
     .panel {
         padding: 12px;
         min-width: 200px;
+    }
+
+    .controls-panel {
+        min-width: auto; /* 在超小屏幕上同样移除最小宽度限制 */
     }
 
     .panel h3 {

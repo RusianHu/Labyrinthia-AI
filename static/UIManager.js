@@ -65,9 +65,22 @@ Object.assign(LabyrinthiaGame.prototype, {
         const mapContainer = document.getElementById('map-grid');
         const gameMap = this.gameState.current_map;
         const player = this.gameState.player;
+
+        // 动态获取瓦片大小以适应响应式设计
+        const getTileSize = () => {
+            const tempTile = document.createElement('div');
+            tempTile.className = 'map-tile';
+            tempTile.style.visibility = 'hidden';
+            document.body.appendChild(tempTile);
+            const size = tempTile.offsetWidth;
+            document.body.removeChild(tempTile);
+            return size > 0 ? size : 24; // 提供一个回退值
+        };
+
+        const tileSize = getTileSize();
         
         // 设置网格样式
-        mapContainer.style.gridTemplateColumns = `repeat(${gameMap.width}, 24px)`;
+        mapContainer.style.gridTemplateColumns = `repeat(${gameMap.width}, ${tileSize}px)`;
         mapContainer.innerHTML = '';
         
         // 创建地图瓦片
