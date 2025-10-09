@@ -36,19 +36,29 @@ body {
 /* 头部 */
 .header {
     /* 使用带怪物剪影的黑暗地牢背景 */
-    background-color: rgba(20, 15, 35, 0.95);
-    background-image: url('/static/assets/bg-header-monsters.png');
-    background-repeat: repeat-x;
-    background-size: auto 100%;
-    background-position: center;
-    backdrop-filter: blur(15px);
+    background-color: transparent;
+    background-image: url('/static/assets/bg-header-monsters_1.png');
+    background-repeat: no-repeat;
+    background-size: 1024px 500px;
+    background-position: center bottom;
     padding: 20px 0;
-    margin-bottom: 20px;
-    border-radius: 12px;
-    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6),
-                inset 0 1px 0 rgba(255, 255, 255, 0.1);
-    border: 2px solid rgba(138, 43, 226, 0.4);
+    margin-bottom: -150px; /* 进一步减少与下方内容的间距 */
     position: relative;
+    animation: pulse-jump 5s ease-in-out infinite;
+    border: none;
+    box-shadow: none;
+    min-height: 350px; /* 调整容器高度以适应新的间距 */
+}
+
+@keyframes pulse-jump {
+    0%, 100% {
+        background-size: 1024px 500px;
+        background-position: center bottom;
+    }
+    50% {
+        background-size: 1050px 512px; /* 略微放大 */
+        background-position: center calc(bottom + 10px); /* 略微上移 */
+    }
 }
 
 /* 标题栏发光效果 */
