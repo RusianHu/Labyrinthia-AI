@@ -93,19 +93,21 @@ async def lifespan(app: FastAPI):
 
         # 1. 先取消所有自动保存任务
         logger.info("Cancelling all auto-save tasks...")
-        game_ids = list(game_engine.active_games.keys())
-        for game_id in game_ids:
-            if game_id in game_engine.auto_save_tasks:
+        game_keys = list(game_engine.active_games.keys())
+        for game_key in game_keys:
+            user_id, game_id = game_key
+            if game_key in game_engine.auto_save_tasks:
                 try:
-                    await game_engine.close_game(game_id)
+                    await game_engine.close_game(user_id, game_id)
                 except Exception as e:
-                    logger.error(f"Error closing game {game_id}: {e}")
+                    logger.error(f"Error closing game {game_id} for user {user_id}: {e}")
 
         # 2. 保存所有剩余的活跃游戏（如果有的话）
-        for game_id, game_state in list(game_engine.active_games.items()):
+        for game_key, game_state in list(game_engine.active_games.items()):
+            user_id, game_id = game_key
             try:
-                logger.info(f"Saving game: {game_id}")
-                await game_engine._save_game_async(game_state)
+                logger.info(f"Saving game {game_id} for user {user_id}")
+                await game_engine._save_game_async(game_state, user_id)
                 logger.info(f"Saved game: {game_id}")
             except Exception as e:
                 logger.error(f"Failed to save game {game_id}: {e}")
@@ -177,9 +179,12 @@ async def test_progress(request: Request):
 
 
 @app.post("/api/new-game")
-async def create_new_game(request: NewGameRequest):
+async def create_new_game(request: NewGameRequest, http_request: Request, response: Response):
     """创建新游戏"""
     try:
+        # 获取用户ID
+        user_id = user_session_manager.get_or_create_user_id(http_request, response)
+
         # 验证玩家名称
         name_validation = input_validator.validate_player_name(request.player_name)
         if not name_validation.is_valid:
@@ -194,7 +199,7 @@ async def create_new_game(request: NewGameRequest):
         sanitized_name = name_validation.sanitized_value
         sanitized_class = class_validation.sanitized_value
 
-        logger.info(f"Creating new game for player: {sanitized_name} (class: {sanitized_class})")
+        logger.info(f"Creating new game for user {user_id}, player: {sanitized_name} (class: {sanitized_class})")
 
         # 记录警告信息
         if name_validation.warnings:
@@ -202,6 +207,7 @@ async def create_new_game(request: NewGameRequest):
                 logger.warning(f"Player name validation warning: {warning}")
 
         game_state = await game_engine.create_new_game(
+            user_id=user_id,
             player_name=sanitized_name,
             character_class=sanitized_class
         )
@@ -239,9 +245,10 @@ async def load_game(save_id: str, request: Request, response: Response):
         # 使用data_manager重建GameState对象
         game_state = data_manager._dict_to_game_state(save_data)
 
-        # 添加到活跃游戏列表
-        game_engine.active_games[game_state.id] = game_state
-        game_engine._start_auto_save(game_state.id)
+        # 添加到活跃游戏列表（使用 (user_id, game_id) 作为键）
+        game_key = (user_id, game_state.id)
+        game_engine.active_games[game_key] = game_state
+        game_engine._start_auto_save(user_id, game_state.id)
 
         # 生成重新进入游戏的叙述
         try:
@@ -269,12 +276,13 @@ async def load_game(save_id: str, request: Request, response: Response):
 async def get_game_state(game_id: str, request: Request, response: Response):
     """获取游戏状态（支持自动从磁盘加载）"""
 
-    # 如果游戏不在内存中，尝试从磁盘加载
-    if game_id not in game_engine.active_games:
-        logger.info(f"Game {game_id} not in memory, attempting to load from disk...")
+    # 获取用户ID
+    user_id = user_session_manager.get_or_create_user_id(request, response)
+    game_key = (user_id, game_id)
 
-        # 获取用户ID
-        user_id = user_session_manager.get_or_create_user_id(request, response)
+    # 如果游戏不在内存中，尝试从磁盘加载
+    if game_key not in game_engine.active_games:
+        logger.info(f"Game {game_id} not in memory for user {user_id}, attempting to load from disk...")
 
         # 尝试从用户存档加载
         save_data = user_session_manager.load_game_for_user(user_id, game_id)
@@ -282,14 +290,14 @@ async def get_game_state(game_id: str, request: Request, response: Response):
         if save_data:
             # 重建游戏状态并加载到内存
             game_state = data_manager._dict_to_game_state(save_data)
-            game_engine.active_games[game_state.id] = game_state
-            game_engine._start_auto_save(game_state.id)
+            game_engine.active_games[game_key] = game_state
+            game_engine._start_auto_save(user_id, game_state.id)
             logger.info(f"Game {game_id} loaded from disk for user {user_id}")
         else:
             # 如果磁盘上也没有，返回404
             raise HTTPException(status_code=404, detail="游戏未找到")
 
-    game_state = game_engine.active_games[game_id]
+    game_state = game_engine.active_games[game_key]
 
     # 获取游戏状态字典
     state_dict = game_state.to_dict()
@@ -309,12 +317,16 @@ async def get_game_state_detailed(game_id: str, request: Request, response: Resp
 
 
 @app.get("/api/game/{game_id}/quests")
-async def get_game_quests(game_id: str):
+async def get_game_quests(game_id: str, request: Request, response: Response):
     """获取游戏任务列表"""
-    if game_id not in game_engine.active_games:
+    # 获取用户ID
+    user_id = user_session_manager.get_or_create_user_id(request, response)
+    game_key = (user_id, game_id)
+
+    if game_key not in game_engine.active_games:
         raise HTTPException(status_code=404, detail="游戏未找到")
 
-    game_state = game_engine.active_games[game_id]
+    game_state = game_engine.active_games[game_key]
 
     # 返回任务列表
     quests = []
@@ -338,9 +350,12 @@ async def get_game_quests(game_id: str):
 
 
 @app.post("/api/action")
-async def perform_action(request: ActionRequest):
+async def perform_action(request: ActionRequest, http_request: Request, response: Response):
     """执行游戏行动"""
     try:
+        # 获取用户ID
+        user_id = user_session_manager.get_or_create_user_id(http_request, response)
+
         # 验证游戏ID
         game_id_validation = input_validator.validate_game_id(request.game_id)
         if not game_id_validation.is_valid:
@@ -374,9 +389,10 @@ async def perform_action(request: ActionRequest):
             # 其他参数直接传递（如坐标等）
             sanitized_params = request.parameters
 
-        logger.info(f"Processing action: {request.action} for game: {request.game_id}")
+        logger.info(f"Processing action: {request.action} for user {user_id}, game: {request.game_id}")
 
         result = await game_engine.process_player_action(
+            user_id=user_id,
             game_id=request.game_id,
             action=request.action,
             parameters=sanitized_params
@@ -392,12 +408,16 @@ async def perform_action(request: ActionRequest):
 
 
 @app.post("/api/llm-event")
-async def handle_llm_event(request: LLMEventRequest):
+async def handle_llm_event(request: LLMEventRequest, http_request: Request, response: Response):
     """处理需要LLM的事件"""
     try:
-        logger.info(f"Processing LLM event: {request.event_type} for game: {request.game_id}")
+        # 获取用户ID
+        user_id = user_session_manager.get_or_create_user_id(http_request, response)
+        game_key = (user_id, request.game_id)
 
-        if request.game_id not in game_engine.active_games:
+        logger.info(f"Processing LLM event: {request.event_type} for user {user_id}, game: {request.game_id}")
+
+        if game_key not in game_engine.active_games:
             raise HTTPException(status_code=404, detail="游戏未找到")
 
         # 从请求中重建游戏状态
@@ -405,7 +425,7 @@ async def handle_llm_event(request: LLMEventRequest):
         game_state = data_manager._dict_to_game_state(request.game_state)
 
         # 更新内存中的游戏状态
-        game_engine.active_games[request.game_id] = game_state
+        game_engine.active_games[game_key] = game_state
 
         event_type = request.event_type
         event_data = request.event_data
@@ -484,17 +504,21 @@ async def handle_llm_event(request: LLMEventRequest):
 
 
 @app.post("/api/sync-state")
-async def sync_game_state(request: SyncStateRequest):
+async def sync_game_state(request: SyncStateRequest, http_request: Request, response: Response):
     """同步游戏状态（用于存档）"""
     try:
-        logger.info(f"Syncing game state for game: {request.game_id}")
+        # 获取用户ID
+        user_id = user_session_manager.get_or_create_user_id(http_request, response)
+        game_key = (user_id, request.game_id)
+
+        logger.info(f"Syncing game state for user {user_id}, game: {request.game_id}")
 
         # 从请求中重建游戏状态
         from data_manager import data_manager
         game_state = data_manager._dict_to_game_state(request.game_state)
 
         # 更新内存中的游戏状态
-        game_engine.active_games[request.game_id] = game_state
+        game_engine.active_games[game_key] = game_state
 
         # 可选：立即保存到文件
         # data_manager.save_game_state(game_state)
@@ -510,15 +534,19 @@ async def sync_game_state(request: SyncStateRequest):
 
 
 @app.post("/api/game/{game_id}/combat-result")
-async def process_combat_result(game_id: str, request: Request):
+async def process_combat_result(game_id: str, request: Request, response: Response):
     """处理战斗结果（怪物被击败）"""
     try:
-        logger.info(f"Processing combat result for game: {game_id}")
+        # 获取用户ID
+        user_id = user_session_manager.get_or_create_user_id(request, response)
+        game_key = (user_id, game_id)
 
-        if game_id not in game_engine.active_games:
+        logger.info(f"Processing combat result for user {user_id}, game: {game_id}")
+
+        if game_key not in game_engine.active_games:
             raise HTTPException(status_code=404, detail="游戏未找到")
 
-        game_state = game_engine.active_games[game_id]
+        game_state = game_engine.active_games[game_key]
         request_data = await request.json()
 
         monster_id = request_data.get("monster_id")
@@ -554,7 +582,7 @@ async def process_combat_result(game_id: str, request: Request):
 
 
 @app.post("/api/event-choice")
-async def process_event_choice(request: EventChoiceRequest):
+async def process_event_choice(request: EventChoiceRequest, http_request: Request, response: Response):
     """处理事件选择"""
     try:
         # 记录接收到的请求数据
@@ -580,10 +608,14 @@ async def process_event_choice(request: EventChoiceRequest):
 
         logger.info(f"Processing event choice: {request.choice_id} for context: {request.context_id}")
 
-        if request.game_id not in game_engine.active_games:
+        # 获取用户ID
+        user_id = user_session_manager.get_or_create_user_id(http_request, response)
+        game_key = (user_id, request.game_id)
+
+        if game_key not in game_engine.active_games:
             raise HTTPException(status_code=404, detail="游戏未找到")
 
-        game_state = game_engine.active_games[request.game_id]
+        game_state = game_engine.active_games[game_key]
 
         # 处理选择
         result = await event_choice_system.process_choice(
@@ -650,13 +682,17 @@ async def _process_post_choice_updates(game_state: GameState):
 
 
 @app.get("/api/game/{game_id}/pending-choice")
-async def get_pending_choice(game_id: str):
+async def get_pending_choice(game_id: str, request: Request, response: Response):
     """获取待处理的选择上下文"""
     try:
-        if game_id not in game_engine.active_games:
+        # 获取用户ID
+        user_id = user_session_manager.get_or_create_user_id(request, response)
+        game_key = (user_id, game_id)
+
+        if game_key not in game_engine.active_games:
             raise HTTPException(status_code=404, detail="游戏未找到")
 
-        game_state = game_engine.active_games[game_id]
+        game_state = game_engine.active_games[game_key]
 
         if game_state.pending_choice_context:
             return {
@@ -746,11 +782,12 @@ async def save_game(game_id: str, request: Request, response: Response):
     try:
         # 获取用户ID
         user_id = user_session_manager.get_or_create_user_id(request, response)
+        game_key = (user_id, game_id)
 
-        if game_id not in game_engine.active_games:
+        if game_key not in game_engine.active_games:
             raise HTTPException(status_code=404, detail="游戏未找到")
 
-        game_state = game_engine.active_games[game_id]
+        game_state = game_engine.active_games[game_key]
 
         # 使用用户会话管理器保存游戏
         game_data = game_state.to_dict()
@@ -798,14 +835,15 @@ async def delete_save(save_id: str, request: Request, response: Response):
 
         if success:
             # 同时从内存中移除游戏（如果存在）
-            if save_id in game_engine.active_games:
+            game_key = (user_id, save_id)
+            if game_key in game_engine.active_games:
                 # 停止自动保存任务
-                if save_id in game_engine.auto_save_tasks:
-                    game_engine.auto_save_tasks[save_id].cancel()
-                    del game_engine.auto_save_tasks[save_id]
+                if game_key in game_engine.auto_save_tasks:
+                    game_engine.auto_save_tasks[game_key].cancel()
+                    del game_engine.auto_save_tasks[game_key]
 
                 # 从内存中移除
-                del game_engine.active_games[save_id]
+                del game_engine.active_games[game_key]
                 logger.info(f"Game {save_id} removed from memory")
 
             return {"success": True, "message": "存档已删除"}
@@ -973,21 +1011,25 @@ async def update_config(updates: Dict[str, Any]):
 
 
 @app.post("/api/game/{game_id}/transition")
-async def transition_map(game_id: str, transition_data: Dict[str, Any]):
+async def transition_map(game_id: str, transition_data: Dict[str, Any], request: Request, response: Response):
     """手动切换地图"""
     try:
+        # 获取用户ID
+        user_id = user_session_manager.get_or_create_user_id(request, response)
+        game_key = (user_id, game_id)
+
         transition_type = transition_data.get("type")
         if not transition_type:
             raise HTTPException(status_code=400, detail="缺少切换类型")
 
         result = await game_engine.transition_map(
-            game_engine.active_games[game_id],
+            game_engine.active_games[game_key],
             transition_type
         )
 
         if result["success"]:
             # 返回更新后的游戏状态
-            game_state = game_engine.active_games[game_id]
+            game_state = game_engine.active_games[game_key]
             response_data = {
                 "success": True,
                 "message": result["message"],
@@ -1012,13 +1054,17 @@ async def transition_map(game_id: str, transition_data: Dict[str, Any]):
 
 
 @app.get("/api/game/{game_id}/progress")
-async def get_progress_summary(game_id: str):
+async def get_progress_summary(game_id: str, request: Request, response: Response):
     """获取游戏进度摘要"""
     try:
-        if game_id not in game_engine.active_games:
+        # 获取用户ID
+        user_id = user_session_manager.get_or_create_user_id(request, response)
+        game_key = (user_id, game_id)
+
+        if game_key not in game_engine.active_games:
             raise HTTPException(status_code=404, detail="游戏未找到")
 
-        game_state = game_engine.active_games[game_id]
+        game_state = game_engine.active_games[game_key]
         summary = progress_manager.get_progress_summary(game_state)
 
         return {
@@ -1232,6 +1278,7 @@ async def direct_start_game(request: Request, response: Response):
 
         # 创建游戏
         game_state = await game_engine.create_new_game(
+            user_id=user_id,
             player_name=player_name,
             character_class=character_class
         )
@@ -1700,8 +1747,8 @@ if config.game.debug_mode:
             # 检查游戏状态同步
             sync_status = "正常"
             if active_games > 0:
-                # 检查是否有游戏状态
-                for game_id, game_state in game_engine.active_games.items():
+                # 检查是否有游戏状态（注意：现在键是 (user_id, game_id) 元组）
+                for game_key, game_state in game_engine.active_games.items():
                     if not game_state.player or not game_state.current_map:
                         sync_status = "异常"
                         break
@@ -1758,8 +1805,10 @@ if config.game.debug_mode:
             active_games = len(game_engine.active_games)
 
             game_info = []
-            for game_id, game_state in game_engine.active_games.items():
+            for game_key, game_state in game_engine.active_games.items():
+                user_id, game_id = game_key  # 解包元组
                 game_info.append({
+                    "user_id": user_id,
                     "game_id": game_id,
                     "player_name": game_state.player.name if game_state.player else "未知",
                     "map_name": game_state.current_map.name if game_state.current_map else "未知",
@@ -2212,13 +2261,17 @@ if config.game.debug_mode:
             }
 
     @app.post("/api/game/{game_id}/debug/trigger-event")
-    async def debug_trigger_random_event(game_id: str, request: Request):
+    async def debug_trigger_random_event(game_id: str, request: Request, response: Response):
         """调试：触发随机事件"""
         try:
-            if game_id not in game_engine.active_games:
+            # 获取用户ID
+            user_id = user_session_manager.get_or_create_user_id(request, response)
+            game_key = (user_id, game_id)
+
+            if game_key not in game_engine.active_games:
                 raise HTTPException(status_code=404, detail="游戏未找到")
 
-            game_state = game_engine.active_games[game_id]
+            game_state = game_engine.active_games[game_key]
             request_data = await request.json()
 
             # 获取玩家当前位置的瓦片
@@ -2254,13 +2307,17 @@ if config.game.debug_mode:
             return {"success": False, "message": f"触发事件失败: {str(e)}"}
 
     @app.post("/api/game/{game_id}/debug/complete-quest")
-    async def debug_complete_current_quest(game_id: str):
+    async def debug_complete_current_quest(game_id: str, request: Request, response: Response):
         """调试：完成当前任务"""
         try:
-            if game_id not in game_engine.active_games:
+            # 获取用户ID
+            user_id = user_session_manager.get_or_create_user_id(request, response)
+            game_key = (user_id, game_id)
+
+            if game_key not in game_engine.active_games:
                 raise HTTPException(status_code=404, detail="游戏未找到")
 
-            game_state = game_engine.active_games[game_id]
+            game_state = game_engine.active_games[game_key]
 
             # 找到当前活跃任务
             active_quest = next((q for q in game_state.quests if q.is_active), None)
@@ -2310,13 +2367,17 @@ if config.game.debug_mode:
             return {"success": False, "message": f"完成任务失败: {str(e)}"}
 
     @app.post("/api/game/{game_id}/debug/generate-item")
-    async def debug_generate_test_item(game_id: str, request: Request):
+    async def debug_generate_test_item(game_id: str, request: Request, response: Response):
         """调试：生成测试物品"""
         try:
-            if game_id not in game_engine.active_games:
+            # 获取用户ID
+            user_id = user_session_manager.get_or_create_user_id(request, response)
+            game_key = (user_id, game_id)
+
+            if game_key not in game_engine.active_games:
                 raise HTTPException(status_code=404, detail="游戏未找到")
 
-            game_state = game_engine.active_games[game_id]
+            game_state = game_engine.active_games[game_key]
             request_data = await request.json()
 
             player_level = request_data.get("player_level", game_state.player.stats.level)
@@ -2342,13 +2403,17 @@ if config.game.debug_mode:
             return {"success": False, "message": f"生成物品失败: {str(e)}"}
 
     @app.post("/api/game/{game_id}/debug/get-treasure")
-    async def debug_get_random_treasure(game_id: str, request: Request):
+    async def debug_get_random_treasure(game_id: str, request: Request, response: Response):
         """调试：获得随机宝物（模拟宝箱）"""
         try:
-            if game_id not in game_engine.active_games:
+            # 获取用户ID
+            user_id = user_session_manager.get_or_create_user_id(request, response)
+            game_key = (user_id, game_id)
+
+            if game_key not in game_engine.active_games:
                 raise HTTPException(status_code=404, detail="游戏未找到")
 
-            game_state = game_engine.active_games[game_id]
+            game_state = game_engine.active_games[game_key]
             request_data = await request.json()
 
             player_position = request_data.get("player_position", game_state.player.position)
@@ -2456,13 +2521,17 @@ if config.game.debug_mode:
             return {"success": False, "message": f"获取宝物失败: {str(e)}"}
 
     @app.post("/api/game/{game_id}/debug/teleport")
-    async def debug_teleport_to_floor(game_id: str, request: Request):
+    async def debug_teleport_to_floor(game_id: str, request: Request, response: Response):
         """调试：传送到指定楼层"""
         try:
-            if game_id not in game_engine.active_games:
+            # 获取用户ID
+            user_id = user_session_manager.get_or_create_user_id(request, response)
+            game_key = (user_id, game_id)
+
+            if game_key not in game_engine.active_games:
                 raise HTTPException(status_code=404, detail="游戏未找到")
 
-            game_state = game_engine.active_games[game_id]
+            game_state = game_engine.active_games[game_key]
             request_data = await request.json()
 
             target_floor = request_data.get("target_floor", 1)
@@ -2525,15 +2594,19 @@ if config.game.debug_mode:
             return {"success": False, "message": f"传送失败: {str(e)}"}
 
     @app.post("/api/game/{game_id}/debug/teleport-position")
-    async def debug_teleport_to_position(game_id: str, request: Request):
+    async def debug_teleport_to_position(game_id: str, request: Request, response: Response):
         """调试：传送到指定坐标"""
         try:
             from data_models import TerrainType
 
-            if game_id not in game_engine.active_games:
+            # 获取用户ID
+            user_id = user_session_manager.get_or_create_user_id(request, response)
+            game_key = (user_id, game_id)
+
+            if game_key not in game_engine.active_games:
                 raise HTTPException(status_code=404, detail="游戏未找到")
 
-            game_state = game_engine.active_games[game_id]
+            game_state = game_engine.active_games[game_key]
             request_data = await request.json()
 
             target_x = request_data.get("x")
@@ -2583,13 +2656,17 @@ if config.game.debug_mode:
             return {"success": False, "message": f"传送失败: {str(e)}"}
 
     @app.post("/api/game/{game_id}/debug/spawn-enemy")
-    async def debug_spawn_enemy_nearby(game_id: str, request: Request):
+    async def debug_spawn_enemy_nearby(game_id: str, request: Request, response: Response):
         """调试：在附近生成敌人"""
         try:
-            if game_id not in game_engine.active_games:
+            # 获取用户ID
+            user_id = user_session_manager.get_or_create_user_id(request, response)
+            game_key = (user_id, game_id)
+
+            if game_key not in game_engine.active_games:
                 raise HTTPException(status_code=404, detail="游戏未找到")
 
-            game_state = game_engine.active_games[game_id]
+            game_state = game_engine.active_games[game_key]
             request_data = await request.json()
 
             player_pos = request_data.get("player_position", game_state.player.position)
@@ -2643,13 +2720,17 @@ if config.game.debug_mode:
             return {"success": False, "message": f"生成敌人失败: {str(e)}"}
 
     @app.post("/api/game/{game_id}/debug/clear-enemies")
-    async def debug_clear_all_enemies(game_id: str):
+    async def debug_clear_all_enemies(game_id: str, request: Request, response: Response):
         """调试：清空所有敌人"""
         try:
-            if game_id not in game_engine.active_games:
+            # 获取用户ID
+            user_id = user_session_manager.get_or_create_user_id(request, response)
+            game_key = (user_id, game_id)
+
+            if game_key not in game_engine.active_games:
                 raise HTTPException(status_code=404, detail="游戏未找到")
 
-            game_state = game_engine.active_games[game_id]
+            game_state = game_engine.active_games[game_key]
 
             # 记录清空的敌人数量
             cleared_count = len(game_state.monsters)
@@ -2675,13 +2756,17 @@ if config.game.debug_mode:
             return {"success": False, "message": f"清空敌人失败: {str(e)}"}
 
     @app.post("/api/game/{game_id}/debug/regenerate-map")
-    async def debug_regenerate_current_map(game_id: str, request: Request):
+    async def debug_regenerate_current_map(game_id: str, request: Request, response: Response):
         """调试：重新生成当前地图"""
         try:
-            if game_id not in game_engine.active_games:
+            # 获取用户ID
+            user_id = user_session_manager.get_or_create_user_id(request, response)
+            game_key = (user_id, game_id)
+
+            if game_key not in game_engine.active_games:
                 raise HTTPException(status_code=404, detail="游戏未找到")
 
-            game_state = game_engine.active_games[game_id]
+            game_state = game_engine.active_games[game_key]
             request_data = await request.json()
 
             current_depth = request_data.get("current_depth", game_state.current_map.depth)
@@ -2736,13 +2821,17 @@ if config.game.debug_mode:
             return {"success": False, "message": f"重新生成地图失败: {str(e)}"}
 
     @app.post("/api/game/{game_id}/debug/restore-player")
-    async def debug_restore_player_status(game_id: str):
+    async def debug_restore_player_status(game_id: str, request: Request, response: Response):
         """调试：恢复玩家状态"""
         try:
-            if game_id not in game_engine.active_games:
+            # 获取用户ID
+            user_id = user_session_manager.get_or_create_user_id(request, response)
+            game_key = (user_id, game_id)
+
+            if game_key not in game_engine.active_games:
                 raise HTTPException(status_code=404, detail="游戏未找到")
 
-            game_state = game_engine.active_games[game_id]
+            game_state = game_engine.active_games[game_key]
 
             # 恢复HP和MP到满值
             game_state.player.stats.hp = game_state.player.stats.max_hp
@@ -2760,13 +2849,17 @@ if config.game.debug_mode:
             return {"success": False, "message": f"恢复状态失败: {str(e)}"}
 
     @app.post("/api/debug/trigger-event-choice/{game_id}")
-    async def debug_trigger_event_choice(game_id: str):
+    async def debug_trigger_event_choice(game_id: str, request: Request, response: Response):
         """调试：手动触发事件选择"""
         try:
-            if game_id not in game_engine.active_games:
+            # 获取用户ID
+            user_id = user_session_manager.get_or_create_user_id(request, response)
+            game_key = (user_id, game_id)
+
+            if game_key not in game_engine.active_games:
                 raise HTTPException(status_code=404, detail="游戏未找到")
 
-            game_state = game_engine.active_games[game_id]
+            game_state = game_engine.active_games[game_key]
 
             # 创建测试事件选择上下文
             from data_models import EventChoiceContext, EventChoice
