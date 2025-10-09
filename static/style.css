@@ -1225,6 +1225,13 @@ body {
         min-width: 250px;
     }
 
+    .header {
+        margin-bottom: 20px; /* 移除负边距，设置一个合适的正边距 */
+        min-height: 250px; /* 调整高度以适应移动端 */
+        background-size: cover; /* 让背景图片覆盖整个容器 */
+        background-position: center top; /* 调整背景图片位置 */
+    }
+
     .header h1 {
         font-size: 2rem;
     }
