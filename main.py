@@ -1325,19 +1325,50 @@ async def internal_error_handler(request: Request, exc: HTTPException):
 
 # 开发模式下的额外路由
 if config.game.debug_mode:
+    from debug_api import debug_api
+
+    # ==================== 系统状态监控接口 ====================
+
+    @app.get("/api/debug/system/status")
+    async def debug_get_system_status():
+        """调试：获取系统整体状态"""
+        return debug_api.get_system_status()
+
+    @app.get("/api/debug/system/memory")
+    async def debug_get_memory_usage():
+        """调试：获取内存使用情况"""
+        return debug_api.get_memory_usage()
+
+    @app.get("/api/debug/system/users")
+    async def debug_get_user_sessions():
+        """调试：获取用户会话信息"""
+        return debug_api.get_user_sessions()
+
+    # ==================== 游戏状态查询接口 ====================
+
     @app.get("/api/debug/games")
     async def debug_list_games():
-        """调试：列出所有活跃游戏"""
+        """调试：列出所有活跃游戏（简化版）"""
         games = {}
-        for game_id, game_state in game_engine.active_games.items():
-            games[game_id] = {
+        for (user_id, game_id), game_state in game_engine.active_games.items():
+            games[f"{user_id}:{game_id}"] = {
+                "user_id": user_id,
+                "game_id": game_id,
                 "player_name": game_state.player.name,
                 "player_level": game_state.player.stats.level,
                 "turn_count": game_state.turn_count,
                 "map_name": game_state.current_map.name
             }
         return games
-    
+
+    @app.get("/api/debug/game/{game_id}")
+    async def debug_get_game_detail(game_id: str, request: Request, response: Response):
+        """调试：获取游戏详细状态"""
+        user_id = user_session_manager.get_or_create_user_id(request, response)
+        return debug_api.get_game_detail(user_id, game_id)
+
+    # ==================== 内容生成测试接口 ====================
+
     @app.post("/api/debug/generate-content")
     async def debug_generate_content(content_type: str, context: str = ""):
         """调试：生成内容"""
@@ -1357,11 +1388,43 @@ if config.game.debug_mode:
             logger.error(f"Failed to generate content: {e}")
             raise HTTPException(status_code=500, detail=str(e))
 
-    # ==================== 新增调试API端点 ====================
+    # ==================== 存档管理接口 ====================
+
+    @app.get("/api/debug/saves/{user_id}")
+    async def debug_get_save_files(user_id: str):
+        """调试：获取用户存档文件信息"""
+        return debug_api.get_save_files_info(user_id)
+
+    @app.get("/api/debug/saves")
+    async def debug_get_current_user_saves(request: Request, response: Response):
+        """调试：获取当前用户存档文件信息"""
+        user_id = user_session_manager.get_or_create_user_id(request, response)
+        return debug_api.get_save_files_info(user_id)
+
+    # ==================== 异步任务监控接口 ====================
+
+    @app.get("/api/debug/tasks")
+    async def debug_get_async_tasks():
+        """调试：获取异步任务详细信息"""
+        return debug_api.get_async_tasks_detail()
+
+    @app.get("/api/debug/llm/statistics")
+    async def debug_get_llm_statistics():
+        """调试：获取LLM调用统计"""
+        return debug_api.get_llm_statistics()
+
+    # ==================== 配置信息接口 ====================
+
+    @app.get("/api/debug/config")
+    async def debug_get_config():
+        """调试：获取配置信息"""
+        return debug_api.get_config_info()
+
+    # ==================== LLM调试接口 ====================
 
     @app.get("/api/debug/llm-info")
     async def get_llm_debug_info():
-        """获取LLM调试信息"""
+        """获取LLM调试信息（最后的请求和响应）"""
         try:
             if not config.game.show_llm_debug:
                 return {"success": False, "error": "LLM调试模式未启用"}

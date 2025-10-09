@@ -199,22 +199,31 @@ class GameEngine:
         Returns:
             加载的游戏状态
         """
-        game_state = data_manager.load_game_state(save_id)
-        if game_state:
-            # 使用 (user_id, game_id) 作为键
-            game_key = (user_id, game_state.id)
-            self.active_games[game_key] = game_state
-            self._start_auto_save(user_id, game_state.id)
+        # 【修复】使用 user_session_manager 从用户目录加载
+        from user_session_manager import user_session_manager
 
-            # 生成重新进入游戏的叙述
-            try:
-                return_narrative = await llm_service.generate_return_narrative(game_state)
-                game_state.last_narrative = return_narrative
-            except Exception as e:
-                logger.error(f"Failed to generate return narrative: {e}")
-                game_state.last_narrative = f"你重新回到了 {game_state.current_map.name}，继续你的冒险..."
+        save_data = user_session_manager.load_game_for_user(user_id, save_id)
+        if not save_data:
+            logger.warning(f"Failed to load game {save_id} for user {user_id}")
+            return None
 
-            logger.info(f"Game loaded for user {user_id}: {game_state.id}")
+        # 重建游戏状态
+        game_state = data_manager._dict_to_game_state(save_data)
+
+        # 使用 (user_id, game_id) 作为键
+        game_key = (user_id, game_state.id)
+        self.active_games[game_key] = game_state
+        self._start_auto_save(user_id, game_state.id)
+
+        # 生成重新进入游戏的叙述
+        try:
+            return_narrative = await llm_service.generate_return_narrative(game_state)
+            game_state.last_narrative = return_narrative
+        except Exception as e:
+            logger.error(f"Failed to generate return narrative: {e}")
+            game_state.last_narrative = f"你重新回到了 {game_state.current_map.name}，继续你的冒险..."
+
+        logger.info(f"Game loaded for user {user_id}: {game_state.id}")
         return game_state
 
     async def process_player_action(self, user_id: str, game_id: str, action: str,
