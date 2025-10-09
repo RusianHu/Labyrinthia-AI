@@ -1,0 +1,29 @@
+{
+  "meta": {
+    "image": "floor1.png",
+    "size": {
+      "width": 104,
+      "height": 104
+    },
+    "grid": {
+      "columns": 3,
+      "rows": 3
+    },
+    "tile_size": {
+      "width": 32,
+      "height": 32
+    },
+    "border_width": 2
+  },
+  "tiles": {
+    "top_left": { "x": 2, "y": 2, "width": 32, "height": 32 },
+    "top_center": { "x": 36, "y": 2, "width": 32, "height": 32 },
+    "top_right": { "x": 70, "y": 2, "width": 32, "height": 32 },
+    "middle_left": { "x": 2, "y": 36, "width": 32, "height": 32 },
+    "middle_center": { "x": 36, "y": 36, "width": 32, "height": 32 },
+    "middle_right": { "x": 70, "y": 36, "width": 32, "height": 32 },
+    "bottom_left": { "x": 2, "y": 70, "width": 32, "height": 32 },
+    "bottom_center": { "x": 36, "y": 70, "width": 32, "height": 32 },
+    "bottom_right": { "x": 70, "y": 70, "width": 32, "height": 32 }
+  }
+}

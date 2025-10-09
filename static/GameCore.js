@@ -180,6 +180,9 @@ class LabyrinthiaGame {
                 console.log('[GameCore] LocalGameEngine initialized in refreshGameState');
             }
 
+            // 初始化方向按钮管理器（如果还没有）
+            this.initDirectionButtonManager();
+
             // 检查游戏是否结束（在更新UI之前）
             if (gameState.is_game_over) {
                 this.handleGameOver(gameState.game_over_reason);
@@ -223,6 +226,9 @@ class LabyrinthiaGame {
         this.updateQuests();
         this.updateControlPanel();
         this.processPendingEffects();
+
+        // 更新方向按钮状态
+        this.updateDirectionButtons();
     }
 
     updateGameState(newGameState) {
@@ -237,6 +243,9 @@ class LabyrinthiaGame {
             this.localEngine = new LocalGameEngine(this);
             console.log('[updateGameState] LocalGameEngine initialized');
         }
+
+        // 初始化方向按钮管理器（如果还没有）
+        this.initDirectionButtonManager();
 
         // 检查游戏是否结束（在更新UI之前）
         if (newGameState.is_game_over) {
@@ -266,6 +275,9 @@ class LabyrinthiaGame {
             this.localEngine = new LocalGameEngine(this);
             console.log('[renderGame] LocalGameEngine initialized');
         }
+
+        // 初始化方向按钮管理器
+        this.initDirectionButtonManager();
     }
 
     processPendingEffects() {
