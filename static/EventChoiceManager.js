@@ -316,10 +316,6 @@ class EventChoiceManager {
                     window.game.updateGameState(result.game_state);
                 }
 
-                // 记录活动并提升轮询频率
-                this.recordActivity();
-                this.boostPollingFrequency();
-
                 console.log('Choice processed successfully:', result);
             } else {
                 throw new Error(result.message || 'Failed to process choice');
