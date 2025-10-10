@@ -84,6 +84,10 @@ async def lifespan(app: FastAPI):
         async_task_manager.initialize()
         logger.info("AsyncTaskManager initialized")
 
+        # 启动游戏会话清理任务
+        game_engine._start_cleanup_task()
+        logger.info("Game session cleanup task started")
+
         logger.info("Server started successfully")
         yield
 

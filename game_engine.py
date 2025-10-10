@@ -38,9 +38,7 @@ class GameEngine:
         self.active_games: Dict[Tuple[str, str], GameState] = {}
         self.auto_save_tasks: Dict[Tuple[str, str], asyncio.Task] = {}
         self.last_access_time: Dict[Tuple[str, str], float] = {}  # 记录最后访问时间
-
-        # 启动游戏会话清理任务
-        self._start_cleanup_task()
+        self.cleanup_task_started = False  # 标记清理任务是否已启动
     
     async def create_new_game(self, user_id: str, player_name: str, character_class: str = "fighter") -> GameState:
         """创建新游戏
@@ -1812,7 +1810,14 @@ class GameEngine:
         self.last_access_time[game_key] = time.time()
 
     def _start_cleanup_task(self):
-        """启动游戏会话清理任务"""
+        """启动游戏会话清理任务（需要在事件循环中调用）"""
+        # 防止重复启动
+        if self.cleanup_task_started:
+            logger.warning("Cleanup task already started, skipping...")
+            return
+
+        self.cleanup_task_started = True
+
         async def cleanup_loop():
             """定期清理不活跃的游戏会话"""
             import time
