@@ -16,6 +16,7 @@ from llm_service import llm_service
 from prompt_manager import prompt_manager
 from config import config
 from async_task_manager import async_task_manager, TaskType
+from game_state_modifier import game_state_modifier
 
 
 logger = logging.getLogger(__name__)
@@ -834,204 +835,35 @@ class EventChoiceSystem:
         )
 
     async def _apply_choice_result(self, game_state: GameState, result: ChoiceResult):
-        """应用选择结果到游戏状态"""
+        """应用选择结果到游戏状态（使用统一的GameStateModifier）"""
         try:
-            # 应用玩家更新
-            if result.player_updates:
-                player = game_state.player
-                stats_updates = result.player_updates.get("stats", {})
-                for stat_name, value in stats_updates.items():
-                    if hasattr(player.stats, stat_name):
-                        setattr(player.stats, stat_name, value)
+            # 构建LLM响应格式的更新数据
+            llm_response = {
+                "player_updates": result.player_updates or {},
+                "map_updates": result.map_updates or {},
+                "quest_updates": result.quest_updates or {},
+                "events": result.events or []
+            }
 
-                # 更新物品栏
-                if "add_items" in result.player_updates:
-                    for item_data in result.player_updates["add_items"]:
-                        if isinstance(item_data, dict):
-                            from data_models import Item
-                            item = Item(
-                                name=item_data.get("name", "神秘物品"),
-                                description=item_data.get("description", "一个神秘的物品"),
-                                item_type=item_data.get("item_type", "misc"),
-                                rarity=item_data.get("rarity", "common")
-                            )
-                            # 设置其他可能的物品属性
-                            if "usage_description" in item_data:
-                                item.usage_description = item_data["usage_description"]
-                            if "properties" in item_data:
-                                item.properties = item_data["properties"]
+            # 使用GameStateModifier应用所有更新
+            modification_result = game_state_modifier.apply_llm_updates(
+                game_state,
+                llm_response,
+                source="event_choice"
+            )
 
-                            player.inventory.append(item)
-                            logger.info(f"Added item {item.name} to player inventory")
+            # 记录修改结果
+            if not modification_result.success:
+                logger.warning(f"Some modifications failed: {modification_result.errors}")
+            else:
+                logger.info(f"Successfully applied choice result: {len(modification_result.records)} modifications")
 
-                if "remove_items" in result.player_updates:
-                    items_to_remove = result.player_updates["remove_items"]
-                    player.inventory = [item for item in player.inventory
-                                     if item.name not in items_to_remove]
-
-            # 应用地图更新
-            if result.map_updates:
-                current_map = game_state.current_map
-                tile_updates = result.map_updates.get("tiles", {})
-
-                for tile_key, tile_data in tile_updates.items():
-                    try:
-                        # 解析坐标
-                        if "," in tile_key:
-                            x, y = map(int, tile_key.split(","))
-                        else:
-                            logger.warning(f"Invalid tile key format: {tile_key}")
-                            continue
-
-                        # 获取或创建瓦片
-                        tile = current_map.get_tile(x, y)
-                        if not tile:
-                            # 如果瓦片不存在，创建新的
-                            from data_models import MapTile, TerrainType
-                            tile = MapTile(x=x, y=y)
-                            current_map.set_tile(x, y, tile)
-
-                        # 记录瓦片原本是否有事件
-                        had_event = tile.has_event
-                        was_triggered = tile.event_triggered
-
-                        # 更新瓦片属性
-                        for attr_name, value in tile_data.items():
-                            if attr_name == "terrain":
-                                # 处理地形类型更新
-                                from data_models import TerrainType
-                                if hasattr(TerrainType, value.upper()):
-                                    tile.terrain = TerrainType(value.lower())
-                                else:
-                                    logger.warning(f"Unknown terrain type: {value}")
-                            elif attr_name == "items" and isinstance(value, list):
-                                # 处理物品添加
-                                for item_data in value:
-                                    if isinstance(item_data, dict):
-                                        from data_models import Item
-                                        item = Item(
-                                            name=item_data.get("name", "神秘物品"),
-                                            description=item_data.get("description", "一个神秘的物品"),
-                                            item_type=item_data.get("item_type", "misc"),
-                                            rarity=item_data.get("rarity", "common")
-                                        )
-                                        tile.items.append(item)
-                            elif attr_name == "monster" and isinstance(value, dict):
-                                # 处理怪物添加/更新
-                                await self._handle_monster_update(game_state, x, y, value)
-                            elif hasattr(tile, attr_name):
-                                setattr(tile, attr_name, value)
-                            else:
-                                logger.debug(f"Unknown tile attribute: {attr_name}")
-
-                        # 如果瓦片原本有事件且已触发，确保更新后仍然保持触发状态
-                        # 除非LLM明确设置了event_triggered为False（表示重置事件）
-                        if had_event and was_triggered and "event_triggered" not in tile_data:
-                            tile.event_triggered = True
-                            logger.debug(f"Preserved event_triggered=True for tile at ({x}, {y})")
-
-                        logger.info(f"Updated tile at ({x}, {y}) with data: {tile_data}")
-
-                    except Exception as e:
-                        logger.error(f"Error updating tile {tile_key}: {e}")
-
-            # 应用任务更新
-            if result.quest_updates:
-                for quest in game_state.quests:
-                    quest_update = result.quest_updates.get(quest.id)
-                    if quest_update:
-                        for attr_name, value in quest_update.items():
-                            if hasattr(quest, attr_name):
-                                setattr(quest, attr_name, value)
-
-            # 添加事件到待显示列表
-            if result.events:
-                game_state.pending_events.extend(result.events)
+            # 调试模式下显示详细信息
+            if config.game.show_llm_debug:
+                logger.info(f"Choice result modification details: {modification_result.to_dict()}")
 
         except Exception as e:
             logger.error(f"Error applying choice result: {e}")
-
-    async def _handle_monster_update(self, game_state: GameState, x: int, y: int, monster_data: Dict[str, Any]):
-        """处理怪物添加/更新"""
-        try:
-            from data_models import Monster, Stats, CharacterClass
-
-            action = monster_data.get("action", "add")  # add, update, remove
-
-            if action == "remove":
-                # 移除怪物
-                tile = game_state.current_map.get_tile(x, y)
-                if tile and tile.character_id:
-                    # 从怪物列表中移除
-                    game_state.monsters = [m for m in game_state.monsters if m.id != tile.character_id]
-                    # 清除瓦片上的角色引用
-                    tile.character_id = None
-                    logger.info(f"Removed monster from tile ({x}, {y})")
-
-            elif action == "update":
-                # 更新现有怪物
-                tile = game_state.current_map.get_tile(x, y)
-                if tile and tile.character_id:
-                    monster = next((m for m in game_state.monsters if m.id == tile.character_id), None)
-                    if monster:
-                        # 更新怪物属性
-                        if "name" in monster_data:
-                            monster.name = monster_data["name"]
-                        if "description" in monster_data:
-                            monster.description = monster_data["description"]
-                        if "stats" in monster_data:
-                            stats_data = monster_data["stats"]
-                            if "hp" in stats_data:
-                                monster.stats.hp = min(stats_data["hp"], monster.stats.max_hp)
-                            if "max_hp" in stats_data:
-                                monster.stats.max_hp = stats_data["max_hp"]
-                                monster.stats.hp = min(monster.stats.hp, monster.stats.max_hp)
-                        if "challenge_rating" in monster_data:
-                            monster.challenge_rating = monster_data["challenge_rating"]
-                        if "behavior" in monster_data:
-                            monster.behavior = monster_data["behavior"]
-                        if "is_boss" in monster_data:
-                            monster.is_boss = monster_data["is_boss"]
-                        logger.info(f"Updated monster {monster.name} at ({x}, {y})")
-
-            elif action == "add":
-                # 添加新怪物
-                tile = game_state.current_map.get_tile(x, y)
-                if tile:
-                    # 如果该位置已有角色，先移除
-                    if tile.character_id:
-                        game_state.monsters = [m for m in game_state.monsters if m.id != tile.character_id]
-
-                    # 创建新怪物
-                    monster = Monster()
-                    monster.name = monster_data.get("name", "神秘生物")
-                    monster.description = monster_data.get("description", "一个神秘的生物")
-                    monster.character_class = CharacterClass.FIGHTER  # 默认职业
-                    monster.position = (x, y)
-                    monster.challenge_rating = monster_data.get("challenge_rating", 1.0)
-                    monster.behavior = monster_data.get("behavior", "aggressive")
-                    monster.is_boss = monster_data.get("is_boss", False)
-                    monster.quest_monster_id = monster_data.get("quest_monster_id")
-                    monster.attack_range = monster_data.get("attack_range", 1)
-
-                    # 设置怪物属性
-                    if "stats" in monster_data:
-                        stats_data = monster_data["stats"]
-                        monster.stats.max_hp = stats_data.get("max_hp", 20)
-                        monster.stats.hp = stats_data.get("hp", monster.stats.max_hp)
-                        monster.stats.max_mp = stats_data.get("max_mp", 10)
-                        monster.stats.mp = stats_data.get("mp", monster.stats.max_mp)
-                        monster.stats.ac = stats_data.get("ac", 12)
-                        monster.stats.level = stats_data.get("level", 1)
-
-                    # 添加到游戏状态
-                    game_state.monsters.append(monster)
-                    tile.character_id = monster.id
-
-                    logger.info(f"Added new monster {monster.name} at ({x}, {y})")
-
-        except Exception as e:
-            logger.error(f"Error handling monster update: {e}")
 
     async def _create_new_quest_from_choice(self, game_state: GameState, quest_data: Dict[str, Any], choice: EventChoice):
         """基于玩家选择创建新任务"""

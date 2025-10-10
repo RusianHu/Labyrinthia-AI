@@ -10,6 +10,7 @@ from dataclasses import dataclass
 
 from data_models import GameState, Item, Character, MapTile, TerrainType
 from config import config
+from game_state_modifier import game_state_modifier
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +43,7 @@ class ItemEffectProcessor:
     
     def process_llm_response(self, llm_response: Dict[str, Any],
                            game_state: GameState, item: Item) -> ItemEffectResult:
-        """处理LLM返回的物品使用效果"""
+        """处理LLM返回的物品使用效果（使用统一的GameStateModifier）"""
         try:
             self.logger.info(f"处理物品 {item.name} 的LLM响应: {llm_response}")
             result = ItemEffectResult()
@@ -55,10 +56,31 @@ class ItemEffectProcessor:
 
             self.logger.info(f"解析的效果数据: {effects}")
 
-            # 处理属性变化
+            # 处理属性变化 - 使用GameStateModifier
             if "stat_changes" in effects:
                 result.stat_changes = effects["stat_changes"]
-                self._apply_stat_changes(game_state.player, result.stat_changes)
+
+                # 构建玩家更新数据
+                player_updates = {
+                    "stats": {}
+                }
+
+                # 将stat_changes转换为绝对值而非增量
+                for stat_name, change in effects["stat_changes"].items():
+                    if hasattr(game_state.player.stats, stat_name):
+                        current_value = getattr(game_state.player.stats, stat_name)
+                        new_value = current_value + change
+                        player_updates["stats"][stat_name] = new_value
+
+                # 应用更新
+                modification_result = game_state_modifier.apply_player_updates(
+                    game_state,
+                    player_updates,
+                    source=f"item_use:{item.name}"
+                )
+
+                if not modification_result.success:
+                    self.logger.warning(f"Some stat changes failed: {modification_result.errors}")
 
                 # 检查玩家是否因为物品效果而死亡（例如毒药）
                 if game_state.player.stats.hp <= 0:
@@ -75,10 +97,34 @@ class ItemEffectProcessor:
                         game_state, teleport_data
                     )
 
-            # 处理地图变化
+            # 处理地图变化 - 使用GameStateModifier
             if "map_changes" in effects:
                 result.map_changes = effects["map_changes"]
-                self._apply_map_changes(game_state, result.map_changes)
+
+                # 转换map_changes格式为GameStateModifier期望的格式
+                map_updates = {"tiles": {}}
+                for change in effects["map_changes"]:
+                    x = change.get("x")
+                    y = change.get("y")
+                    if x is not None and y is not None:
+                        tile_key = f"{x},{y}"
+                        map_updates["tiles"][tile_key] = {}
+
+                        if "terrain" in change:
+                            map_updates["tiles"][tile_key]["terrain"] = change["terrain"]
+                        if "add_items" in change:
+                            map_updates["tiles"][tile_key]["items"] = change["add_items"]
+
+                # 应用地图更新
+                if map_updates["tiles"]:
+                    modification_result = game_state_modifier.apply_map_updates(
+                        game_state,
+                        map_updates,
+                        source=f"item_use:{item.name}"
+                    )
+
+                    if not modification_result.success:
+                        self.logger.warning(f"Some map changes failed: {modification_result.errors}")
 
             # 处理特殊效果
             if "special_effects" in effects:
@@ -96,25 +142,7 @@ class ItemEffectProcessor:
                 events=[f"物品使用失败: {str(e)}"]
             )
     
-    def _apply_stat_changes(self, player: Character, stat_changes: Dict[str, int]):
-        """应用属性变化"""
-        for stat_name, change in stat_changes.items():
-            if hasattr(player.stats, stat_name):
-                current_value = getattr(player.stats, stat_name)
-                new_value = current_value + change
-
-                # 处理特殊限制
-                if stat_name == "hp":
-                    new_value = max(0, min(new_value, player.stats.max_hp))
-                elif stat_name == "mp":
-                    new_value = max(0, min(new_value, player.stats.max_mp))
-                elif stat_name in ["max_hp", "max_mp"]:
-                    new_value = max(1, new_value)
-                elif stat_name == "experience":
-                    new_value = max(0, new_value)
-
-                setattr(player.stats, stat_name, new_value)
-                self.logger.info(f"属性变化: {stat_name} {current_value} -> {new_value} (change: {change})")
+    # _apply_stat_changes 方法已移至 GameStateModifier
     
     def _process_teleport(self, game_state: GameState, 
                          teleport_data: Dict[str, Any]) -> Optional[Tuple[int, int]]:
@@ -171,30 +199,7 @@ class ItemEffectProcessor:
         return (tile.terrain not in [TerrainType.WALL, TerrainType.LAVA, TerrainType.PIT] and
                 tile.character_id is None)
     
-    def _apply_map_changes(self, game_state: GameState, map_changes: List[Dict[str, Any]]):
-        """应用地图变化"""
-        for change in map_changes:
-            x = change.get("x")
-            y = change.get("y")
-
-            if (x is not None and y is not None and
-                0 <= x < game_state.current_map.width and
-                0 <= y < game_state.current_map.height):
-
-                tile = game_state.current_map.get_tile(x, y)
-                if not tile:
-                    continue
-
-                # 改变地形
-                if "terrain" in change:
-                    new_terrain = change["terrain"]
-                    if hasattr(TerrainType, new_terrain.upper()):
-                        tile.terrain = TerrainType(new_terrain.lower())
-
-                # 添加物品
-                if "add_items" in change:
-                    # 这里可以添加物品到地图
-                    pass
+    # _apply_map_changes 方法已移至 GameStateModifier
     
     def _process_special_effects(self, game_state: GameState, 
                                special_effects: List[str], result: ItemEffectResult):

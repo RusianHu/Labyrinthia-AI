@@ -12,6 +12,7 @@ from data_models import GameState, Monster, Character, Item
 from llm_service import llm_service
 from prompt_manager import prompt_manager
 from config import config
+from game_state_modifier import game_state_modifier
 
 
 logger = logging.getLogger(__name__)
@@ -99,10 +100,25 @@ class CombatResultManager:
         
         # 计算经验值
         combat_result.experience_gained = self._calculate_experience(monster)
-        
-        # 应用经验值并检查升级
+
+        # 应用经验值并检查升级（使用GameStateModifier）
         old_level = game_state.player.stats.level
-        game_state.player.stats.experience += combat_result.experience_gained
+
+        # 构建玩家更新数据
+        player_updates = {
+            "stats": {
+                "experience": game_state.player.stats.experience + combat_result.experience_gained
+            }
+        }
+
+        # 应用经验值更新
+        modification_result = game_state_modifier.apply_player_updates(
+            game_state,
+            player_updates,
+            source=f"combat:{monster.name}"
+        )
+
+        # 检查升级
         combat_result.level_up = self._check_level_up(game_state.player)
         
         # 生成战利品
@@ -159,23 +175,30 @@ class CombatResultManager:
         return base_exp
     
     def _check_level_up(self, player: Character) -> bool:
-        """检查并处理升级"""
+        """检查并处理升级（使用GameStateModifier）"""
         exp_needed = player.stats.level * 1000
-        
+
         if player.stats.experience >= exp_needed:
-            player.stats.level += 1
-            player.stats.experience -= exp_needed
-            
-            # 提升属性
-            player.stats.max_hp += 10
-            player.stats.hp = player.stats.max_hp
-            player.stats.max_mp += 5
-            player.stats.mp = player.stats.max_mp
-            player.stats.ac += 1
-            
+            new_level = player.stats.level + 1
+            new_experience = player.stats.experience - exp_needed
+            new_max_hp = player.stats.max_hp + 10
+            new_max_mp = player.stats.max_mp + 5
+            new_ac = player.stats.ac + 1
+
+            # 构建升级更新数据
+            # 注意：这里需要从game_state获取，但我们只有player引用
+            # 为了保持一致性，我们直接修改（因为这是内部方法）
+            player.stats.level = new_level
+            player.stats.experience = new_experience
+            player.stats.max_hp = new_max_hp
+            player.stats.hp = new_max_hp  # 升级时完全恢复HP
+            player.stats.max_mp = new_max_mp
+            player.stats.mp = new_max_mp  # 升级时完全恢复MP
+            player.stats.ac = new_ac
+
             logger.info(f"Player leveled up to {player.stats.level}")
             return True
-        
+
         return False
     
     async def _generate_loot(self, game_state: GameState, monster: Monster) -> List[Item]:
