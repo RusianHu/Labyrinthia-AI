@@ -29,10 +29,8 @@ class LabyrinthiaGame {
         // 检查URL参数中是否有game_id
         this.checkUrlGameId();
 
-        // 延迟启动事件选择管理器，确保所有脚本都已加载
-        setTimeout(() => {
-            this.initEventChoiceManager();
-        }, 100);
+        // 事件选择管理器已改为事件驱动模式，不需要初始化轮询
+        // 回合制游戏只在玩家操作后检查待处理选择
     }
 
     checkUrlGameId() {
@@ -117,18 +115,8 @@ class LabyrinthiaGame {
         }
     }
 
-    initEventChoiceManager() {
-        if (window.eventChoiceManager) {
-            window.eventChoiceManager.startChoicePolling();
-            console.log('EventChoiceManager polling started');
-        } else {
-            console.warn('EventChoiceManager not found, retrying...');
-            // 如果还没有加载，再等一会儿
-            setTimeout(() => {
-                this.initEventChoiceManager();
-            }, 500);
-        }
-    }
+    // 移除轮询初始化 - 改为事件驱动模式
+    // 回合制游戏不需要定时轮询，只在玩家操作后检查即可
 
     async loadConfig() {
         try {
@@ -197,9 +185,9 @@ class LabyrinthiaGame {
                 console.log('[GameCore] Found pending_choice_context in refreshed state, showing dialog');
                 window.eventChoiceManager.showChoiceDialog(gameState.pending_choice_context);
             } else {
-                // 触发EventChoiceManager立即检查（作为备用）
+                // 回合制游戏：刷新状态后检查是否有待处理的选择
                 if (window.eventChoiceManager) {
-                    window.eventChoiceManager.triggerImmediateCheck();
+                    window.eventChoiceManager.checkAfterPlayerAction();
                 }
             }
         } catch (error) {
@@ -261,9 +249,9 @@ class LabyrinthiaGame {
             console.log('[GameCore] Found pending_choice_context in updated state, showing dialog');
             window.eventChoiceManager.showChoiceDialog(newGameState.pending_choice_context);
         } else {
-            // 触发EventChoiceManager立即检查（作为备用）
+            // 回合制游戏：加载游戏后检查是否有待处理的选择
             if (window.eventChoiceManager) {
-                window.eventChoiceManager.triggerImmediateCheck();
+                window.eventChoiceManager.checkAfterPlayerAction();
             }
         }
     }

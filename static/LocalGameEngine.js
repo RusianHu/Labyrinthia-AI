@@ -540,6 +540,11 @@ class LocalGameEngine {
             if (this.shouldSync()) {
                 await this.syncToBackend();
             }
+
+            // 回合制游戏：移动后检查是否有待处理的选择
+            if (window.eventChoiceManager) {
+                window.eventChoiceManager.checkAfterPlayerAction();
+            }
         }
     }
 
@@ -863,6 +868,11 @@ class LocalGameEngine {
             // 检查是否需要同步
             if (this.shouldSync()) {
                 await this.syncToBackend();
+            }
+
+            // 回合制游戏：攻击后检查是否有待处理的选择
+            if (window.eventChoiceManager) {
+                window.eventChoiceManager.checkAfterPlayerAction();
             }
         } finally {
             // 隐藏攻击遮罩

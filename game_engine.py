@@ -37,6 +37,10 @@ class GameEngine:
         # 使用 (user_id, game_id) 作为键，实现用户级别的游戏状态隔离
         self.active_games: Dict[Tuple[str, str], GameState] = {}
         self.auto_save_tasks: Dict[Tuple[str, str], asyncio.Task] = {}
+        self.last_access_time: Dict[Tuple[str, str], float] = {}  # 记录最后访问时间
+
+        # 启动游戏会话清理任务
+        self._start_cleanup_task()
     
     async def create_new_game(self, user_id: str, player_name: str, character_class: str = "fighter") -> GameState:
         """创建新游戏
@@ -123,6 +127,9 @@ class GameEngine:
         # 添加到活跃游戏列表（使用 (user_id, game_id) 作为键）
         game_key = (user_id, game_state.id)
         self.active_games[game_key] = game_state
+
+        # 更新访问时间
+        self.update_access_time(user_id, game_state.id)
 
         # 启动自动保存
         self._start_auto_save(user_id, game_state.id)
@@ -213,6 +220,10 @@ class GameEngine:
         # 使用 (user_id, game_id) 作为键
         game_key = (user_id, game_state.id)
         self.active_games[game_key] = game_state
+
+        # 更新访问时间
+        self.update_access_time(user_id, game_state.id)
+
         self._start_auto_save(user_id, game_state.id)
 
         # 生成重新进入游戏的叙述
@@ -1793,6 +1804,61 @@ class GameEngine:
 
             del self.active_games[game_key]
             logger.info(f"Game {game_id} closed for user {user_id}")
+
+    def update_access_time(self, user_id: str, game_id: str):
+        """更新游戏的最后访问时间"""
+        import time
+        game_key = (user_id, game_id)
+        self.last_access_time[game_key] = time.time()
+
+    def _start_cleanup_task(self):
+        """启动游戏会话清理任务"""
+        async def cleanup_loop():
+            """定期清理不活跃的游戏会话"""
+            import time
+            logger.info("Game session cleanup task started")
+
+            while True:
+                try:
+                    await asyncio.sleep(600)  # 每10分钟检查一次
+
+                    current_time = time.time()
+                    timeout = config.game.game_session_timeout
+
+                    games_to_close = []
+                    for game_key, last_access in list(self.last_access_time.items()):
+                        if current_time - last_access > timeout:
+                            games_to_close.append(game_key)
+
+                    for game_key in games_to_close:
+                        user_id, game_id = game_key
+                        logger.info(f"Closing inactive game session: {game_id} (user: {user_id}, inactive for {int(current_time - self.last_access_time[game_key])}s)")
+                        try:
+                            await self.close_game(user_id, game_id)
+                            # 清理访问时间记录
+                            if game_key in self.last_access_time:
+                                del self.last_access_time[game_key]
+                        except Exception as e:
+                            logger.error(f"Failed to close inactive game {game_id}: {e}")
+
+                    if games_to_close:
+                        logger.info(f"Cleaned up {len(games_to_close)} inactive game sessions")
+
+                except asyncio.CancelledError:
+                    logger.info("Game session cleanup task cancelled")
+                    raise
+                except Exception as e:
+                    logger.error(f"Error in cleanup loop: {e}")
+                    await asyncio.sleep(60)  # 出错后等待1分钟再继续
+
+        # 使用任务管理器创建清理任务
+        from async_task_manager import async_task_manager, TaskType
+        async_task_manager.create_task(
+            cleanup_loop(),
+            task_type=TaskType.BACKGROUND,
+            description="Game session cleanup",
+            task_id="game_session_cleanup"
+        )
 
 
 # 全局游戏引擎实例

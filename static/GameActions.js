@@ -114,6 +114,12 @@ Object.assign(LabyrinthiaGame.prototype, {
                 if (result.pending_choice_context && window.eventChoiceManager) {
                     console.log('[GameActions] Found pending_choice_context in action result, showing dialog immediately');
                     window.eventChoiceManager.showChoiceDialog(result.pending_choice_context);
+                } else {
+                    // 回合制游戏：操作完成后检查是否有待处理的选择
+                    // 只在没有直接返回选择上下文时才检查
+                    if (window.eventChoiceManager) {
+                        window.eventChoiceManager.checkAfterPlayerAction();
+                    }
                 }
 
                 // 检查游戏是否结束

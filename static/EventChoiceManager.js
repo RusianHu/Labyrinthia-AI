@@ -7,18 +7,11 @@ class EventChoiceManager {
     constructor() {
         this.currentContext = null;
         this.isProcessing = false;
-        this.checkInterval = null;
 
-        // 智能轮询相关属性
-        this.baseInterval = 10000; // 基础轮询间隔：10秒
-        this.activeInterval = 3000; // 活跃时轮询间隔：3秒
-        this.currentInterval = this.baseInterval;
-        this.lastActivityTime = Date.now();
-        this.consecutiveEmptyChecks = 0;
-        this.maxEmptyChecks = 5; // 连续5次空检查后降低频率
+        // 移除轮询机制，改为事件驱动
+        // 回合制游戏不需要定时轮询，只在玩家操作后检查即可
 
         this.initializeElements();
-        this.startChoicePolling();
     }
 
     initializeElements() {
@@ -66,84 +59,17 @@ class EventChoiceManager {
         });
     }
 
-    startChoicePolling() {
-        // 智能轮询：根据活动情况动态调整频率
-        this.checkInterval = setInterval(() => {
-            if (!this.isVisible() && !this.isProcessing) {
-                this.checkForPendingChoice();
-            }
-        }, this.currentInterval);
-
-        console.log(`EventChoiceManager polling started (${this.currentInterval/1000}s interval)`);
-    }
-
-    stopChoicePolling() {
-        if (this.checkInterval) {
-            clearInterval(this.checkInterval);
-            this.checkInterval = null;
-            console.log('EventChoiceManager polling stopped');
-        }
-    }
-
-    // 立即检查待处理选择（用于游戏状态变化时）
-    triggerImmediateCheck() {
+    // 事件驱动检查：在玩家操作后调用
+    // 这是回合制游戏，不需要定时轮询
+    checkAfterPlayerAction() {
         if (!this.isVisible() && !this.isProcessing) {
             this.checkForPendingChoice();
-            // 记录活动时间并提升轮询频率
-            this.recordActivity();
-            this.boostPollingFrequency();
         }
-    }
-
-    // 记录活动时间
-    recordActivity() {
-        this.lastActivityTime = Date.now();
-        this.consecutiveEmptyChecks = 0; // 重置空检查计数
-    }
-
-    // 临时提升轮询频率
-    boostPollingFrequency() {
-        if (this.currentInterval !== this.activeInterval) {
-            this.currentInterval = this.activeInterval;
-            this.restartPolling();
-
-            // 30秒后恢复正常频率
-            setTimeout(() => {
-                this.adjustPollingInterval();
-            }, 30000);
-        }
-    }
-
-    // 根据活动情况调整轮询间隔
-    adjustPollingInterval() {
-        const timeSinceLastActivity = Date.now() - this.lastActivityTime;
-        const oldInterval = this.currentInterval;
-
-        if (this.consecutiveEmptyChecks >= this.maxEmptyChecks) {
-            // 连续多次空检查，降低频率
-            this.currentInterval = Math.min(this.baseInterval * 2, 20000); // 最多20秒
-        } else if (timeSinceLastActivity > 120000) { // 2分钟无活动
-            this.currentInterval = this.baseInterval;
-        } else if (timeSinceLastActivity > 60000) { // 1分钟无活动
-            this.currentInterval = Math.floor((this.baseInterval + this.activeInterval) / 2); // 中等频率
-        } else {
-            this.currentInterval = this.activeInterval; // 保持高频率
-        }
-
-        if (oldInterval !== this.currentInterval) {
-            this.restartPolling();
-        }
-    }
-
-    // 重启轮询
-    restartPolling() {
-        this.stopChoicePolling();
-        this.startChoicePolling();
     }
 
     async checkForPendingChoice() {
         try {
-            const gameId = window.game?.gameId;  // 修复：使用gameId而不是currentGameId
+            const gameId = window.game?.gameId;
             if (!gameId) return;
 
             const response = await fetch(`/api/game/${gameId}/pending-choice`);
@@ -151,16 +77,11 @@ class EventChoiceManager {
             // 检查响应状态
             if (response.status === 404 || response.status === 500) {
                 // 游戏不存在，可能是服务器重启了
-                console.warn('Game not found on server, clearing gameId and stopping polling');
+                console.warn('Game not found on server, clearing gameId');
                 if (window.game) {
                     window.game.gameId = null;
                     window.game.gameState = null;
-                    window.game.localEngine = null; // 清理本地引擎
-                }
-                this.stopChoicePolling();
-
-                // 显示提示信息
-                if (window.game) {
+                    window.game.localEngine = null;
                     window.game.addMessage('游戏会话已失效，请重新加载游戏', 'warning');
                 }
                 return;
@@ -170,38 +91,17 @@ class EventChoiceManager {
 
             if (data.success && data.has_pending_choice && data.choice_context) {
                 this.showChoiceDialog(data.choice_context);
-                this.recordActivity(); // 记录活动
-                this.consecutiveEmptyChecks = 0;
-                console.log('Found pending choice:', data.choice_context.title);
+                console.log('[EventChoiceManager] Found pending choice:', data.choice_context.title);
             } else {
-                // 增加空检查计数
-                this.consecutiveEmptyChecks++;
-
-                // 只在调试模式下输出空检查日志
-                if (window.game?.debugMode && this.consecutiveEmptyChecks <= 3) {
-                    console.log(`No pending choice (${this.consecutiveEmptyChecks}/${this.maxEmptyChecks})`);
+                // 回合制游戏：没有待处理选择是正常的
+                if (window.game?.debugMode) {
+                    console.log('[EventChoiceManager] No pending choice (normal for turn-based game)');
                 }
-
-                // 调整轮询频率
-                this.adjustPollingInterval();
             }
         } catch (error) {
-            // 检查是否是网络连接错误
-            if (error.message.includes('Failed to fetch') || error.message.includes('ERR_CONNECTION_REFUSED')) {
-                console.warn('Server connection failed, stopping polling temporarily');
-                this.consecutiveEmptyChecks += 5; // 快速减少轮询频率
-
-                // 如果连续失败太多次，停止轮询
-                if (this.consecutiveEmptyChecks > 20) {
-                    console.warn('Too many connection failures, stopping polling');
-                    this.stopChoicePolling();
-                    if (window.game) {
-                        window.game.addMessage('无法连接到服务器，请检查网络连接', 'error');
-                    }
-                }
-            } else {
-                console.error('Error checking for pending choice:', error);
-                this.consecutiveEmptyChecks++;
+            console.error('[EventChoiceManager] Error checking for pending choice:', error);
+            if (window.game && error.message.includes('Failed to fetch')) {
+                window.game.addMessage('无法连接到服务器，请检查网络连接', 'error');
             }
         }
     }

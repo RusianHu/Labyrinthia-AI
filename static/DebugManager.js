@@ -27,14 +27,23 @@ window.checkDebugStatus = function() {
     console.log('=========================');
 };
 
+// 防止重复初始化的标志
+let debugMethodsInitialized = false;
+
 // 等待DOM加载完成后自动添加调试方法
 document.addEventListener('DOMContentLoaded', function() {
     console.log('DebugManager: DOM loaded, initializing debug system...');
 
     // 延迟执行，确保游戏实例已创建
     setTimeout(function() {
+        if (debugMethodsInitialized) {
+            console.log('DebugManager: Debug methods already initialized, skipping...');
+            return;
+        }
+
         if (window.game && typeof addDebugMethodsToGame === 'function') {
             addDebugMethodsToGame(window.game);
+            debugMethodsInitialized = true;
             console.log('DebugManager: Debug methods automatically added to game instance');
 
             // 添加调试状态检查到控制台
@@ -45,8 +54,14 @@ document.addEventListener('DOMContentLoaded', function() {
             console.warn('DebugManager: Game instance or addDebugMethodsToGame function not found, retrying...');
             // 如果游戏实例还没有创建，再等一会儿
             setTimeout(function() {
+                if (debugMethodsInitialized) {
+                    console.log('DebugManager: Debug methods already initialized during retry, skipping...');
+                    return;
+                }
+
                 if (window.game && typeof addDebugMethodsToGame === 'function') {
                     addDebugMethodsToGame(window.game);
+                    debugMethodsInitialized = true;
                     console.log('DebugManager: Debug methods added to game instance (retry)');
 
                     // 添加调试状态检查到控制台
@@ -598,6 +613,12 @@ const DebugMethods = {
 
 // 添加调试方法到游戏实例的函数
 function addDebugMethodsToGame(gameInstance) {
+    // 防止重复添加
+    if (gameInstance._debugMethodsAdded) {
+        console.log('DebugManager: Debug methods already added to this instance, skipping...');
+        return;
+    }
+
     console.log('DebugManager: Adding debug methods to game instance...');
 
     // 添加所有调试方法
@@ -626,6 +647,9 @@ function addDebugMethodsToGame(gameInstance) {
     }
 
     console.log('DebugManager: Debug methods successfully added to game instance');
+
+    // 标记已添加
+    gameInstance._debugMethodsAdded = true;
 
     // 立即初始化调试模式
     if (typeof gameInstance.initializeDebugMode === 'function') {

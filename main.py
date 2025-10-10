@@ -299,6 +299,9 @@ async def get_game_state(game_id: str, request: Request, response: Response):
 
     game_state = game_engine.active_games[game_key]
 
+    # 更新访问时间
+    game_engine.update_access_time(user_id, game_id)
+
     # 获取游戏状态字典
     state_dict = game_state.to_dict()
 
@@ -390,6 +393,9 @@ async def perform_action(request: ActionRequest, http_request: Request, response
             sanitized_params = request.parameters
 
         logger.info(f"Processing action: {request.action} for user {user_id}, game: {request.game_id}")
+
+        # 更新访问时间
+        game_engine.update_access_time(user_id, request.game_id)
 
         result = await game_engine.process_player_action(
             user_id=user_id,
@@ -683,7 +689,7 @@ async def _process_post_choice_updates(game_state: GameState):
 
 @app.get("/api/game/{game_id}/pending-choice")
 async def get_pending_choice(game_id: str, request: Request, response: Response):
-    """获取待处理的选择上下文"""
+    """获取待处理的选择上下文（事件驱动，仅在玩家操作后调用）"""
     try:
         # 获取用户ID
         user_id = user_session_manager.get_or_create_user_id(request, response)
@@ -691,6 +697,9 @@ async def get_pending_choice(game_id: str, request: Request, response: Response)
 
         if game_key not in game_engine.active_games:
             raise HTTPException(status_code=404, detail="游戏未找到")
+
+        # 更新访问时间
+        game_engine.update_access_time(user_id, game_id)
 
         game_state = game_engine.active_games[game_key]
 
