@@ -196,6 +196,51 @@ Object.assign(LabyrinthiaGame.prototype, {
                 mapContainer.appendChild(tile);
             }
         }
+
+        // 初始化或重新初始化地图缩放管理器
+        // 使用setTimeout确保DOM已完全更新
+        setTimeout(() => {
+            if (typeof MapZoomManager !== 'undefined') {
+                // 保存当前缩放级别
+                const currentZoom = this.mapZoomManager ? this.mapZoomManager.getZoom() : 1;
+                const currentScrollLeft = this.mapZoomManager && this.mapZoomManager.mapContainer ?
+                    this.mapZoomManager.mapContainer.scrollLeft : 0;
+                const currentScrollTop = this.mapZoomManager && this.mapZoomManager.mapContainer ?
+                    this.mapZoomManager.mapContainer.scrollTop : 0;
+
+                // 如果已存在，先销毁旧的
+                if (this.mapZoomManager) {
+                    try {
+                        this.mapZoomManager.destroy();
+                    } catch (e) {
+                        console.warn('Failed to destroy old MapZoomManager:', e);
+                    }
+                }
+
+                // 创建新的MapZoomManager
+                this.mapZoomManager = new MapZoomManager('map-container', 'map-grid');
+
+                // 重新初始化以确保容器已存在
+                const reinitSuccess = this.mapZoomManager.reinitialize();
+
+                if (reinitSuccess) {
+                    // 恢复之前的缩放级别和滚动位置
+                    if (currentZoom !== 1) {
+                        this.mapZoomManager.setZoom(currentZoom);
+                        // 恢复滚动位置
+                        setTimeout(() => {
+                            if (this.mapZoomManager.mapContainer) {
+                                this.mapZoomManager.mapContainer.scrollLeft = currentScrollLeft;
+                                this.mapZoomManager.mapContainer.scrollTop = currentScrollTop;
+                            }
+                        }, 50);
+                    }
+                    console.log('MapZoomManager initialized and ready after map update (zoom:', currentZoom, ')');
+                } else {
+                    console.warn('MapZoomManager initialization failed');
+                }
+            }
+        }, 100);
     },
     
     updateInventory() {

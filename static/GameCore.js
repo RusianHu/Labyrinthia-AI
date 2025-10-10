@@ -15,12 +15,13 @@ class LabyrinthiaGame {
         this.currentProgressInterval = null;
         this.config = null;
         this.localEngine = null; // 本地游戏引擎
+        this.mapZoomManager = null; // 地图缩放管理器
 
         this.init();
         this.initializeDebugMode();
         // loadConfig 将在 initializeDebugMode 中异步调用
     }
-    
+
     init() {
         this.setupEventListeners();
         this.loadGameList();

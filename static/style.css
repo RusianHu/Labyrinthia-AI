@@ -165,6 +165,35 @@ body {
     overflow: auto;
     position: relative;
     min-height: 300px; /* 最小高度确保地图可见 */
+    /* 优化滚动和缩放 */
+    -webkit-overflow-scrolling: touch; /* iOS平滑滚动 */
+    overscroll-behavior: contain; /* 防止滚动链 */
+    touch-action: none; /* 由MapZoomManager处理所有触摸事件 */
+}
+
+/* 地图容器滚动条样式 */
+.map-container::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+}
+
+.map-container::-webkit-scrollbar-track {
+    background: rgba(0, 0, 0, 0.2);
+    border-radius: 5px;
+}
+
+.map-container::-webkit-scrollbar-thumb {
+    background: rgba(94, 53, 177, 0.6);
+    border-radius: 5px;
+    transition: background 0.3s ease;
+}
+
+.map-container::-webkit-scrollbar-thumb:hover {
+    background: rgba(94, 53, 177, 0.8);
+}
+
+.map-container::-webkit-scrollbar-corner {
+    background: rgba(0, 0, 0, 0.2);
 }
 
 .map-grid {
@@ -174,6 +203,7 @@ body {
     padding: 5px;
     border-radius: 4px;
     min-width: fit-content;
+    /* 缩放相关样式由MapZoomManager动态设置 */
 }
 
 .map-tile {
@@ -1216,9 +1246,41 @@ body {
 .message-log {
     max-height: 200px;
     overflow-y: auto;
+    overflow-x: hidden;
     background: rgba(0,0,0,0.05);
     border-radius: 6px;
     padding: 10px;
+    /* 优化移动端滚动 */
+    -webkit-overflow-scrolling: touch; /* iOS平滑滚动 */
+    overscroll-behavior: contain; /* 防止滚动链 */
+    /* 确保可以滚动 */
+    touch-action: pan-y; /* 允许垂直滚动 */
+}
+
+/* 自定义滚动条样式 - 桌面端 */
+.message-log::-webkit-scrollbar {
+    width: 8px;
+}
+
+.message-log::-webkit-scrollbar-track {
+    background: rgba(0, 0, 0, 0.1);
+    border-radius: 4px;
+}
+
+.message-log::-webkit-scrollbar-thumb {
+    background: rgba(94, 53, 177, 0.5);
+    border-radius: 4px;
+    transition: background 0.3s ease;
+}
+
+.message-log::-webkit-scrollbar-thumb:hover {
+    background: rgba(94, 53, 177, 0.7);
+}
+
+/* Firefox滚动条样式 */
+.message-log {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(94, 53, 177, 0.5) rgba(0, 0, 0, 0.1);
 }
 
 .message {
