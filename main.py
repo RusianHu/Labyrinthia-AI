@@ -1289,17 +1289,12 @@ async def direct_start_game(request: Request, response: Response):
 
         logger.info(f"Direct starting game with player: {player_name}, class: {character_class}")
 
-        # 创建游戏
+        # 创建游戏（create_new_game内部已经会保存游戏）
         game_state = await game_engine.create_new_game(
             user_id=user_id,
             player_name=player_name,
             character_class=character_class
         )
-
-        # 保存到用户目录
-        game_data = game_state.to_dict()
-        user_session_manager.save_game_for_user(user_id, game_data)
-        logger.info(f"Game saved for user {user_id}: {game_state.id}")
 
         # 直接重定向到游戏界面
         from fastapi.responses import RedirectResponse

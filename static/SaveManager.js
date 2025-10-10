@@ -218,6 +218,9 @@ Object.assign(LabyrinthiaGame.prototype, {
                 this.updateOverlayProgress(80, '加载角色数据...');
                 await this.refreshGameState();
 
+                // 刷新存档列表，确保新创建的游戏出现在列表中
+                await this.loadGameList();
+
                 this.updateOverlayProgress(90, '生成开场故事...');
                 this.addMessage('新游戏开始！', 'success');
 
