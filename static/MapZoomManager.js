@@ -8,6 +8,9 @@ class MapZoomManager {
         this.mapContainer = document.getElementById(mapContainerId);
         this.mapGrid = document.getElementById(mapGridId);
 
+        // 获取实际的滚动容器（.dungeon-content）
+        this.scrollContainer = null;
+
         // 缩放配置
         this.scale = 1;
         this.minScale = 0.5;
@@ -47,6 +50,13 @@ class MapZoomManager {
             return;
         }
 
+        // 获取实际的滚动容器
+        this.scrollContainer = this.mapContainer.querySelector('.dungeon-content');
+        if (!this.scrollContainer) {
+            console.warn('MapZoomManager: 未找到 .dungeon-content 滚动容器');
+            return;
+        }
+
         // 设置初始样式
         this.mapGrid.style.transformOrigin = 'top left';
         this.mapGrid.style.transition = 'transform 0.1s ease-out';
@@ -54,10 +64,15 @@ class MapZoomManager {
         // 绑定事件
         this.bindEvents();
 
-        console.log('MapZoomManager: 事件已绑定');
+        console.log('MapZoomManager: 事件已绑定，滚动容器:', this.scrollContainer);
     }
     
     bindEvents() {
+        if (!this.scrollContainer) {
+            console.warn('MapZoomManager: 无法绑定事件，滚动容器不存在');
+            return;
+        }
+
         // 绑定方法到this上下文
         this._handleWheel = this.handleWheel.bind(this);
         this._handleTouchStart = this.handleTouchStart.bind(this);
@@ -67,47 +82,47 @@ class MapZoomManager {
         this._handleMouseMove = this.handleMouseMove.bind(this);
         this._handleMouseUp = this.handleMouseUp.bind(this);
 
-        // 鼠标滚轮缩放
-        this.mapContainer.addEventListener('wheel', this._handleWheel, { passive: false });
+        // 鼠标滚轮缩放 - 绑定到滚动容器
+        this.scrollContainer.addEventListener('wheel', this._handleWheel, { passive: false });
 
-        // 触摸手势缩放
-        this.mapContainer.addEventListener('touchstart', this._handleTouchStart, { passive: false });
-        this.mapContainer.addEventListener('touchmove', this._handleTouchMove, { passive: false });
-        this.mapContainer.addEventListener('touchend', this._handleTouchEnd, { passive: false });
+        // 触摸手势缩放 - 绑定到滚动容器
+        this.scrollContainer.addEventListener('touchstart', this._handleTouchStart, { passive: false });
+        this.scrollContainer.addEventListener('touchmove', this._handleTouchMove, { passive: false });
+        this.scrollContainer.addEventListener('touchend', this._handleTouchEnd, { passive: false });
 
-        // 鼠标拖拽平移（可选功能，按住Ctrl键拖拽）
-        this.mapContainer.addEventListener('mousedown', this._handleMouseDown);
-        this.mapContainer.addEventListener('mousemove', this._handleMouseMove);
-        this.mapContainer.addEventListener('mouseup', this._handleMouseUp);
-        this.mapContainer.addEventListener('mouseleave', this._handleMouseUp);
+        // 鼠标拖拽平移 - 绑定到滚动容器
+        this.scrollContainer.addEventListener('mousedown', this._handleMouseDown);
+        this.scrollContainer.addEventListener('mousemove', this._handleMouseMove);
+        this.scrollContainer.addEventListener('mouseup', this._handleMouseUp);
+        this.scrollContainer.addEventListener('mouseleave', this._handleMouseUp);
     }
     
     handleWheel(e) {
         e.preventDefault();
-        
-        // 获取鼠标在容器中的位置
-        const rect = this.mapContainer.getBoundingClientRect();
+
+        // 获取鼠标在滚动容器中的位置
+        const rect = this.scrollContainer.getBoundingClientRect();
         const x = e.clientX - rect.left;
         const y = e.clientY - rect.top;
-        
+
         // 计算缩放方向
         const delta = e.deltaY > 0 ? -this.scaleStep : this.scaleStep;
         const newScale = Math.max(this.minScale, Math.min(this.maxScale, this.scale + delta));
-        
+
         if (newScale !== this.scale) {
             // 计算缩放前后的偏移量，使缩放以鼠标位置为中心
             const scaleRatio = newScale / this.scale;
-            
+
             // 更新滚动位置以保持鼠标位置不变
-            const scrollX = this.mapContainer.scrollLeft;
-            const scrollY = this.mapContainer.scrollTop;
-            
+            const scrollX = this.scrollContainer.scrollLeft;
+            const scrollY = this.scrollContainer.scrollTop;
+
             this.scale = newScale;
             this.applyScale();
-            
+
             // 调整滚动位置
-            this.mapContainer.scrollLeft = scrollX * scaleRatio + (x * (scaleRatio - 1));
-            this.mapContainer.scrollTop = scrollY * scaleRatio + (y * (scaleRatio - 1));
+            this.scrollContainer.scrollLeft = scrollX * scaleRatio + (x * (scaleRatio - 1));
+            this.scrollContainer.scrollTop = scrollY * scaleRatio + (y * (scaleRatio - 1));
         }
     }
     
@@ -130,12 +145,12 @@ class MapZoomManager {
             const touch = e.touches[0];
             this.startX = touch.pageX;
             this.startY = touch.pageY;
-            this.scrollLeft = this.mapContainer.scrollLeft;
-            this.scrollTop = this.mapContainer.scrollTop;
+            this.scrollLeft = this.scrollContainer.scrollLeft;
+            this.scrollTop = this.scrollContainer.scrollTop;
 
             // 直接进入拖动模式
             this.isPanning = true;
-            this.mapContainer.style.cursor = 'grabbing';
+            this.scrollContainer.style.cursor = 'grabbing';
         }
     }
     
@@ -168,8 +183,8 @@ class MapZoomManager {
             const walkX = this.startX - x;
             const walkY = this.startY - y;
 
-            this.mapContainer.scrollLeft = this.scrollLeft + walkX;
-            this.mapContainer.scrollTop = this.scrollTop + walkY;
+            this.scrollContainer.scrollLeft = this.scrollLeft + walkX;
+            this.scrollContainer.scrollTop = this.scrollTop + walkY;
         }
     }
     
@@ -184,7 +199,7 @@ class MapZoomManager {
         if (e.touches.length === 0) {
             // 所有手指都离开了
             this.isPanning = false;
-            this.mapContainer.style.cursor = '';
+            this.scrollContainer.style.cursor = '';
         }
     }
     
@@ -195,14 +210,14 @@ class MapZoomManager {
         this.hasMoved = false;
         this.startX = e.pageX;
         this.startY = e.pageY;
-        this.scrollLeft = this.mapContainer.scrollLeft;
-        this.scrollTop = this.mapContainer.scrollTop;
+        this.scrollLeft = this.scrollContainer.scrollLeft;
+        this.scrollTop = this.scrollContainer.scrollTop;
 
         // 直接进入拖动模式
         this.isPanning = true;
-        this.mapContainer.style.cursor = 'grabbing';
+        this.scrollContainer.style.cursor = 'grabbing';
     }
-    
+
     handleMouseMove(e) {
         // 如果正在拖动模式
         if (this.isPanning) {
@@ -212,14 +227,14 @@ class MapZoomManager {
             const walkX = this.startX - x;
             const walkY = this.startY - y;
 
-            this.mapContainer.scrollLeft = this.scrollLeft + walkX;
-            this.mapContainer.scrollTop = this.scrollTop + walkY;
+            this.scrollContainer.scrollLeft = this.scrollLeft + walkX;
+            this.scrollContainer.scrollTop = this.scrollTop + walkY;
         }
     }
-    
+
     handleMouseUp() {
         this.isPanning = false;
-        this.mapContainer.style.cursor = '';
+        this.scrollContainer.style.cursor = '';
     }
     
     getDistance(touch1, touch2) {
@@ -249,6 +264,13 @@ class MapZoomManager {
             return false;
         }
 
+        // 重新获取滚动容器
+        this.scrollContainer = this.mapContainer.querySelector('.dungeon-content');
+        if (!this.scrollContainer) {
+            console.warn('MapZoomManager: 重新初始化失败，滚动容器不可用');
+            return false;
+        }
+
         // 先移除旧的事件监听器（如果有）
         if (this._handleWheel) {
             this.destroy();
@@ -261,11 +283,11 @@ class MapZoomManager {
 
     // 公共方法：重置缩放
     resetZoom() {
-        if (!this.mapContainer) return;
+        if (!this.scrollContainer) return;
         this.scale = 1;
         this.applyScale();
-        this.mapContainer.scrollLeft = 0;
-        this.mapContainer.scrollTop = 0;
+        this.scrollContainer.scrollLeft = 0;
+        this.scrollContainer.scrollTop = 0;
     }
     
     // 公共方法：设置缩放级别
@@ -281,21 +303,25 @@ class MapZoomManager {
     
     // 公共方法：销毁管理器
     destroy() {
+        if (!this.scrollContainer) return;
+
         // 移除所有事件监听器
-        this.mapContainer.removeEventListener('wheel', this._handleWheel);
-        this.mapContainer.removeEventListener('touchstart', this._handleTouchStart);
-        this.mapContainer.removeEventListener('touchmove', this._handleTouchMove);
-        this.mapContainer.removeEventListener('touchend', this._handleTouchEnd);
-        this.mapContainer.removeEventListener('mousedown', this._handleMouseDown);
-        this.mapContainer.removeEventListener('mousemove', this._handleMouseMove);
-        this.mapContainer.removeEventListener('mouseup', this._handleMouseUp);
-        this.mapContainer.removeEventListener('mouseleave', this._handleMouseUp);
+        this.scrollContainer.removeEventListener('wheel', this._handleWheel);
+        this.scrollContainer.removeEventListener('touchstart', this._handleTouchStart);
+        this.scrollContainer.removeEventListener('touchmove', this._handleTouchMove);
+        this.scrollContainer.removeEventListener('touchend', this._handleTouchEnd);
+        this.scrollContainer.removeEventListener('mousedown', this._handleMouseDown);
+        this.scrollContainer.removeEventListener('mousemove', this._handleMouseMove);
+        this.scrollContainer.removeEventListener('mouseup', this._handleMouseUp);
+        this.scrollContainer.removeEventListener('mouseleave', this._handleMouseUp);
 
         // 重置样式
-        this.mapGrid.style.transform = '';
-        this.mapGrid.style.transformOrigin = '';
-        this.mapGrid.style.transition = '';
-        this.mapContainer.style.cursor = '';
+        if (this.mapGrid) {
+            this.mapGrid.style.transform = '';
+            this.mapGrid.style.transformOrigin = '';
+            this.mapGrid.style.transition = '';
+        }
+        this.scrollContainer.style.cursor = '';
     }
 }
 

@@ -162,7 +162,7 @@ body {
     background: #2c3e50;
     border-radius: 8px;
     padding: 10px;
-    overflow: auto;
+    overflow: hidden; /* 隐藏溢出，由内部容器处理滚动 */
     position: relative;
     min-height: 300px; /* 最小高度确保地图可见 */
     /* 优化滚动和缩放 */

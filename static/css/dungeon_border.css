@@ -106,7 +106,37 @@
     position: relative;
     background: radial-gradient(circle at center, #2a2a2a 0%, #1a1a1a 100%);
     border-radius: 4px;
-    overflow: hidden;
+    overflow: auto; /* 允许滚动以支持拖动 */
+    width: 100%;
+    height: 100%;
+    /* 优化滚动 */
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
+}
+
+/* 地图内容区域滚动条样式 */
+.dungeon-content::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+}
+
+.dungeon-content::-webkit-scrollbar-track {
+    background: rgba(0, 0, 0, 0.3);
+    border-radius: 5px;
+}
+
+.dungeon-content::-webkit-scrollbar-thumb {
+    background: rgba(139, 69, 19, 0.6);
+    border-radius: 5px;
+    transition: background 0.3s ease;
+}
+
+.dungeon-content::-webkit-scrollbar-thumb:hover {
+    background: rgba(139, 69, 19, 0.8);
+}
+
+.dungeon-content::-webkit-scrollbar-corner {
+    background: rgba(0, 0, 0, 0.3);
 }
 
 /* 增强的阴影效果 */
