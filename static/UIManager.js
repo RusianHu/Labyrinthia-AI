@@ -78,11 +78,21 @@ Object.assign(LabyrinthiaGame.prototype, {
         };
 
         const tileSize = getTileSize();
-        
+
         // 设置网格样式
         mapContainer.style.gridTemplateColumns = `repeat(${gameMap.width}, ${tileSize}px)`;
+
+        // 保存地板图层（如果存在）
+        const floorLayers = Array.from(mapContainer.querySelectorAll('.floor-layer, .floor-overlay'));
+
+        // 清空地图容器
         mapContainer.innerHTML = '';
-        
+
+        // 重新添加地板图层（在地图瓦片之前）
+        floorLayers.forEach(layer => {
+            mapContainer.appendChild(layer);
+        });
+
         // 创建地图瓦片
         for (let y = 0; y < gameMap.height; y++) {
             for (let x = 0; x < gameMap.width; x++) {
@@ -197,6 +207,9 @@ Object.assign(LabyrinthiaGame.prototype, {
             }
         }
 
+        // 应用地板图层效果
+        this.applyFloorTheme(gameMap.floor_theme || 'normal');
+
         // 初始化或重新初始化地图缩放管理器
         // 使用setTimeout确保DOM已完全更新
         setTimeout(() => {
@@ -241,6 +254,40 @@ Object.assign(LabyrinthiaGame.prototype, {
                 }
             }
         }, 100);
+    },
+
+    /**
+     * 应用地板主题
+     * @param {string} theme - 地板主题 (normal, magic, abandoned, cave, combat)
+     */
+    applyFloorTheme(theme) {
+        // 检查FloorLayerManager是否可用
+        if (typeof floorLayerManager === 'undefined') {
+            console.warn('FloorLayerManager not available, skipping floor theme application');
+            return;
+        }
+
+        const mapGridContainer = document.getElementById('map-grid');
+        if (!mapGridContainer) {
+            console.warn('Map grid container not found');
+            return;
+        }
+
+        // 验证主题是否有效
+        const validThemes = ['normal', 'magic', 'abandoned', 'cave', 'combat'];
+        const floorTheme = validThemes.includes(theme) ? theme : 'normal';
+
+        try {
+            // 移除旧的地板图层
+            floorLayerManager.removeFloorLayers(mapGridContainer);
+
+            // 应用新的地板主题
+            floorLayerManager.applyPreset(mapGridContainer, floorTheme);
+
+            console.log(`Applied floor theme: ${floorTheme}`);
+        } catch (error) {
+            console.error('Failed to apply floor theme:', error);
+        }
     },
     
     updateInventory() {

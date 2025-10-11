@@ -1,0 +1,358 @@
+/* 地牢地板图层样式系统 */
+
+/* 确保地图容器有相对定位 */
+#map-grid {
+    position: relative !important;
+}
+
+/* 基础地板纹理类 */
+.floor-layer {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-repeat: repeat;
+    background-size: 64px 64px; /* 可调整瓦片大小 */
+    pointer-events: none;
+    z-index: -1; /* 负值确保在地图瓦片下方 */
+}
+
+/* 基础地板类型 */
+.floor-stone-basic {
+    background-image: url('../images/floor_stone_basic.png');
+    opacity: 0.8;
+}
+
+.floor-wood-planks {
+    background-image: url('../images/floor_wood_planks.png');
+    opacity: 0.75;
+}
+
+.floor-dirt-cave {
+    background-image: url('../images/floor_dirt_cave.png');
+    opacity: 0.7;
+}
+
+.floor-marble-ancient {
+    background-image: url('../images/floor_marble_ancient.png');
+    opacity: 0.85;
+}
+
+/* 叠加效果图层 */
+.floor-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-repeat: repeat;
+    background-size: 128px 128px; /* 叠加层使用更大的瓦片 */
+    pointer-events: none;
+    z-index: -1; /* 负值确保在地图瓦片下方，但在基础层上方通过mix-blend-mode混合 */
+    mix-blend-mode: multiply; /* 混合模式 */
+}
+
+.floor-overlay-blood {
+    background-image: url('../images/floor_overlay_blood.png');
+    opacity: 0.6;
+    mix-blend-mode: darken;
+}
+
+.floor-overlay-magic {
+    background-image: url('../images/floor_overlay_magic.png');
+    opacity: 0.5;
+    mix-blend-mode: screen;
+    animation: magic-pulse 3s ease-in-out infinite;
+}
+
+@keyframes magic-pulse {
+    0%, 100% {
+        opacity: 0.4;
+    }
+    50% {
+        opacity: 0.7;
+    }
+}
+
+.floor-overlay-moss {
+    background-image: url('../images/floor_overlay_moss.png');
+    opacity: 0.5;
+    mix-blend-mode: multiply;
+}
+
+.floor-overlay-water {
+    background-image: url('../images/floor_overlay_water.png');
+    opacity: 0.4;
+    mix-blend-mode: overlay;
+    animation: water-shimmer 4s ease-in-out infinite;
+}
+
+@keyframes water-shimmer {
+    0%, 100% {
+        opacity: 0.3;
+    }
+    50% {
+        opacity: 0.5;
+    }
+}
+
+.floor-overlay-cracks {
+    background-image: url('../images/floor_overlay_cracks.png');
+    opacity: 0.6;
+    mix-blend-mode: multiply;
+}
+
+/* 组合样式 - 预设场景 */
+
+/* 普通地牢房间 */
+.dungeon-room-normal {
+    position: relative;
+}
+
+.dungeon-room-normal::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-image: url('../images/floor_stone_basic.png');
+    background-repeat: repeat;
+    background-size: 64px 64px;
+    opacity: 0.8;
+    z-index: 0;
+    pointer-events: none;
+}
+
+.dungeon-room-normal::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-image: url('../images/floor_overlay_cracks.png');
+    background-repeat: repeat;
+    background-size: 128px 128px;
+    opacity: 0.4;
+    z-index: 1;
+    pointer-events: none;
+    mix-blend-mode: multiply;
+}
+
+/* 魔法房间 */
+.dungeon-room-magic {
+    position: relative;
+}
+
+.dungeon-room-magic::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-image: url('../images/floor_marble_ancient.png');
+    background-repeat: repeat;
+    background-size: 64px 64px;
+    opacity: 0.85;
+    z-index: 0;
+    pointer-events: none;
+}
+
+.dungeon-room-magic::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-image: url('../images/floor_overlay_magic.png');
+    background-repeat: repeat;
+    background-size: 128px 128px;
+    opacity: 0.5;
+    z-index: 1;
+    pointer-events: none;
+    mix-blend-mode: screen;
+    animation: magic-pulse 3s ease-in-out infinite;
+}
+
+/* 废弃房间 */
+.dungeon-room-abandoned {
+    position: relative;
+}
+
+.dungeon-room-abandoned::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-image: url('../images/floor_wood_planks.png');
+    background-repeat: repeat;
+    background-size: 64px 64px;
+    opacity: 0.75;
+    z-index: 0;
+    pointer-events: none;
+}
+
+.dungeon-room-abandoned::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-image: url('../images/floor_overlay_moss.png');
+    background-repeat: repeat;
+    background-size: 128px 128px;
+    opacity: 0.5;
+    z-index: 1;
+    pointer-events: none;
+    mix-blend-mode: multiply;
+}
+
+/* 洞穴 */
+.dungeon-room-cave {
+    position: relative;
+}
+
+.dungeon-room-cave::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-image: url('../images/floor_dirt_cave.png');
+    background-repeat: repeat;
+    background-size: 64px 64px;
+    opacity: 0.7;
+    z-index: 0;
+    pointer-events: none;
+}
+
+.dungeon-room-cave::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-image: url('../images/floor_overlay_water.png');
+    background-repeat: repeat;
+    background-size: 128px 128px;
+    opacity: 0.4;
+    z-index: 1;
+    pointer-events: none;
+    mix-blend-mode: overlay;
+    animation: water-shimmer 4s ease-in-out infinite;
+}
+
+/* 战斗区域 */
+.dungeon-room-combat {
+    position: relative;
+}
+
+.dungeon-room-combat::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-image: url('../images/floor_stone_basic.png');
+    background-repeat: repeat;
+    background-size: 64px 64px;
+    opacity: 0.8;
+    z-index: 0;
+    pointer-events: none;
+}
+
+.dungeon-room-combat::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-image: url('../images/floor_overlay_blood.png');
+    background-repeat: repeat;
+    background-size: 128px 128px;
+    opacity: 0.6;
+    z-index: 1;
+    pointer-events: none;
+    mix-blend-mode: darken;
+}
+
+/* 地图网格容器的地板效果 */
+.map-grid-with-floor {
+    position: relative;
+}
+
+/* 可调整的地板瓦片大小 */
+.floor-tile-small {
+    background-size: 32px 32px !important;
+}
+
+.floor-tile-medium {
+    background-size: 64px 64px !important;
+}
+
+.floor-tile-large {
+    background-size: 96px 96px !important;
+}
+
+.floor-tile-xlarge {
+    background-size: 128px 128px !important;
+}
+
+/* 响应式调整 */
+@media (max-width: 768px) {
+    .floor-layer,
+    .floor-overlay {
+        background-size: 48px 48px;
+    }
+    
+    .dungeon-room-normal::before,
+    .dungeon-room-magic::before,
+    .dungeon-room-abandoned::before,
+    .dungeon-room-cave::before,
+    .dungeon-room-combat::before {
+        background-size: 48px 48px;
+    }
+    
+    .dungeon-room-normal::after,
+    .dungeon-room-magic::after,
+    .dungeon-room-abandoned::after,
+    .dungeon-room-cave::after,
+    .dungeon-room-combat::after {
+        background-size: 96px 96px;
+    }
+}
+
+@media (max-width: 480px) {
+    .floor-layer,
+    .floor-overlay {
+        background-size: 32px 32px;
+    }
+    
+    .dungeon-room-normal::before,
+    .dungeon-room-magic::before,
+    .dungeon-room-abandoned::before,
+    .dungeon-room-cave::before,
+    .dungeon-room-combat::before {
+        background-size: 32px 32px;
+    }
+    
+    .dungeon-room-normal::after,
+    .dungeon-room-magic::after,
+    .dungeon-room-abandoned::after,
+    .dungeon-room-cave::after,
+    .dungeon-room-combat::after {
+        background-size: 64px 64px;
+    }
+}
+

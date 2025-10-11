@@ -129,12 +129,22 @@ class PromptManager:
 请返回JSON格式：
 {{
     "name": "地图名称（中文，体现主题和任务特色）",
-    "description": "地图描述（详细描述环境、氛围和可能的挑战）"
+    "description": "地图描述（详细描述环境、氛围和可能的挑战）",
+    "floor_theme": "地板主题类型（必须从以下选项中选择一个）"
 }}
+
+**地板主题选项说明**：
+- "normal": 普通地牢（石质地板+裂纹效果）- 适合常规地牢、走廊、普通房间
+- "magic": 魔法房间（大理石+魔法符文）- 适合魔法区域、神殿、法师塔、魔法阵
+- "abandoned": 废弃房间（木质地板+苔藓）- 适合废弃建筑、老旧房间、被遗忘的区域
+- "cave": 洞穴（泥土地面+水渍）- 适合天然洞穴、地下通道、潮湿区域
+- "combat": 战斗区域（石质地板+血迹）- 适合竞技场、战场、屠宰场、血腥场景
+
+**重要**：请根据地图的主题、任务内容和环境氛围，选择最合适的地板主题。
             """.strip(),
             required_params=["width", "height", "depth", "theme"],
             optional_params={"quest_info": ""},
-            description="生成地图基本信息（名称和描述）"
+            description="生成地图基本信息（名称、描述和地板主题）"
         )
         self.register_template(map_info_template)
         
@@ -275,13 +285,17 @@ class PromptManager:
 上下文信息：{context}
 
 请返回JSON格式的怪物数据，包含：
-- name: 怪物名称（中文）
-- description: 怪物描述
-- creature_type: 生物类型
+- name: 怪物名称（**必须是中文**，不要使用英文或拼音）
+- description: 怪物描述（中文）
+- creature_type: 生物类型（中文）
 - stats: 属性数据（hp, attack, defense等）
-- abilities: 特殊能力列表
+- abilities: 特殊能力列表（中文描述）
 
-确保怪物适合玩家等级和指定难度。
+**重要要求**：
+1. 怪物名称必须是纯中文，例如："暗影狼"、"骷髅战士"、"火焰元素"
+2. 不要使用英文名称或拼音
+3. 确保怪物适合玩家等级和指定难度
+4. 所有描述性文本都应该使用中文
             """.strip(),
             required_params=["player_level", "difficulty"],
             optional_params={"context": ""},

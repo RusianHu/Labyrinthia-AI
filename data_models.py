@@ -295,6 +295,7 @@ class GameMap:
     width: int = 20
     height: int = 20
     depth: int = 1  # 地下层数
+    floor_theme: str = "normal"  # 地板主题: normal, magic, abandoned, cave, combat
     tiles: Dict[tuple, MapTile] = field(default_factory=dict)
     
     def get_tile(self, x: int, y: int) -> Optional[MapTile]:
@@ -315,6 +316,7 @@ class GameMap:
             "width": self.width,
             "height": self.height,
             "depth": self.depth,
+            "floor_theme": self.floor_theme,
             "tiles": {f"{k[0]},{k[1]}": v.to_dict() for k, v in self.tiles.items()}
         }
 

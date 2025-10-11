@@ -138,7 +138,7 @@ class ContentGenerator:
         请根据任务信息和楼层定位调整地图的名称和描述，使其与任务背景和当前进度相符。
         """
 
-        # 使用PromptManager生成地图名称和描述
+        # 使用PromptManager生成地图名称、描述和地板主题
         try:
             map_prompt = prompt_manager.format_prompt(
                 "map_info_generation",
@@ -153,10 +153,19 @@ class ContentGenerator:
             if map_info:
                 game_map.name = map_info.get("name", f"地下城第{depth}层")
                 game_map.description = map_info.get("description", "一个神秘的地下城层")
+                # 获取地板主题，验证是否为有效值
+                floor_theme = map_info.get("floor_theme", "normal")
+                valid_themes = ["normal", "magic", "abandoned", "cave", "combat"]
+                if floor_theme in valid_themes:
+                    game_map.floor_theme = floor_theme
+                else:
+                    logger.warning(f"Invalid floor_theme '{floor_theme}', using 'normal'")
+                    game_map.floor_theme = "normal"
         except Exception as e:
             logger.error(f"Failed to generate map info: {e}")
             game_map.name = f"地下城第{depth}层"
             game_map.description = "一个神秘的地下城层"
+            game_map.floor_theme = "normal"
         
         # 生成基础地图结构
         await self._generate_map_layout(game_map, quest_context)
@@ -1152,8 +1161,8 @@ class ContentGenerator:
         for i in range(monster_count):
             cr = base_cr + random.uniform(-0.5, 0.5)
             cr = max(0.25, cr)
-            
-            context = f"为等级{player_level}的玩家生成挑战等级{cr:.1f}的怪物，遭遇难度：{encounter_difficulty}"
+
+            context = f"为等级{player_level}的玩家生成挑战等级{cr:.1f}的怪物，遭遇难度：{encounter_difficulty}。怪物名称必须是中文。"
             tasks.append(llm_service.generate_monster(cr, context))
         
         # 等待所有怪物生成完成

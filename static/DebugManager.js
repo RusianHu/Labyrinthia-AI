@@ -555,6 +555,32 @@ const DebugMethods = {
         }
     },
 
+    debugKillPlayer() {
+        if (!this.gameId || !this.gameState) {
+            this.addMessage('❌ 请先开始游戏');
+            return;
+        }
+
+        console.log('[debugKillPlayer] 触发玩家死亡测试 - 设置HP为0');
+
+        // 设置玩家HP为0（使用stats对象）
+        if (this.gameState.player.stats) {
+            this.gameState.player.stats.hp = 0;
+        } else {
+            // 兼容旧版本数据结构
+            this.gameState.player.hp = 0;
+        }
+
+        // 更新UI显示HP变化
+        this.updateUI();
+
+        // 添加提示消息
+        this.addMessage('💀 玩家HP已设置为0');
+        this.addMessage('⚠️ 请进行任何操作（如移动、攻击）来触发死亡检查');
+
+        console.log('[debugKillPlayer] HP已设置为0，等待游戏逻辑检查触发GameOver');
+    },
+
     debugShowFullGameState() {
         if (!this.gameState) {
             this.addMessage('❌ 请先开始游戏');

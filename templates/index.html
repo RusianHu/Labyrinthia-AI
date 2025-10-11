@@ -11,6 +11,8 @@
     
     <!-- 样式表 -->
     <link rel="stylesheet" href="/static/style.css?v=6">
+    <link rel="stylesheet" href="/static/css/dungeon_border.css">
+    <link rel="stylesheet" href="/static/css/floor_layers.css">
 </head>
 <body>
     <!-- 头部 -->
@@ -97,8 +99,25 @@
                 </div>
 
                 <!-- 地图容器 -->
-                <div id="map-container" class="map-container">
-                    <div id="map-grid" class="map-grid"></div>
+                <div id="map-container" class="map-container dungeon-box-style dungeon-shadow-effect">
+                    <!-- 四角装饰 -->
+                    <div class="dungeon-corner top-left"></div>
+                    <div class="dungeon-corner top-right"></div>
+                    <div class="dungeon-corner bottom-left"></div>
+                    <div class="dungeon-corner bottom-right"></div>
+
+                    <!-- 水平边框 -->
+                    <div class="dungeon-border-horizontal top"></div>
+                    <div class="dungeon-border-horizontal bottom"></div>
+
+                    <!-- 垂直边框 -->
+                    <div class="dungeon-border-vertical left"></div>
+                    <div class="dungeon-border-vertical right"></div>
+
+                    <!-- 地图内容 -->
+                    <div class="dungeon-content">
+                        <div id="map-grid" class="map-grid"></div>
+                    </div>
                 </div>
 
                 <!-- 消息日志 -->
@@ -364,6 +383,9 @@
                     <button class="debug-btn" onclick="game.debugRestorePlayerStatus()" title="将玩家的HP、MP等状态恢复到满值">
                         <i class="material-icons">healing</i>恢复玩家状态
                     </button>
+                    <button class="debug-btn" onclick="game.debugKillPlayer()" title="将玩家HP设置为0，触发游戏结束机制" style="background: linear-gradient(135deg, #dc2626 0%, #991b1b 100%);">
+                        <i class="material-icons">dangerous</i>立即死亡（测试GameOver）
+                    </button>
                     <button class="debug-btn" onclick="game.debugShowFullGameState()" title="在调试界面显示完整的游戏状态JSON数据">
                         <i class="material-icons">info</i>查看完整游戏状态
                     </button>
@@ -395,7 +417,7 @@
 
     <!-- 脚本 - 按依赖顺序加载模块化的JavaScript文件 -->
     <!-- 1. 本地游戏引擎 - 必须在核心游戏类之前加载 -->
-    <script src="/static/LocalGameEngine.js?v=5"></script>
+    <script src="/static/LocalGameEngine.js?v=6"></script>
 
     <!-- 2. 核心游戏类 -->
     <script src="/static/GameCore.js?v=6"></script>
@@ -404,18 +426,20 @@
     <script src="/static/CharacterSprites.js?v=4"></script>
 
     <!-- 4. 功能扩展模块 - 按依赖关系顺序加载 -->
-    <script src="/static/DebugManager.js?v=6"></script>
+    <script src="/static/DebugManager.js?v=8"></script>
     <script src="/static/OverlayManager.js?v=4"></script>
     <script src="/static/EffectsManager.js?v=4"></script>
-    <script src="/static/UIManager.js?v=10"></script>
+    <script src="/static/UIManager.js?v=11"></script>
     <script src="/static/MapInteraction.js?v=4"></script>
     <script src="/static/MapZoomManager.js?v=7"></script>
     <script src="/static/GameActions.js?v=5"></script>
     <script src="/static/SaveManager.js?v=5"></script>
     <script src="/static/SaveImportExport.js?v=4"></script>
     <script src="/static/EventHandler.js?v=4"></script>
-    <script src="/static/EventChoiceManager.js?v=5"></script>
+    <script src="/static/EventChoiceManager.js?v=6"></script>
     <script src="/static/DirectionButtonManager.js?v=1"></script>
+    <script src="/static/js/dungeon_border.js"></script>
+    <script src="/static/js/floor_layers.js"></script></script>
 
     <!-- 3. 游戏初始化 - 最后加载 -->
     <script>

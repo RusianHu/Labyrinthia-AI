@@ -491,6 +491,19 @@ class LocalGameEngine {
         // 显示移动消息
         this.addMessage(`移动到 (${newPos.x}, ${newPos.y})`, 'action');
 
+        // 检查玩家是否已经死亡（例如通过调试功能设置HP为0）
+        if (gameState.player.stats.hp <= 0) {
+            this.addMessage('你已经死亡！游戏结束！', 'error');
+            gameState.is_game_over = true;
+            gameState.game_over_reason = '生命值耗尽';
+
+            // 触发游戏结束处理
+            if (this.game.handleGameOver) {
+                this.game.handleGameOver(gameState.game_over_reason);
+            }
+            return;
+        }
+
         // 检查特殊地形（前端本地处理）
         if (targetTile.terrain === 'trap') {
             // 陷阱由前端本地处理

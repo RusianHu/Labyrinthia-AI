@@ -392,6 +392,13 @@ class EventChoiceManager {
         }
     }
 
+    // 停止轮询（兼容性方法，已移除轮询机制）
+    stopChoicePolling() {
+        // 事件驱动模式下不需要停止轮询
+        // 保留此方法以保持向后兼容性
+        console.log('[EventChoiceManager] stopChoicePolling called (no-op in event-driven mode)');
+    }
+
     destroy() {
         this.stopChoicePolling();
         this.hideDialog();

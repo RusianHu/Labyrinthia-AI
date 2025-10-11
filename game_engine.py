@@ -1399,14 +1399,17 @@ class GameEngine:
                 # 使用LLM生成具体的怪物实例
                 context = f"""
                 根据任务专属怪物模板生成具体怪物：
-                - 名称：{monster_data.name}
+                - 名称：{monster_data.name}（必须保持中文名称）
                 - 描述：{monster_data.description}
                 - 挑战等级：{monster_data.challenge_rating}
                 - 是否为Boss：{monster_data.is_boss}
                 - 生成条件：{monster_data.spawn_condition}
                 - 位置提示：{monster_data.location_hint}
 
-                请生成一个符合这些要求的怪物，确保其能力与挑战等级相符。
+                **重要**：请生成一个符合这些要求的怪物，确保：
+                1. 怪物名称必须是纯中文（如模板中指定的名称）
+                2. 所有描述性文本都使用中文
+                3. 能力与挑战等级相符
                 """
 
                 monster = await llm_service.generate_monster(

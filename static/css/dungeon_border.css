@@ -1,0 +1,250 @@
+/* 地牢盒子风格边框样式 */
+
+/* 地图容器边框效果 */
+.dungeon-map-container {
+    position: relative;
+    padding: 40px;
+    background: linear-gradient(135deg, #1a1a1a 0%, #2d2d2d 100%);
+    border-radius: 8px;
+    box-shadow: 
+        0 0 30px rgba(0, 0, 0, 0.8),
+        inset 0 0 20px rgba(0, 0, 0, 0.5);
+}
+
+/* 完整边框样式 */
+.dungeon-border-frame {
+    position: relative;
+    border: 20px solid transparent;
+    border-image: url('../images/dungeon_border_frame.png') 100 round;
+    box-shadow: 
+        0 0 40px rgba(139, 69, 19, 0.3),
+        inset 0 0 30px rgba(0, 0, 0, 0.6);
+}
+
+/* 四角装饰 */
+.dungeon-corner {
+    position: absolute;
+    width: 80px;
+    height: 80px;
+    background-image: url('../images/dungeon_corner_ornament.png');
+    background-size: contain;
+    background-repeat: no-repeat;
+    z-index: 10;
+    pointer-events: none;
+}
+
+.dungeon-corner.top-left {
+    top: -10px;
+    left: -10px;
+    transform: rotate(0deg);
+}
+
+.dungeon-corner.top-right {
+    top: -10px;
+    right: -10px;
+    transform: rotate(90deg);
+}
+
+.dungeon-corner.bottom-left {
+    bottom: -10px;
+    left: -10px;
+    transform: rotate(-90deg);
+}
+
+.dungeon-corner.bottom-right {
+    bottom: -10px;
+    right: -10px;
+    transform: rotate(180deg);
+}
+
+/* 水平边框 */
+.dungeon-border-horizontal {
+    position: absolute;
+    left: 80px;
+    right: 80px;
+    height: 40px;
+    background-image: url('../images/dungeon_border_horizontal.png');
+    background-size: auto 100%;
+    background-repeat: repeat-x;
+    z-index: 9;
+    pointer-events: none;
+}
+
+.dungeon-border-horizontal.top {
+    top: -20px;
+}
+
+.dungeon-border-horizontal.bottom {
+    bottom: -20px;
+    transform: rotate(180deg);
+}
+
+/* 垂直边框 */
+.dungeon-border-vertical {
+    position: absolute;
+    top: 80px;
+    bottom: 80px;
+    width: 40px;
+    background-image: url('../images/dungeon_border_vertical.png');
+    background-size: 100% auto;
+    background-repeat: repeat-y;
+    z-index: 9;
+    pointer-events: none;
+}
+
+.dungeon-border-vertical.left {
+    left: -20px;
+}
+
+.dungeon-border-vertical.right {
+    right: -20px;
+    transform: rotate(180deg);
+}
+
+/* 地图内容区域 */
+.dungeon-content {
+    position: relative;
+    background: radial-gradient(circle at center, #2a2a2a 0%, #1a1a1a 100%);
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+/* 增强的阴影效果 */
+.dungeon-shadow-effect {
+    box-shadow: 
+        /* 外部阴影 */
+        0 10px 40px rgba(0, 0, 0, 0.9),
+        0 5px 20px rgba(139, 69, 19, 0.3),
+        /* 内部阴影 */
+        inset 0 0 40px rgba(0, 0, 0, 0.7),
+        inset 0 2px 10px rgba(255, 255, 255, 0.05);
+}
+
+/* 石质纹理叠加 */
+.dungeon-texture-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-image: 
+        repeating-linear-gradient(
+            90deg,
+            transparent,
+            transparent 2px,
+            rgba(0, 0, 0, 0.1) 2px,
+            rgba(0, 0, 0, 0.1) 4px
+        ),
+        repeating-linear-gradient(
+            0deg,
+            transparent,
+            transparent 2px,
+            rgba(0, 0, 0, 0.1) 2px,
+            rgba(0, 0, 0, 0.1) 4px
+        );
+    pointer-events: none;
+    opacity: 0.3;
+}
+
+/* 发光边缘效果 */
+.dungeon-glow-edge {
+    position: relative;
+}
+
+.dungeon-glow-edge::before {
+    content: '';
+    position: absolute;
+    top: -2px;
+    left: -2px;
+    right: -2px;
+    bottom: -2px;
+    background: linear-gradient(
+        45deg,
+        rgba(139, 69, 19, 0.3),
+        rgba(205, 133, 63, 0.2),
+        rgba(139, 69, 19, 0.3)
+    );
+    border-radius: inherit;
+    z-index: -1;
+    animation: glow-pulse 3s ease-in-out infinite;
+}
+
+@keyframes glow-pulse {
+    0%, 100% {
+        opacity: 0.5;
+    }
+    50% {
+        opacity: 0.8;
+    }
+}
+
+/* 组合样式类 - 完整的地牢边框效果 */
+.dungeon-box-style {
+    position: relative;
+    padding: 60px;
+    background: linear-gradient(135deg, #1a1a1a 0%, #2d2d2d 100%);
+    border-radius: 8px;
+}
+
+.dungeon-box-style::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    border: 3px solid rgba(139, 69, 19, 0.5);
+    border-radius: inherit;
+    box-shadow: 
+        0 0 20px rgba(139, 69, 19, 0.3),
+        inset 0 0 30px rgba(0, 0, 0, 0.6);
+    pointer-events: none;
+}
+
+/* 响应式调整 */
+@media (max-width: 768px) {
+    .dungeon-corner {
+        width: 50px;
+        height: 50px;
+    }
+    
+    .dungeon-border-horizontal {
+        left: 50px;
+        right: 50px;
+        height: 30px;
+    }
+    
+    .dungeon-border-vertical {
+        top: 50px;
+        bottom: 50px;
+        width: 30px;
+    }
+    
+    .dungeon-box-style {
+        padding: 40px;
+    }
+}
+
+@media (max-width: 480px) {
+    .dungeon-corner {
+        width: 30px;
+        height: 30px;
+    }
+    
+    .dungeon-border-horizontal {
+        left: 30px;
+        right: 30px;
+        height: 20px;
+    }
+    
+    .dungeon-border-vertical {
+        top: 30px;
+        bottom: 30px;
+        width: 20px;
+    }
+    
+    .dungeon-box-style {
+        padding: 30px;
+    }
+}
+
