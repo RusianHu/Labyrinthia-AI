@@ -2786,7 +2786,7 @@ if config.game.debug_mode:
 
     @app.post("/api/game/{game_id}/debug/spawn-enemy")
     async def debug_spawn_enemy_nearby(game_id: str, request: Request, response: Response):
-        """调试：在附近生成敌人"""
+        """调试：在附近生成随机敌人（使用MonsterSpawnManager）"""
         try:
             # 获取用户ID
             user_id = user_session_manager.get_or_create_user_id(request, response)
@@ -2799,35 +2799,18 @@ if config.game.debug_mode:
             request_data = await request.json()
 
             player_pos = request_data.get("player_position", game_state.player.position)
-            player_level = request_data.get("player_level", game_state.player.stats.level)
+            difficulty = request_data.get("difficulty", None)  # 可选难度参数
 
-            # 生成一个测试敌人
-            from content_generator import content_generator
-            monsters = await content_generator.generate_encounter_monsters(player_level, "normal")
+            # 使用MonsterSpawnManager生成怪物
+            from monster_spawn_manager import monster_spawn_manager
+            result = await monster_spawn_manager.generate_random_monster_nearby(
+                game_state, player_pos, difficulty
+            )
 
-            if not monsters:
-                return {"success": False, "message": "无法生成敌人"}
+            if not result:
+                return {"success": False, "message": "无法生成敌人或找不到可用位置"}
 
-            monster = monsters[0]
-
-            # 在玩家附近找一个空位置
-            nearby_positions = []
-            px, py = player_pos
-            for dx in range(-2, 3):
-                for dy in range(-2, 3):
-                    if dx == 0 and dy == 0:  # 跳过玩家位置
-                        continue
-                    new_x, new_y = px + dx, py + dy
-                    tile = game_state.current_map.get_tile(new_x, new_y)
-                    if tile and tile.terrain.value != "wall" and not tile.character_id:
-                        nearby_positions.append((new_x, new_y))
-
-            if not nearby_positions:
-                return {"success": False, "message": "附近没有可用位置"}
-
-            # 随机选择一个位置
-            spawn_pos = random.choice(nearby_positions)
-            monster.position = spawn_pos
+            monster, spawn_pos = result
 
             # 在地图上标记敌人位置
             tile = game_state.current_map.get_tile(*spawn_pos)
@@ -2837,11 +2820,23 @@ if config.game.debug_mode:
             # 添加到游戏状态
             game_state.monsters.append(monster)
 
+            # 获取当前任务信息（用于返回）
+            active_quest = next((q for q in game_state.quests if q.is_active), None)
+            quest_info = None
+            if active_quest:
+                quest_info = {
+                    "name": active_quest.title,
+                    "progress": f"{active_quest.progress_percentage:.1f}%"
+                }
+
             return {
                 "success": True,
                 "message": f"已生成敌人: {monster.name}",
                 "enemy_name": monster.name,
-                "position": spawn_pos
+                "enemy_cr": monster.challenge_rating,
+                "position": spawn_pos,
+                "difficulty": difficulty or "auto",
+                "quest_context": quest_info
             }
 
         except Exception as e:
@@ -2976,6 +2971,24 @@ if config.game.debug_mode:
         except Exception as e:
             logger.error(f"Debug restore player error: {e}")
             return {"success": False, "message": f"恢复状态失败: {str(e)}"}
+
+    @app.get("/api/debug/monster-spawn-stats")
+    async def debug_get_monster_spawn_stats():
+        """调试：获取怪物生成统计信息"""
+        try:
+            from monster_spawn_manager import monster_spawn_manager
+
+            stats = monster_spawn_manager.get_spawn_statistics()
+
+            return {
+                "success": True,
+                "timestamp": datetime.now().isoformat(),
+                "statistics": stats
+            }
+
+        except Exception as e:
+            logger.error(f"Debug get monster spawn stats error: {e}")
+            return {"success": False, "message": f"获取统计信息失败: {str(e)}"}
 
     @app.post("/api/debug/trigger-event-choice/{game_id}")
     async def debug_trigger_event_choice(game_id: str, request: Request, response: Response):

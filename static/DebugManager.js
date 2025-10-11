@@ -435,19 +435,40 @@ const DebugMethods = {
         try {
             this.showLLMOverlay('interact');
 
+            // 获取用户选择的难度
+            const difficultySelect = document.getElementById('debug-enemy-difficulty');
+            let difficulty = difficultySelect ? difficultySelect.value : 'auto';
+
+            // 如果选择了"自动难度"，传递null让服务器自动判断
+            if (difficulty === 'auto') {
+                difficulty = null;
+            }
+
             const response = await fetch(`/api/game/${this.gameId}/debug/spawn-enemy`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     player_position: this.gameState.player.position,
-                    player_level: this.gameState.player.stats.level
+                    difficulty: difficulty
                 })
             });
 
             const result = await response.json();
 
             if (result.success) {
-                this.addMessage(`👹 已在附近生成敌人: ${result.enemy_name}`);
+                // 显示详细的生成信息
+                this.addMessage(`👹 已在附近生成敌人: ${result.enemy_name}`, 'success');
+                this.addMessage(`  📍 位置: (${result.position[0]}, ${result.position[1]})`);
+                this.addMessage(`  ⚔️ 挑战等级: ${result.enemy_cr.toFixed(2)}`);
+                this.addMessage(`  🎯 难度: ${result.difficulty}`);
+
+                // 如果有任务上下文，显示任务信息
+                if (result.quest_context) {
+                    this.addMessage(`  📜 当前任务: ${result.quest_context.name} (${result.quest_context.progress})`);
+                } else {
+                    this.addMessage(`  📜 当前无活跃任务`);
+                }
+
                 await this.refreshGameState();
             } else {
                 this.addMessage(`❌ 生成敌人失败: ${result.message}`);

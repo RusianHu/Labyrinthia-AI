@@ -1140,41 +1140,23 @@ class ContentGenerator:
 
     @async_performance_monitor
     async def generate_encounter_monsters(self, player_level: int,
-                                        encounter_difficulty: str = "medium") -> List[Monster]:
-        """生成遭遇怪物"""
-        # 根据难度确定怪物数量和挑战等级
-        difficulty_config = {
-            "easy": {"count": (1, 2), "cr_modifier": 0.5},
-            "medium": {"count": (1, 3), "cr_modifier": 1.0},
-            "hard": {"count": (2, 4), "cr_modifier": 1.5},
-            "deadly": {"count": (3, 6), "cr_modifier": 2.0}
-        }
-        
-        config_data = difficulty_config.get(encounter_difficulty, difficulty_config["medium"])
-        monster_count = random.randint(*config_data["count"])
-        base_cr = max(0.25, player_level * config_data["cr_modifier"])
-        
-        monsters = []
-        
-        # 批量生成怪物
-        tasks = []
-        for i in range(monster_count):
-            cr = base_cr + random.uniform(-0.5, 0.5)
-            cr = max(0.25, cr)
+                                        encounter_difficulty: str = "medium",
+                                        quest_context: Optional[Dict[str, Any]] = None) -> List[Monster]:
+        """
+        生成遭遇怪物（已重构为使用MonsterSpawnManager）
 
-            context = f"为等级{player_level}的玩家生成挑战等级{cr:.1f}的怪物，遭遇难度：{encounter_difficulty}。怪物名称必须是中文。"
-            tasks.append(llm_service.generate_monster(cr, context))
-        
-        # 等待所有怪物生成完成
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-        
-        for result in results:
-            if isinstance(result, Monster):
-                monsters.append(result)
-            elif isinstance(result, Exception):
-                logger.error(f"Failed to generate monster: {result}")
-        
-        return monsters
+        Args:
+            player_level: 玩家等级
+            encounter_difficulty: 遭遇难度
+            quest_context: 任务上下文（可选）
+
+        Returns:
+            生成的怪物列表
+        """
+        from monster_spawn_manager import monster_spawn_manager
+        return await monster_spawn_manager.generate_encounter_monsters(
+            player_level, encounter_difficulty, quest_context
+        )
     
     @async_performance_monitor
     async def generate_random_items(self, count: int = 1,

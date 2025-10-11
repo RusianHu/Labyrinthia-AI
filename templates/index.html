@@ -366,9 +366,18 @@
                 <!-- 地图与战斗调试 -->
                 <div class="debug-button-group">
                     <h5>地图与战斗</h5>
-                    <button class="debug-btn" onclick="game.debugSpawnEnemyNearby()" title="在玩家当前位置附近生成一个测试敌人">
-                        <i class="material-icons">dangerous</i>生成附近敌人
-                    </button>
+                    <div style="display: flex; gap: 5px; align-items: center; margin-bottom: 8px;">
+                        <select id="debug-enemy-difficulty" style="flex: 1; padding: 6px; border-radius: 4px; border: 1px solid #ddd;">
+                            <option value="auto">自动难度</option>
+                            <option value="easy">简单</option>
+                            <option value="medium">中等</option>
+                            <option value="hard">困难</option>
+                            <option value="deadly">致命</option>
+                        </select>
+                        <button class="debug-btn" onclick="game.debugSpawnEnemyNearby()" title="在玩家当前位置附近生成一个测试敌人，难度根据当前任务和地图状态自动判断" style="flex: 2;">
+                            <i class="material-icons">dangerous</i>生成附近敌人
+                        </button>
+                    </div>
                     <button class="debug-btn" onclick="game.debugClearAllEnemies()" title="移除当前地图上的所有敌人">
                         <i class="material-icons">clear_all</i>清空当前地图敌人
                     </button>

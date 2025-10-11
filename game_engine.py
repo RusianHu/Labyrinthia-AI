@@ -1429,55 +1429,18 @@ class GameEngine:
         return f"返回到了{new_map.name}"
 
     async def _generate_quest_monsters(self, game_state: GameState, game_map: GameMap) -> List[Monster]:
-        """生成任务专属怪物"""
-        quest_monsters = []
+        """
+        生成任务专属怪物（已重构为使用MonsterSpawnManager）
 
-        # 获取当前活跃任务
-        active_quest = next((q for q in game_state.quests if q.is_active), None)
-        if not active_quest or not active_quest.special_monsters:
-            return quest_monsters
+        Args:
+            game_state: 游戏状态
+            game_map: 当前地图
 
-        current_depth = game_map.depth
-
-        # 筛选适合当前楼层的专属怪物
-        suitable_monsters = [
-            monster_data for monster_data in active_quest.special_monsters
-            if not monster_data.location_hint or str(current_depth) in monster_data.location_hint
-        ]
-
-        for monster_data in suitable_monsters:
-            try:
-                # 使用LLM生成具体的怪物实例
-                context = f"""
-                根据任务专属怪物模板生成具体怪物：
-                - 名称：{monster_data.name}（必须保持中文名称）
-                - 描述：{monster_data.description}
-                - 挑战等级：{monster_data.challenge_rating}
-                - 是否为Boss：{monster_data.is_boss}
-                - 生成条件：{monster_data.spawn_condition}
-                - 位置提示：{monster_data.location_hint}
-
-                **重要**：请生成一个符合这些要求的怪物，确保：
-                1. 怪物名称必须是纯中文（如模板中指定的名称）
-                2. 所有描述性文本都使用中文
-                3. 能力与挑战等级相符
-                """
-
-                monster = await llm_service.generate_monster(
-                    monster_data.challenge_rating, context
-                )
-
-                if monster:
-                    # 设置任务相关属性
-                    monster.name = monster_data.name  # 确保名称匹配
-                    monster.is_boss = monster_data.is_boss
-                    monster.quest_monster_id = monster_data.id if hasattr(monster_data, 'id') else None
-                    quest_monsters.append(monster)
-
-                    logger.info(f"Generated quest monster: {monster.name} (CR: {monster_data.challenge_rating})")
-
-            except Exception as e:
-                logger.error(f"Failed to generate quest monster {monster_data.name}: {e}")
+        Returns:
+            生成的任务专属怪物列表
+        """
+        from monster_spawn_manager import monster_spawn_manager
+        return await monster_spawn_manager.generate_quest_monsters(game_state, game_map)
 
         return quest_monsters
 
