@@ -25,6 +25,7 @@ from llm_interaction_manager import (
 from prompt_manager import prompt_manager
 from event_choice_system import event_choice_system, ChoiceEventType
 from async_task_manager import async_task_manager, TaskType, async_performance_monitor
+from game_state_lock_manager import game_state_lock_manager
 
 
 logger = logging.getLogger(__name__)
@@ -1274,6 +1275,17 @@ class GameEngine:
         if new_depth > max_floors:
             return f"你已经到达了地下城的最深处（第{max_floors}层）！"
 
+        # 清除旧地图上的角色标记（在生成新地图前）
+        old_tile = game_state.current_map.get_tile(*game_state.player.position)
+        if old_tile:
+            old_tile.character_id = None
+
+        for monster in game_state.monsters:
+            if monster.position:
+                monster_tile = game_state.current_map.get_tile(*monster.position)
+                if monster_tile:
+                    monster_tile.character_id = None
+
         # 获取当前活跃任务的上下文
         quest_context = None
         active_quest = next((q for q in game_state.quests if q.is_active), None)
@@ -1288,8 +1300,9 @@ class GameEngine:
             quest_context=quest_context
         )
 
-        # 更新游戏状态
+        # 更新游戏状态 - 确保正确更新
         game_state.current_map = new_map
+        logger.info(f"Map updated: {new_map.name} (depth: {new_map.depth})")
 
         # 设置玩家位置到新地图的上楼梯附近
         # 下楼时，玩家应该出现在新地图的上楼梯附近
@@ -1305,6 +1318,9 @@ class GameEngine:
             tile.character_id = game_state.player.id
             tile.is_explored = True
             tile.is_visible = True
+
+        # 清空旧怪物列表（重要！）
+        game_state.monsters.clear()
 
         # 生成新的怪物
         monsters = await content_generator.generate_encounter_monsters(
@@ -1328,6 +1344,7 @@ class GameEngine:
             game_state, ProgressEventType.MAP_TRANSITION, new_depth
         )
 
+        logger.info(f"Descended to floor {new_depth}: {new_map.name}")
         return f"进入了{new_map.name}"
 
     async def _ascend_stairs(self, game_state: GameState) -> str:
@@ -1336,6 +1353,17 @@ class GameEngine:
 
         if new_depth < 1:
             return "你已经回到了地面！"
+
+        # 清除旧地图上的角色标记（在生成新地图前）
+        old_tile = game_state.current_map.get_tile(*game_state.player.position)
+        if old_tile:
+            old_tile.character_id = None
+
+        for monster in game_state.monsters:
+            if monster.position:
+                monster_tile = game_state.current_map.get_tile(*monster.position)
+                if monster_tile:
+                    monster_tile.character_id = None
 
         # 获取当前活跃任务的上下文
         quest_context = None
@@ -1353,7 +1381,9 @@ class GameEngine:
             quest_context=quest_context
         )
 
+        # 更新游戏状态 - 确保正确更新
         game_state.current_map = new_map
+        logger.info(f"Map updated: {new_map.name} (depth: {new_map.depth})")
 
         # 设置玩家位置到新地图的下楼梯附近
         # 上楼时，玩家应该出现在新地图的下楼梯附近
@@ -1370,11 +1400,32 @@ class GameEngine:
             tile.is_explored = True
             tile.is_visible = True
 
+        # 清空旧怪物列表（重要！）
+        game_state.monsters.clear()
+
+        # 生成新的怪物（上楼时也应该有怪物）
+        monsters = await content_generator.generate_encounter_monsters(
+            game_state.player.stats.level, "medium"
+        )
+
+        # 生成任务专属怪物（如果有活跃任务）
+        quest_monsters = await self._generate_quest_monsters(game_state, new_map)
+        monsters.extend(quest_monsters)
+
+        monster_positions = content_generator.get_spawn_positions(new_map, len(monsters))
+        for monster, position in zip(monsters, monster_positions):
+            monster.position = position
+            tile = new_map.get_tile(*position)
+            if tile:
+                tile.character_id = monster.id
+            game_state.monsters.append(monster)
+
         # 使用新的进程管理器更新任务进度
         await self._trigger_progress_event(
             game_state, ProgressEventType.MAP_TRANSITION, new_depth
         )
 
+        logger.info(f"Ascended to floor {new_depth}: {new_map.name}")
         return f"返回到了{new_map.name}"
 
     async def _generate_quest_monsters(self, game_state: GameState, game_map: GameMap) -> List[Monster]:
@@ -1698,6 +1749,8 @@ class GameEngine:
         """
         异步保存游戏（带重试机制，保存到用户目录）
 
+        使用锁保护，防止保存时与其他操作冲突
+
         Args:
             game_state: 游戏状态
             user_id: 用户ID
@@ -1710,10 +1763,12 @@ class GameEngine:
                 # 导入 user_session_manager
                 from user_session_manager import user_session_manager
 
-                # 转换为字典格式
-                game_data = game_state.to_dict()
+                # 使用锁保护游戏状态的读取
+                async with game_state_lock_manager.lock_game_state(user_id, game_state.id, "auto_save"):
+                    # 转换为字典格式（在锁内进行，确保数据一致性）
+                    game_data = game_state.to_dict()
 
-                # 使用统一的IO线程池，保存到用户目录
+                # 使用统一的IO线程池，保存到用户目录（在锁外进行，避免阻塞）
                 await loop.run_in_executor(
                     async_task_manager.io_executor,
                     user_session_manager.save_game_for_user,
@@ -1805,6 +1860,9 @@ class GameEngine:
 
             del self.active_games[game_key]
             logger.info(f"Game {game_id} closed for user {user_id}")
+
+        # 清理游戏状态锁
+        await game_state_lock_manager.remove_lock(user_id, game_id)
 
     def update_access_time(self, user_id: str, game_id: str):
         """更新游戏的最后访问时间"""

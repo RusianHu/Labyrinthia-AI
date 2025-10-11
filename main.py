@@ -30,6 +30,7 @@ from data_models import GameState
 from user_session_manager import user_session_manager
 from async_task_manager import async_task_manager
 from input_validator import input_validator
+from game_state_lock_manager import game_state_lock_manager
 
 
 # 配置日志
@@ -553,36 +554,38 @@ async def process_combat_result(game_id: str, request: Request, response: Respon
 
         logger.info(f"Processing combat result for user {user_id}, game: {game_id}")
 
-        if game_key not in game_engine.active_games:
-            raise HTTPException(status_code=404, detail="游戏未找到")
-
-        game_state = game_engine.active_games[game_key]
         request_data = await request.json()
-
         monster_id = request_data.get("monster_id")
         damage_dealt = request_data.get("damage_dealt", 0)
 
         if not monster_id:
             raise HTTPException(status_code=400, detail="缺少怪物ID")
 
-        # 查找怪物
-        monster = None
-        for m in game_state.monsters:
-            if m.id == monster_id:
-                monster = m
-                break
+        # 使用锁保护战斗结算操作
+        async with game_state_lock_manager.lock_game_state(user_id, game_id, "combat_result"):
+            if game_key not in game_engine.active_games:
+                raise HTTPException(status_code=404, detail="游戏未找到")
 
-        if not monster:
-            raise HTTPException(status_code=404, detail="怪物未找到")
+            game_state = game_engine.active_games[game_key]
 
-        # 使用战斗结果管理器处理
-        from combat_result_manager import combat_result_manager
-        combat_result = await combat_result_manager.process_monster_defeat(
-            game_state, monster, damage_dealt
-        )
+            # 查找怪物
+            monster = None
+            for m in game_state.monsters:
+                if m.id == monster_id:
+                    monster = m
+                    break
 
-        # 返回战斗结果
-        return combat_result.to_dict()
+            if not monster:
+                raise HTTPException(status_code=404, detail="怪物未找到")
+
+            # 使用战斗结果管理器处理
+            from combat_result_manager import combat_result_manager
+            combat_result = await combat_result_manager.process_monster_defeat(
+                game_state, monster, damage_dealt
+            )
+
+            # 返回战斗结果
+            return combat_result.to_dict()
 
     except HTTPException:
         raise
@@ -622,36 +625,38 @@ async def process_event_choice(request: EventChoiceRequest, http_request: Reques
         user_id = user_session_manager.get_or_create_user_id(http_request, response)
         game_key = (user_id, request.game_id)
 
-        if game_key not in game_engine.active_games:
-            raise HTTPException(status_code=404, detail="游戏未找到")
+        # 使用锁保护事件选择处理
+        async with game_state_lock_manager.lock_game_state(user_id, request.game_id, "event_choice"):
+            if game_key not in game_engine.active_games:
+                raise HTTPException(status_code=404, detail="游戏未找到")
 
-        game_state = game_engine.active_games[game_key]
+            game_state = game_engine.active_games[game_key]
 
-        # 处理选择
-        result = await event_choice_system.process_choice(
-            game_state=game_state,
-            context_id=request.context_id,
-            choice_id=request.choice_id
-        )
+            # 处理选择
+            result = await event_choice_system.process_choice(
+                game_state=game_state,
+                context_id=request.context_id,
+                choice_id=request.choice_id
+            )
 
-        if result.success:
-            # 清理游戏状态中的待处理选择上下文
-            game_state.pending_choice_context = None
+            if result.success:
+                # 清理游戏状态中的待处理选择上下文
+                game_state.pending_choice_context = None
 
-            # 处理选择后的游戏状态更新（包括新任务生成）
-            await _process_post_choice_updates(game_state)
+                # 处理选择后的游戏状态更新（包括新任务生成）
+                await _process_post_choice_updates(game_state)
 
-            return {
-                "success": True,
-                "message": result.message,
-                "events": result.events,
-                "game_state": game_state.to_dict()
-            }
-        else:
-            return {
-                "success": False,
-                "message": result.message
-            }
+                return {
+                    "success": True,
+                    "message": result.message,
+                    "events": result.events,
+                    "game_state": game_state.to_dict()
+                }
+            else:
+                return {
+                    "success": False,
+                    "message": result.message
+                }
 
     except HTTPException:
         raise
@@ -797,13 +802,17 @@ async def save_game(game_id: str, request: Request, response: Response):
         user_id = user_session_manager.get_or_create_user_id(request, response)
         game_key = (user_id, game_id)
 
-        if game_key not in game_engine.active_games:
-            raise HTTPException(status_code=404, detail="游戏未找到")
+        # 使用锁保护手动保存操作
+        async with game_state_lock_manager.lock_game_state(user_id, game_id, "manual_save"):
+            if game_key not in game_engine.active_games:
+                raise HTTPException(status_code=404, detail="游戏未找到")
 
-        game_state = game_engine.active_games[game_key]
+            game_state = game_engine.active_games[game_key]
 
-        # 使用用户会话管理器保存游戏
-        game_data = game_state.to_dict()
+            # 使用用户会话管理器保存游戏
+            game_data = game_state.to_dict()
+
+        # 在锁外执行文件IO操作
         success = user_session_manager.save_game_for_user(user_id, game_data)
 
         if success:
@@ -1035,32 +1044,37 @@ async def transition_map(game_id: str, transition_data: Dict[str, Any], request:
         if not transition_type:
             raise HTTPException(status_code=400, detail="缺少切换类型")
 
-        result = await game_engine.transition_map(
-            game_engine.active_games[game_key],
-            transition_type
-        )
+        # 使用锁保护地图切换操作
+        async with game_state_lock_manager.lock_game_state(user_id, game_id, "map_transition"):
+            if game_key not in game_engine.active_games:
+                raise HTTPException(status_code=404, detail="游戏未找到")
 
-        if result["success"]:
-            # 返回更新后的游戏状态
-            game_state = game_engine.active_games[game_key]
-            response_data = {
-                "success": True,
-                "message": result["message"],
-                "events": result["events"],
-                "game_state": game_state.to_dict()
-            }
+            result = await game_engine.transition_map(
+                game_engine.active_games[game_key],
+                transition_type
+            )
 
-            # 【修复】检查是否有待处理的选择上下文，立即返回给前端
-            if hasattr(game_state, 'pending_choice_context') and game_state.pending_choice_context:
-                response_data["pending_choice_context"] = game_state.pending_choice_context.to_dict()
-                logger.info(f"Returning pending choice context in transition result: {game_state.pending_choice_context.title}")
+            if result["success"]:
+                # 返回更新后的游戏状态
+                game_state = game_engine.active_games[game_key]
+                response_data = {
+                    "success": True,
+                    "message": result["message"],
+                    "events": result["events"],
+                    "game_state": game_state.to_dict()
+                }
 
-            return response_data
-        else:
-            return result
+                # 【修复】检查是否有待处理的选择上下文，立即返回给前端
+                if hasattr(game_state, 'pending_choice_context') and game_state.pending_choice_context:
+                    response_data["pending_choice_context"] = game_state.pending_choice_context.to_dict()
+                    logger.info(f"Returning pending choice context in transition result: {game_state.pending_choice_context.title}")
 
-    except KeyError:
-        raise HTTPException(status_code=404, detail="游戏未找到")
+                return response_data
+            else:
+                return result
+
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Map transition failed: {e}")
         raise HTTPException(status_code=500, detail=f"地图切换失败: {str(e)}")
@@ -1434,6 +1448,11 @@ if config.game.debug_mode:
     async def debug_get_llm_statistics():
         """调试：获取LLM调用统计"""
         return debug_api.get_llm_statistics()
+
+    @app.get("/api/debug/locks")
+    async def debug_get_lock_stats():
+        """调试：获取游戏状态锁统计信息"""
+        return game_state_lock_manager.get_lock_stats()
 
     # ==================== 配置信息接口 ====================
 
@@ -2621,10 +2640,26 @@ if config.game.debug_mode:
 
             target_floor = request_data.get("target_floor", 1)
 
+            # 验证楼层数的合法性
             if target_floor < 1 or target_floor > config.game.max_quest_floors:
-                return {"success": False, "message": f"楼层数必须在1-{config.game.max_quest_floors}之间"}
+                return {
+                    "success": False,
+                    "message": f"楼层数必须在1-{config.game.max_quest_floors}之间"
+                }
 
-            # 直接生成指定楼层的地图
+            logger.info(f"Debug teleport: {game_state.current_map.depth} -> {target_floor}")
+
+            # 清除旧地图上的角色标记（在生成新地图前）
+            old_tile = game_state.current_map.get_tile(*game_state.player.position)
+            if old_tile:
+                old_tile.character_id = None
+
+            for monster in game_state.monsters:
+                if monster.position:
+                    monster_tile = game_state.current_map.get_tile(*monster.position)
+                    if monster_tile:
+                        monster_tile.character_id = None
+
             # 获取当前活跃任务的上下文
             quest_context = None
             active_quest = next((q for q in game_state.quests if q.is_active), None)
@@ -2641,19 +2676,9 @@ if config.game.debug_mode:
                 quest_context=quest_context
             )
 
-            # 清除旧地图上的角色标记
-            old_tile = game_state.current_map.get_tile(*game_state.player.position)
-            if old_tile:
-                old_tile.character_id = None
-
-            for monster in game_state.monsters:
-                if monster.position:
-                    monster_tile = game_state.current_map.get_tile(*monster.position)
-                    if monster_tile:
-                        monster_tile.character_id = None
-
-            # 更新地图
+            # 更新游戏状态 - 确保正确更新
             game_state.current_map = new_map
+            logger.info(f"Debug teleport - Map updated: {new_map.name} (depth: {new_map.depth})")
 
             # 重新放置玩家
             spawn_positions = content_generator.get_spawn_positions(new_map, 1)
@@ -2665,17 +2690,36 @@ if config.game.debug_mode:
                     tile.is_explored = True
                     tile.is_visible = True
 
-            # 清空怪物（新地图会重新生成）
+            # 清空旧怪物列表（重要！）
             game_state.monsters.clear()
+
+            # 生成新的怪物
+            monsters = await content_generator.generate_encounter_monsters(
+                game_state.player.stats.level, "medium"
+            )
+
+            # 生成任务专属怪物（如果有活跃任务）
+            from game_engine import game_engine as ge
+            quest_monsters = await ge._generate_quest_monsters(game_state, new_map)
+            monsters.extend(quest_monsters)
+
+            monster_positions = content_generator.get_spawn_positions(new_map, len(monsters))
+            for monster, position in zip(monsters, monster_positions):
+                monster.position = position
+                tile = new_map.get_tile(*position)
+                if tile:
+                    tile.character_id = monster.id
+                game_state.monsters.append(monster)
 
             return {
                 "success": True,
                 "message": f"已传送到第{target_floor}层",
-                "new_map": game_state.current_map.name
+                "new_map": game_state.current_map.name,
+                "map_depth": game_state.current_map.depth
             }
 
         except Exception as e:
-            logger.error(f"Debug teleport error: {e}")
+            logger.error(f"Debug teleport error: {e}", exc_info=True)
             return {"success": False, "message": f"传送失败: {str(e)}"}
 
     @app.post("/api/game/{game_id}/debug/teleport-position")
