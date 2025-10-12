@@ -179,6 +179,8 @@ class DataManager:
     
     def _dict_to_monster(self, data: Dict[str, Any]) -> Monster:
         """从字典重建Monster对象"""
+        from data_models import Ability
+
         monster = Monster()
 
         # 复制Character的属性
@@ -198,6 +200,22 @@ class DataManager:
         # 任务相关属性
         monster.is_boss = data.get("is_boss", False)
         monster.quest_monster_id = data.get("quest_monster_id", None)
+
+        # 兼容性处理：确保旧存档的怪物有abilities字段
+        if not hasattr(monster.abilities, 'strength'):
+            # 根据挑战等级生成合理的属性值
+            cr = monster.challenge_rating
+            base_stat = 10 + int(cr * 2)  # CR 1.0 = 12, CR 2.0 = 14
+            monster.abilities = Ability(
+                strength=base_stat,
+                dexterity=base_stat,
+                constitution=base_stat,
+                intelligence=max(8, base_stat - 2),
+                wisdom=max(8, base_stat - 2),
+                charisma=max(8, base_stat - 4)
+            )
+            # 重新计算衍生属性
+            monster.stats.calculate_derived_stats(monster.abilities)
 
         return monster
     

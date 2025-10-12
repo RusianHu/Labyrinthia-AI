@@ -163,6 +163,9 @@ class EventChoiceSystem:
                 "has_active_quest": False
             }
 
+        # 获取玩家六维属性
+        abilities = game_state.player.abilities
+
         # 构建LLM提示
         prompt = prompt_manager.format_prompt(
             "story_event_choices",
@@ -170,6 +173,12 @@ class EventChoiceSystem:
             player_level=game_state.player.stats.level,
             player_hp=game_state.player.stats.hp,
             player_max_hp=game_state.player.stats.max_hp,
+            player_str=abilities.strength,
+            player_dex=abilities.dexterity,
+            player_con=abilities.constitution,
+            player_int=abilities.intelligence,
+            player_wis=abilities.wisdom,
+            player_cha=abilities.charisma,
             location_x=tile.x,
             location_y=tile.y,
             map_name=game_state.current_map.name,
@@ -479,6 +488,9 @@ class EventChoiceSystem:
             quest_info = f"任务：{active_quest.title} - {active_quest.description}"
             quest_id = active_quest.id
 
+        # 获取玩家六维属性
+        abilities = game_state.player.abilities
+
         # 构建LLM提示来处理选择结果
         prompt = prompt_manager.format_prompt(
             "process_story_choice",
@@ -489,6 +501,12 @@ class EventChoiceSystem:
             player_level=game_state.player.stats.level,
             player_hp=game_state.player.stats.hp,
             player_max_hp=game_state.player.stats.max_hp,
+            player_str=abilities.strength,
+            player_dex=abilities.dexterity,
+            player_con=abilities.constitution,
+            player_int=abilities.intelligence,
+            player_wis=abilities.wisdom,
+            player_cha=abilities.charisma,
             current_map=game_state.current_map.name,
             map_depth=game_state.current_map.depth,
             map_width=game_state.current_map.width,

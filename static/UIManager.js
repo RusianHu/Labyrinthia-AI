@@ -7,6 +7,10 @@ Object.assign(LabyrinthiaGame.prototype, {
     updateCharacterStats() {
         const player = this.gameState.player;
         const stats = player.stats;
+        const abilities = player.abilities || {
+            strength: 10, dexterity: 10, constitution: 10,
+            intelligence: 10, wisdom: 10, charisma: 10
+        };
 
         // 更新基础信息
         document.getElementById('player-name').textContent = player.name;
@@ -54,11 +58,54 @@ Object.assign(LabyrinthiaGame.prototype, {
         document.getElementById('player-position').textContent =
             `(${player.position[0]}, ${player.position[1]})`;
 
+        // 更新DND六维属性
+        this.updateAbilityScores(abilities);
+
         // 更新楼层信息
         if (this.gameState.current_map) {
             document.getElementById('player-floor').textContent = this.gameState.current_map.depth || 1;
             document.getElementById('current-map-name').textContent = this.gameState.current_map.name || '未知区域';
         }
+    },
+
+    /**
+     * 更新DND六维属性显示
+     * @param {Object} abilities - 六维属性对象
+     */
+    updateAbilityScores(abilities) {
+        const abilityNames = ['strength', 'dexterity', 'constitution', 'intelligence', 'wisdom', 'charisma'];
+
+        abilityNames.forEach(abilityName => {
+            const value = abilities[abilityName] || 10;
+            const modifier = Math.floor((value - 10) / 2);
+            const modifierStr = modifier >= 0 ? `+${modifier}` : `${modifier}`;
+
+            // 更新属性值
+            const valueElement = document.getElementById(`ability-${abilityName}`);
+            if (valueElement) {
+                valueElement.textContent = value;
+
+                // 根据属性值设置颜色
+                if (value >= 18) {
+                    valueElement.style.color = '#9c27b0'; // 紫色 - 卓越
+                } else if (value >= 14) {
+                    valueElement.style.color = '#5e35b1'; // 深紫 - 优秀
+                } else if (value >= 12) {
+                    valueElement.style.color = '#3f51b5'; // 蓝色 - 良好
+                } else if (value >= 9) {
+                    valueElement.style.color = '#666'; // 灰色 - 普通
+                } else {
+                    valueElement.style.color = '#e74c3c'; // 红色 - 较弱
+                }
+            }
+
+            // 更新调整值
+            const modElement = document.getElementById(`ability-${abilityName}-mod`);
+            if (modElement) {
+                modElement.textContent = modifierStr;
+                modElement.style.color = modifier >= 0 ? '#4caf50' : '#e74c3c';
+            }
+        });
     },
     
     async updateMap() {

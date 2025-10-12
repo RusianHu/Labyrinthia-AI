@@ -14,6 +14,7 @@ from data_models import (
     TerrainType, CharacterClass, Stats
 )
 from config import config
+from entity_manager import entity_manager
 
 
 logger = logging.getLogger(__name__)
@@ -22,9 +23,11 @@ logger = logging.getLogger(__name__)
 class ModificationType(Enum):
     """状态修改类型"""
     PLAYER_STATS = "player_stats"
+    PLAYER_ABILITIES = "player_abilities"  # 新增: 六维属性修改
     PLAYER_INVENTORY = "player_inventory"
     MAP_TILE = "map_tile"
     MONSTER = "monster"
+    MONSTER_ABILITIES = "monster_abilities"  # 新增: 怪物六维属性修改
     QUEST = "quest"
     GAME_STATE = "game_state"
 
@@ -172,41 +175,71 @@ class GameStateModifier:
     ) -> ModificationResult:
         """
         应用玩家状态更新
-        
+
         Args:
             game_state: 游戏状态
-            player_updates: 玩家更新数据
+            player_updates: 玩家更新数据 (支持stats和abilities)
             source: 修改来源
-            
+
         Returns:
             ModificationResult: 修改结果
         """
         result = ModificationResult()
         player = game_state.player
-        
+
         try:
-            # 应用属性更新
+            # 应用六维属性更新 (新增)
+            if "abilities" in player_updates:
+                abilities_updates = player_updates["abilities"]
+                changes = {}
+
+                for ability_name, value in abilities_updates.items():
+                    if hasattr(player.abilities, ability_name):
+                        old_value = getattr(player.abilities, ability_name)
+
+                        # 使用entity_manager设置属性值 (自动验证和重新计算衍生属性)
+                        success = entity_manager.set_ability_score(player, ability_name, value)
+
+                        if success:
+                            new_value = getattr(player.abilities, ability_name)
+                            changes[ability_name] = {
+                                "old": old_value,
+                                "new": new_value
+                            }
+                            logger.debug(f"Updated player ability {ability_name}: {old_value} -> {new_value}")
+
+                if changes:
+                    record = ModificationRecord(
+                        modification_type=ModificationType.PLAYER_ABILITIES,
+                        timestamp=datetime.now(),
+                        source=source,
+                        target_id=player.id,
+                        changes=changes
+                    )
+                    result.add_record(record)
+
+            # 应用衍生属性更新
             if "stats" in player_updates:
                 stats_updates = player_updates["stats"]
                 changes = {}
-                
+
                 for stat_name, value in stats_updates.items():
                     if hasattr(player.stats, stat_name):
                         old_value = getattr(player.stats, stat_name)
-                        
+
                         # 验证并应用属性变化
                         validated_value = self._validate_stat_value(
                             stat_name, value, player.stats
                         )
-                        
+
                         setattr(player.stats, stat_name, validated_value)
                         changes[stat_name] = {
                             "old": old_value,
                             "new": validated_value
                         }
-                        
+
                         logger.debug(f"Updated player stat {stat_name}: {old_value} -> {validated_value}")
-                
+
                 if changes:
                     record = ModificationRecord(
                         modification_type=ModificationType.PLAYER_STATS,
@@ -457,6 +490,18 @@ class GameStateModifier:
                             monster.name = monster_data["name"]
                         if "description" in monster_data:
                             monster.description = monster_data["description"]
+
+                        # 支持六维属性更新 (新增)
+                        if "abilities" in monster_data:
+                            abilities_data = monster_data["abilities"]
+                            for ability_name, value in abilities_data.items():
+                                if hasattr(monster.abilities, ability_name):
+                                    old_value = getattr(monster.abilities, ability_name)
+                                    entity_manager.set_ability_score(monster, ability_name, value)
+                                    new_value = getattr(monster.abilities, ability_name)
+                                    changes[f"ability_{ability_name}"] = {"old": old_value, "new": new_value}
+
+                        # 支持衍生属性更新
                         if "stats" in monster_data:
                             stats_data = monster_data["stats"]
                             if "hp" in stats_data:

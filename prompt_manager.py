@@ -420,6 +420,7 @@ class PromptManager:
 - 等级：{player_level}
 - 生命值：{player_hp}/{player_max_hp}
 - 位置：({location_x}, {location_y})
+- 六维属性：力量{player_str} 敏捷{player_dex} 体质{player_con} 智力{player_int} 感知{player_wis} 魅力{player_cha}
 
 地图信息：
 - 地图名称：{map_name}
@@ -613,6 +614,7 @@ class PromptManager:
 - 等级：{player_level}
 - 生命值：{player_hp}/{player_max_hp}
 - 位置：{tile_position}
+- 六维属性：力量{player_str} 敏捷{player_dex} 体质{player_con} 智力{player_int} 感知{player_wis} 魅力{player_cha}
 
 当前地图信息：
 - 地图名称：{current_map}
@@ -634,6 +636,12 @@ class PromptManager:
 4. 推进任务进度
 5. 创建新的事件和互动元素
 6. **直接切换到全新的地图区域**（如发现传送门、进入异次元空间、被传送到新区域等）
+
+**DND检定机制说明**：
+- 如果选择涉及技能检定（如感知检定、智力检定等），请在message中明确说明检定过程
+- 检定格式："{属性名}检定 DC {难度}: 掷骰 1d20={骰子结果}+{调整值}={总值}, {成功/失败}!"
+- 例如："感知检定 DC 12: 掷骰 1d20=15+0=15, 成功!" 或 "智力检定 DC 15: 掷骰 1d20=8+0=8, 失败!"
+- 根据检定结果决定后续事件和奖励
 
 请根据玩家的选择生成合理且有趣的结果。如果选择涉及发现隐藏通道、秘密房间等，请大胆地修改地图结构。
 如果选择涉及传送、进入新区域等情况，可以直接切换到新地图。

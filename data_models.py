@@ -68,60 +68,103 @@ class TerrainType(Enum):
 
 @dataclass
 class Ability:
-    """能力值"""
+    """DND六维属性 (D&D Ability Scores)
+
+    标准DND六维属性系统:
+    - Strength (力量): 物理力量,影响近战攻击和负重
+    - Dexterity (敏捷): 灵活性和反应速度,影响AC和远程攻击
+    - Constitution (体质): 耐力和生命力,影响HP
+    - Intelligence (智力): 学习和推理能力,影响魔法和知识
+    - Wisdom (感知): 洞察力和直觉,影响感知检定和意志豁免
+    - Charisma (魅力): 个人魅力和说服力,影响社交互动
+
+    属性值范围: 1-30 (10为普通人类平均值)
+    调整值计算: (属性值 - 10) // 2
+    """
     strength: int = 10
     dexterity: int = 10
     constitution: int = 10
     intelligence: int = 10
     wisdom: int = 10
     charisma: int = 10
-    
+
     def get_modifier(self, ability_name: str) -> int:
-        """获取能力调整值"""
+        """获取能力调整值 (Ability Modifier)
+
+        Args:
+            ability_name: 属性名称 (strength, dexterity, constitution, intelligence, wisdom, charisma)
+
+        Returns:
+            调整值 (通常在-5到+10之间)
+        """
         value = getattr(self, ability_name.lower())
         return (value - 10) // 2
+
+    def get_all_modifiers(self) -> Dict[str, int]:
+        """获取所有属性的调整值"""
+        return {
+            "strength": self.get_modifier("strength"),
+            "dexterity": self.get_modifier("dexterity"),
+            "constitution": self.get_modifier("constitution"),
+            "intelligence": self.get_modifier("intelligence"),
+            "wisdom": self.get_modifier("wisdom"),
+            "charisma": self.get_modifier("charisma")
+        }
+
+    def to_dict(self) -> Dict[str, Any]:
+        """转换为字典,包含属性值和调整值"""
+        return {
+            "strength": self.strength,
+            "dexterity": self.dexterity,
+            "constitution": self.constitution,
+            "intelligence": self.intelligence,
+            "wisdom": self.wisdom,
+            "charisma": self.charisma,
+            "modifiers": self.get_all_modifiers()
+        }
 
 
 @dataclass
 class Stats:
-    """角色属性"""
+    """角色衍生属性 (Derived Stats)
+
+    这些属性由六维属性计算得出,不应直接设置基础六维属性
+    """
     hp: int = 100
     max_hp: int = 100
     mp: int = 50
     max_mp: int = 50
-    ac: int = 10  # 护甲等级
-    speed: int = 30
+    ac: int = 10  # 护甲等级 (Armor Class)
+    speed: int = 30  # 移动速度
     level: int = 1
     experience: int = 0
-    # 基础属性
-    strength: int = 10
-    dexterity: int = 10
-    constitution: int = 10
-    intelligence: int = 10
-    wisdom: int = 10
-    charisma: int = 10
 
     def is_alive(self) -> bool:
+        """检查是否存活"""
         return self.hp > 0
 
-    def calculate_derived_stats(self):
-        """根据基础属性计算衍生属性"""
+    def calculate_derived_stats(self, abilities: Ability):
+        """根据六维属性计算衍生属性
+
+        Args:
+            abilities: 角色的六维属性对象
+        """
         # 根据体质调整生命值
-        con_modifier = (self.constitution - 10) // 2
+        con_modifier = abilities.get_modifier("constitution")
         base_hp = 100 + (con_modifier * 10)
         self.max_hp = max(base_hp, 10)  # 最少10点生命值
         if self.hp > self.max_hp:
             self.hp = self.max_hp
 
         # 根据智力调整魔法值
-        int_modifier = (self.intelligence - 10) // 2
+        int_modifier = abilities.get_modifier("intelligence")
         base_mp = 50 + (int_modifier * 5)
         self.max_mp = max(base_mp, 0)  # 魔法值可以为0
         if self.mp > self.max_mp:
             self.mp = self.max_mp
 
         # 根据敏捷调整护甲等级
-        dex_modifier = (self.dexterity - 10) // 2
+        dex_modifier = abilities.get_modifier("dexterity")
         self.ac = 10 + dex_modifier
 
         # 根据敏捷调整速度

@@ -264,6 +264,14 @@ Object.assign(LabyrinthiaGame.prototype, {
                     tooltipText += `生命值: ${player.stats.hp}/${player.stats.max_hp}\n`;
                     tooltipText += `法力值: ${player.stats.mp}/${player.stats.max_mp}\n`;
                     tooltipText += `等级: ${player.stats.level}\n`;
+
+                    // 显示玩家关键属性
+                    if (player.abilities) {
+                        const str = player.abilities.strength || 10;
+                        const dex = player.abilities.dexterity || 10;
+                        const con = player.abilities.constitution || 10;
+                        tooltipText += `属性: 力${str} 敏${dex} 体${con}\n`;
+                    }
                 } else {
                     const monster = this.gameState.monsters.find(m => m.id === tileData.character_id);
                     if (monster) {
@@ -284,6 +292,19 @@ Object.assign(LabyrinthiaGame.prototype, {
                         if (monster.challenge_rating) {
                             tooltipText += `挑战等级: ${monster.challenge_rating}\n`;
                         }
+
+                        // 显示怪物关键属性
+                        if (monster.abilities) {
+                            const str = monster.abilities.strength || 10;
+                            const dex = monster.abilities.dexterity || 10;
+                            const con = monster.abilities.constitution || 10;
+                            const strMod = Math.floor((str - 10) / 2);
+                            const dexMod = Math.floor((dex - 10) / 2);
+                            const conMod = Math.floor((con - 10) / 2);
+                            tooltipText += `属性: 力${str}(${strMod>=0?'+':''}${strMod}) 敏${dex}(${dexMod>=0?'+':''}${dexMod}) 体${con}(${conMod>=0?'+':''}${conMod})\n`;
+                        }
+
+                        tooltipText += `护甲等级: ${monster.stats.ac || 10}\n`;
 
                         // 显示攻击范围信息
                         const attackRange = monster.attack_range || 1;

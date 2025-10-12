@@ -462,6 +462,63 @@ body {
     border-radius: 6px;
 }
 
+/* DND六维属性显示 - 紧凑型 */
+.abilities-container {
+    margin-top: 12px;
+    padding: 10px;
+    background: linear-gradient(135deg, rgba(94, 53, 177, 0.05), rgba(156, 39, 176, 0.05));
+    border-radius: 8px;
+    border: 1px solid rgba(94, 53, 177, 0.15);
+}
+
+.abilities-compact-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 6px;
+}
+
+.ability-compact-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: rgba(255, 255, 255, 0.8);
+    border: 1px solid rgba(94, 53, 177, 0.2);
+    border-radius: 6px;
+    padding: 6px 10px;
+    cursor: help;
+    transition: all 0.2s ease;
+}
+
+.ability-compact-item:hover {
+    background: rgba(255, 255, 255, 1);
+    border-color: rgba(94, 53, 177, 0.4);
+    transform: translateX(2px);
+    box-shadow: 0 2px 6px rgba(94, 53, 177, 0.15);
+}
+
+.ability-compact-label {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: #5e35b1;
+    min-width: 20px;
+}
+
+.ability-compact-value {
+    font-size: 1rem;
+    font-weight: bold;
+    color: #333;
+    flex: 1;
+    text-align: center;
+}
+
+.ability-compact-mod {
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: #666;
+    min-width: 30px;
+    text-align: right;
+}
+
 .stat-label {
     font-weight: 500;
     color: #5e35b1;

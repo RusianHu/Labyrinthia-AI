@@ -169,30 +169,37 @@ class GameEngine:
         
         class_config = class_configs.get(player.character_class, class_configs[CharacterClass.FIGHTER])
         
-        # 设置能力值
+        # 设置六维属性
         for ability, value in class_config["abilities"].items():
             setattr(player.abilities, ability, value)
-        
-        # 设置属性
-        player.stats.hp = class_config["hp"]
-        player.stats.max_hp = class_config["hp"]
-        player.stats.mp = class_config["mp"]
-        player.stats.max_mp = class_config["mp"]
+
+        # 设置等级
         player.stats.level = config.game.starting_level
-        
+
+        # 根据六维属性计算衍生属性 (HP, MP, AC等)
+        player.stats.calculate_derived_stats(player.abilities)
+
+        # 如果配置中指定了HP/MP,则覆盖计算值
+        if "hp" in class_config:
+            player.stats.hp = class_config["hp"]
+            player.stats.max_hp = class_config["hp"]
+        if "mp" in class_config:
+            player.stats.mp = class_config["mp"]
+            player.stats.max_mp = class_config["mp"]
+
         # 使用LLM生成角色描述
         description_prompt = f"""
         为一个名叫{name}的{character_class}角色生成一个简短的背景描述。
         这是一个DnD风格的角色，刚开始冒险。
         描述应该包含外貌、性格和简单的背景故事。
         """
-        
+
         try:
             player.description = await llm_service._async_generate(description_prompt)
         except Exception as e:
             logger.error(f"Failed to generate character description: {e}")
             player.description = f"一个勇敢的{character_class}，准备踏上冒险之旅。"
-        
+
         return player
     
     async def load_game(self, user_id: str, save_id: str) -> Optional[GameState]:
