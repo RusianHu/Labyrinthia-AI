@@ -313,7 +313,7 @@ class EventChoiceManager {
 
                 // 更新游戏状态
                 if (result.game_state && window.game) {
-                    window.game.updateGameState(result.game_state);
+                    await window.game.updateGameState(result.game_state);
                 }
 
                 console.log('Choice processed successfully:', result);

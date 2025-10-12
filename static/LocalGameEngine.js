@@ -547,7 +547,7 @@ class LocalGameEngine {
             await this.processMonsterTurns();
 
             // 【修复】只在普通移动时更新UI（陷阱、宝藏、后端事件都已经在各自的处理函数中更新了UI）
-            this.game.updateUI();
+            await this.game.updateUI(); // 等待UI更新完成
 
             // 检查是否需要同步
             if (this.shouldSync()) {
@@ -876,7 +876,7 @@ class LocalGameEngine {
             await this.processMonsterTurns();
 
             // 更新UI
-            this.game.updateUI();
+            await this.game.updateUI(); // 等待UI更新完成
 
             // 检查是否需要同步
             if (this.shouldSync()) {

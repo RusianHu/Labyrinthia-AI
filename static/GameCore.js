@@ -178,7 +178,7 @@ class LabyrinthiaGame {
                 return; // 游戏结束后不再处理其他逻辑
             }
 
-            this.updateUI();
+            await this.updateUI(); // 等待UI更新完成
 
             // 检查是否有待处理的选择上下文，直接显示
             if (gameState.pending_choice_context && window.eventChoiceManager) {
@@ -200,7 +200,7 @@ class LabyrinthiaGame {
         }
     }
 
-    updateUI() {
+    async updateUI() {
         if (!this.gameState) return;
 
         // 首先检查游戏是否结束
@@ -210,7 +210,7 @@ class LabyrinthiaGame {
         }
 
         this.updateCharacterStats();
-        this.updateMap();
+        await this.updateMap(); // 等待地图更新完成，确保角色精灵正确渲染
         this.updateInventory();
         this.updateQuests();
         this.updateControlPanel();
@@ -220,7 +220,7 @@ class LabyrinthiaGame {
         this.updateDirectionButtons();
     }
 
-    updateGameState(newGameState) {
+    async updateGameState(newGameState) {
         /**
          * 更新游戏状态并刷新UI
          * 用于EventChoiceManager等组件更新游戏状态
@@ -242,7 +242,7 @@ class LabyrinthiaGame {
             return; // 游戏结束后不再处理其他逻辑
         }
 
-        this.updateUI();
+        await this.updateUI(); // 等待UI更新完成
 
         // 检查是否有待处理的选择上下文，直接显示
         if (newGameState.pending_choice_context && window.eventChoiceManager) {
@@ -256,8 +256,8 @@ class LabyrinthiaGame {
         }
     }
 
-    renderGame() {
-        this.updateUI();
+    async renderGame() {
+        await this.updateUI(); // 等待UI更新完成
 
         // 初始化本地引擎
         if (!this.localEngine && window.LocalGameEngine) {
@@ -411,7 +411,7 @@ class LabyrinthiaGame {
                 this.updateOverlayProgress(90, '更新界面...');
 
                 // 重新渲染游戏界面
-                this.renderGame();
+                await this.renderGame(); // 等待渲染完成
 
                 // 显示事件消息
                 if (result.events) {
