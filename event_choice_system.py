@@ -141,27 +141,15 @@ class EventChoiceSystem:
 
         # 获取当前活跃任务信息
         active_quest = next((q for q in game_state.quests if q.is_active), None)
-        quest_info = {}
         if active_quest:
-            quest_info = {
-                "quest_title": active_quest.title,
-                "quest_description": active_quest.description,
-                "quest_type": active_quest.quest_type,
-                "quest_progress": active_quest.progress_percentage,
-                "quest_objectives": active_quest.objectives,
-                "quest_story_context": active_quest.story_context,
-                "has_active_quest": True
-            }
+            quest_info = f"""- 任务标题：{active_quest.title}
+- 任务描述：{active_quest.description}
+- 任务类型：{active_quest.quest_type}
+- 任务进度：{active_quest.progress_percentage:.1f}%
+- 任务目标：{active_quest.objectives}
+- 故事背景：{active_quest.story_context}"""
         else:
-            quest_info = {
-                "quest_title": "",
-                "quest_description": "",
-                "quest_type": "",
-                "quest_progress": 0,
-                "quest_objectives": [],
-                "quest_story_context": "",
-                "has_active_quest": False
-            }
+            quest_info = "- 当前无活跃任务"
 
         # 获取玩家六维属性
         abilities = game_state.player.abilities
@@ -184,8 +172,8 @@ class EventChoiceSystem:
             map_name=game_state.current_map.name,
             map_depth=game_state.current_map.depth,
             story_type=story_type,
-            event_description=event_data.get("description", ""),
-            **quest_info  # 展开任务信息
+            quest_info=quest_info,
+            event_description=event_data.get("description", "")
         )
         
         # 使用重试机制调用LLM

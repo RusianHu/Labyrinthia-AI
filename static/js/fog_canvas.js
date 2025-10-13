@@ -56,6 +56,12 @@ class FogCanvasManager {
         this.noiseOffsetX = 0;
         this.noiseOffsetY = 0;
 
+        // 初始化状态
+        this.isInitialized = false;
+        this.resizeRetryCount = 0;
+        this.maxResizeRetries = 50; // 最多重试50次（5秒）
+        this.resizeObserver = null;
+
         // 初始化
         this.init();
     }
@@ -64,33 +70,143 @@ class FogCanvasManager {
      * 初始化
      */
     init() {
+        // 使用 IntersectionObserver 检测容器何时可见
+        this.setupVisibilityObserver();
+
+        // 使用 ResizeObserver 监听容器尺寸变化
+        this.setupResizeObserver();
+
+        // 监听窗口大小变化（备用方案）
+        window.addEventListener('resize', () => this.handleResize());
+
+        // 尝试初始化
+        this.tryInitialize();
+
+        console.log('✅ FogCanvasManager created, waiting for container to be visible...');
+    }
+
+    /**
+     * 设置可见性观察器
+     */
+    setupVisibilityObserver() {
+        if (!('IntersectionObserver' in window)) {
+            console.warn('IntersectionObserver not supported, using fallback');
+            return;
+        }
+
+        const observer = new IntersectionObserver((entries) => {
+            entries.forEach(entry => {
+                if (entry.isIntersecting && !this.isInitialized) {
+                    console.log('🌫️ Fog canvas container is now visible, initializing...');
+                    this.tryInitialize();
+                }
+            });
+        }, {
+            threshold: 0.1 // 当至少10%可见时触发
+        });
+
+        observer.observe(this.canvas.parentElement);
+    }
+
+    /**
+     * 设置尺寸观察器
+     */
+    setupResizeObserver() {
+        if (!('ResizeObserver' in window)) {
+            console.warn('ResizeObserver not supported, using fallback');
+            return;
+        }
+
+        this.resizeObserver = new ResizeObserver((entries) => {
+            for (let entry of entries) {
+                const { width, height } = entry.contentRect;
+                if (width > 0 && height > 0 && this.isInitialized) {
+                    // 容器尺寸改变且已初始化，更新canvas
+                    this.updateCanvasSize();
+                } else if (width > 0 && height > 0 && !this.isInitialized) {
+                    // 容器有尺寸但未初始化，尝试初始化
+                    this.tryInitialize();
+                }
+            }
+        });
+
+        this.resizeObserver.observe(this.canvas.parentElement);
+    }
+
+    /**
+     * 尝试初始化（检查容器尺寸）
+     */
+    tryInitialize() {
+        if (this.isInitialized) {
+            return; // 已经初始化过了
+        }
+
+        const rect = this.canvas.parentElement.getBoundingClientRect();
+
+        // 检查容器是否有有效尺寸
+        if (rect.width > 0 && rect.height > 0) {
+            // 容器有尺寸，可以初始化
+            this.performInitialization();
+        } else {
+            // 容器尺寸为0，延迟重试（有限次数）
+            this.resizeRetryCount++;
+
+            if (this.resizeRetryCount <= this.maxResizeRetries) {
+                if (this.resizeRetryCount === 1 || this.resizeRetryCount % 10 === 0) {
+                    // 只在第1次和每10次时输出日志，避免刷屏
+                    console.log(`🌫️ Waiting for fog canvas container (attempt ${this.resizeRetryCount}/${this.maxResizeRetries})...`);
+                }
+                setTimeout(() => this.tryInitialize(), 100);
+            } else {
+                console.warn('⚠️ Fog canvas container still has zero size after max retries. Will initialize when visible.');
+            }
+        }
+    }
+
+    /**
+     * 执行实际的初始化
+     */
+    performInitialization() {
+        if (this.isInitialized) {
+            return;
+        }
+
+        console.log('🌫️ Initializing fog canvas...');
+
         // 设置 Canvas 尺寸
-        this.resizeCanvas();
-        
+        this.updateCanvasSize();
+
         // 创建粒子
         if (this.config.enableParticles) {
             this.createParticles();
         }
-        
+
         // 开始渲染循环
         this.startAnimation();
-        
-        // 监听窗口大小变化
-        window.addEventListener('resize', () => this.resizeCanvas());
-        
-        console.log('✅ FogCanvasManager initialized');
+
+        this.isInitialized = true;
+        console.log('✅ FogCanvasManager fully initialized');
     }
 
     /**
-     * 调整 Canvas 尺寸
+     * 处理窗口大小变化
      */
-    resizeCanvas() {
+    handleResize() {
+        if (this.isInitialized) {
+            this.updateCanvasSize();
+        } else {
+            this.tryInitialize();
+        }
+    }
+
+    /**
+     * 更新 Canvas 尺寸（新方法，不再重试）
+     */
+    updateCanvasSize() {
         const rect = this.canvas.parentElement.getBoundingClientRect();
 
-        // 如果容器尺寸为0，延迟重试
+        // 如果容器尺寸为0，直接返回
         if (rect.width === 0 || rect.height === 0) {
-            console.warn('Canvas parent has zero size, retrying in 100ms...');
-            setTimeout(() => this.resizeCanvas(), 100);
             return;
         }
 
@@ -116,7 +232,15 @@ class FogCanvasManager {
             this.createParticles();
         }
 
-        console.log(`Canvas resized: ${this.width}x${this.height} (DPR: ${dpr})`);
+        console.log(`🌫️ Canvas resized: ${this.width}x${this.height} (DPR: ${dpr})`);
+    }
+
+    /**
+     * 调整 Canvas 尺寸（保留旧方法名以兼容外部调用）
+     * @deprecated 使用 updateCanvasSize() 代替
+     */
+    resizeCanvas() {
+        this.updateCanvasSize();
     }
 
     /**
@@ -445,8 +569,21 @@ class FogCanvasManager {
      */
     destroy() {
         this.stopAnimation();
-        window.removeEventListener('resize', () => this.resizeCanvas());
-        this.ctx.clearRect(0, 0, this.width, this.height);
+
+        // 断开观察器
+        if (this.resizeObserver) {
+            this.resizeObserver.disconnect();
+            this.resizeObserver = null;
+        }
+
+        window.removeEventListener('resize', () => this.handleResize());
+
+        if (this.ctx && this.width && this.height) {
+            this.ctx.clearRect(0, 0, this.width, this.height);
+        }
+
+        this.isInitialized = false;
+        console.log('🌫️ FogCanvasManager destroyed');
     }
 }
 
@@ -456,12 +593,20 @@ let fogCanvasManager = null;
 // 全局方法：重新调整 Canvas 尺寸
 window.resizeFogCanvas = function() {
     if (fogCanvasManager) {
-        fogCanvasManager.resizeCanvas();
+        fogCanvasManager.updateCanvasSize();
         console.log('🌫️ Fog canvas manually resized');
     }
 };
 
-// DOM 加载完成后初始化
+// 全局方法：强制初始化（用于游戏加载后调用）
+window.initializeFogCanvas = function() {
+    if (fogCanvasManager && !fogCanvasManager.isInitialized) {
+        fogCanvasManager.tryInitialize();
+        console.log('🌫️ Fog canvas initialization triggered');
+    }
+};
+
+// DOM 加载完成后创建管理器（但不一定立即初始化）
 document.addEventListener('DOMContentLoaded', () => {
     const canvas = document.getElementById('fog-canvas');
     if (canvas) {
@@ -493,14 +638,7 @@ document.addEventListener('DOMContentLoaded', () => {
             enableLayeredFog: true
         });
 
-        console.log('🌫️ RTS-style war fog effect initialized');
-
-        // 延迟重新调整尺寸，确保容器已显示
-        setTimeout(() => {
-            if (fogCanvasManager) {
-                fogCanvasManager.resizeCanvas();
-            }
-        }, 500);
+        console.log('🌫️ FogCanvasManager created, will initialize when container is visible');
     }
 });
 

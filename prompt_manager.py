@@ -436,16 +436,7 @@ class PromptManager:
 - 地图深度：第{map_depth}层
 
 当前任务信息：
-{{% if has_active_quest %}}
-- 任务标题：{quest_title}
-- 任务描述：{quest_description}
-- 任务类型：{quest_type}
-- 任务进度：{quest_progress:.1f}%
-- 任务目标：{quest_objectives}
-- 故事背景：{quest_story_context}
-{{% else %}}
-- 当前无活跃任务
-{{% endif %}}
+{quest_info}
 
 事件信息：
 - 事件类型：{story_type}
@@ -482,9 +473,8 @@ class PromptManager:
             """.strip(),
             required_params=[
                 "player_name", "player_level", "player_hp", "player_max_hp",
-                "location_x", "location_y", "map_name", "map_depth", "story_type",
-                "has_active_quest", "quest_title", "quest_description", "quest_type",
-                "quest_progress", "quest_objectives", "quest_story_context"
+                "player_str", "player_dex", "player_con", "player_int", "player_wis", "player_cha",
+                "location_x", "location_y", "map_name", "map_depth", "story_type", "quest_info"
             ],
             optional_params={"event_description": ""},
             schema={
@@ -648,7 +638,7 @@ class PromptManager:
 
 **DND检定机制说明**：
 - 如果选择涉及技能检定（如感知检定、智力检定等），请在message中明确说明检定过程
-- 检定格式："{属性名}检定 DC {难度}: 掷骰 1d20={骰子结果}+{调整值}={总值}, {成功/失败}!"
+- 检定格式："[属性名]检定 DC [难度]: 掷骰 1d20=[骰子结果]+[调整值]=[总值], [成功/失败]!"
 - 例如："感知检定 DC 12: 掷骰 1d20=15+0=15, 成功!" 或 "智力检定 DC 15: 掷骰 1d20=8+0=8, 失败!"
 - 根据检定结果决定后续事件和奖励
 
@@ -733,6 +723,7 @@ class PromptManager:
             required_params=[
                 "choice_text", "choice_description", "event_context",
                 "player_name", "player_level", "player_hp", "player_max_hp",
+                "player_str", "player_dex", "player_con", "player_int", "player_wis", "player_cha",
                 "current_map", "map_depth", "map_width", "map_height", "tile_position"
             ],
             optional_params={"quest_info": "", "quest_id": ""},
@@ -831,7 +822,8 @@ class PromptManager:
             """.strip(),
             required_params=[
                 "choice_text", "choice_description", "completed_quest_data",
-                "player_name", "player_level", "current_map", "map_depth"
+                "player_name", "player_level", "current_map", "map_depth",
+                "leads_to_new_quest", "leads_to_map_transition", "quest_theme", "map_theme"
             ],
             schema={
                 "type": "object",

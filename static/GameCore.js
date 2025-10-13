@@ -100,6 +100,11 @@ class LabyrinthiaGame {
                 document.getElementById('main-menu').style.display = 'none';
                 document.getElementById('game-interface').style.display = 'block';
 
+                // 触发迷雾canvas初始化（游戏界面现在可见了）
+                if (typeof window.initializeFogCanvas === 'function') {
+                    setTimeout(() => window.initializeFogCanvas(), 100);
+                }
+
                 this.hideFullscreenOverlay();
                 this.addMessage('游戏已加载', 'success');
             } else {

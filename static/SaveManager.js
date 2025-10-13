@@ -114,6 +114,11 @@ Object.assign(LabyrinthiaGame.prototype, {
                 document.getElementById('main-menu').style.display = 'none';
                 document.getElementById('game-interface').style.display = 'block';
 
+                // 触发迷雾canvas初始化（游戏界面现在可见了）
+                if (typeof window.initializeFogCanvas === 'function') {
+                    setTimeout(() => window.initializeFogCanvas(), 100);
+                }
+
                 this.hideFullscreenOverlay();
             } else {
                 this.addMessage('加载失败', 'error');
@@ -238,6 +243,11 @@ Object.assign(LabyrinthiaGame.prototype, {
                 document.getElementById('new-game-modal').style.display = 'none';
                 document.getElementById('main-menu').style.display = 'none';
                 document.getElementById('game-interface').style.display = 'block';
+
+                // 触发迷雾canvas初始化（游戏界面现在可见了）
+                if (typeof window.initializeFogCanvas === 'function') {
+                    setTimeout(() => window.initializeFogCanvas(), 100);
+                }
 
                 this.hideFullscreenOverlay();
             } else {
