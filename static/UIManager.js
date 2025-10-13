@@ -321,7 +321,7 @@ Object.assign(LabyrinthiaGame.prototype, {
         }
 
         // 验证主题是否有效
-        const validThemes = ['normal', 'magic', 'abandoned', 'cave', 'combat'];
+        const validThemes = ['normal', 'magic', 'abandoned', 'cave', 'combat', 'grassland', 'desert', 'farmland', 'snowfield', 'town'];
         const floorTheme = validThemes.includes(theme) ? theme : 'normal';
 
         try {

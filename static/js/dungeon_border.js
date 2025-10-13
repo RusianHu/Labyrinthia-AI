@@ -283,6 +283,162 @@ class DungeonBorderManager {
         });
         this.borderElements.clear();
     }
+
+    /**
+     * 应用战争迷雾风格边框
+     * @param {string|HTMLElement} target - 目标元素或选择器
+     * @param {Object} options - 配置选项
+     * @returns {Object} 返回创建的边框元素引用
+     */
+    applyFogBorder(target, options = {}) {
+        const element = typeof target === 'string' ?
+            document.querySelector(target) : target;
+
+        if (!element) {
+            console.error('目标元素不存在:', target);
+            return null;
+        }
+
+        // 默认配置
+        const config = {
+            showCorners: true,
+            showEdges: true,
+            showParticles: true,
+            particleOpacity: 0.15,
+            edgeOpacity: 0.9,
+            cornerOpacity: 0.95,
+            ...options
+        };
+
+        // 确保元素有正确的定位
+        if (getComputedStyle(element).position === 'static') {
+            element.style.position = 'relative';
+        }
+
+        // 添加基础样式类
+        element.classList.add('fog-border-container', 'fog-map-border');
+
+        const borderElements = {
+            corners: [],
+            edges: [],
+            particles: null
+        };
+
+        // 添加四角迷雾
+        if (config.showCorners) {
+            const corners = ['top-left', 'top-right', 'bottom-left', 'bottom-right'];
+            corners.forEach(position => {
+                const corner = document.createElement('div');
+                corner.className = `fog-corner ${position}`;
+                corner.style.opacity = config.cornerOpacity;
+                element.appendChild(corner);
+                borderElements.corners.push(corner);
+            });
+        }
+
+        // 添加边缘迷雾
+        if (config.showEdges) {
+            // 水平边框
+            ['top', 'bottom'].forEach(position => {
+                const edge = document.createElement('div');
+                edge.className = `fog-border-horizontal ${position}`;
+                edge.style.opacity = config.edgeOpacity;
+                element.appendChild(edge);
+                borderElements.edges.push(edge);
+            });
+
+            // 垂直边框
+            ['left', 'right'].forEach(position => {
+                const edge = document.createElement('div');
+                edge.className = `fog-border-vertical ${position}`;
+                edge.style.opacity = config.edgeOpacity;
+                element.appendChild(edge);
+                borderElements.edges.push(edge);
+            });
+        }
+
+        // 添加迷雾粒子动画层
+        if (config.showParticles) {
+            const particles = document.createElement('div');
+            particles.className = 'fog-particles';
+            particles.style.opacity = config.particleOpacity;
+            element.appendChild(particles);
+            borderElements.particles = particles;
+        }
+
+        // 保存引用
+        this.borderElements.set(element, borderElements);
+
+        console.log('已应用战争迷雾边框效果');
+        return borderElements;
+    }
+
+    /**
+     * 移除迷雾边框效果
+     * @param {string|HTMLElement} target - 目标元素或选择器
+     */
+    removeFogBorder(target) {
+        const element = typeof target === 'string' ?
+            document.querySelector(target) : target;
+
+        if (!element) {
+            console.error('目标元素不存在:', target);
+            return;
+        }
+
+        const borderElements = this.borderElements.get(element);
+        if (!borderElements) {
+            console.warn('该元素没有应用迷雾边框效果');
+            return;
+        }
+
+        // 移除所有边框元素
+        [...borderElements.corners, ...borderElements.edges].forEach(el => {
+            if (el && el.parentNode) {
+                el.parentNode.removeChild(el);
+            }
+        });
+
+        if (borderElements.particles && borderElements.particles.parentNode) {
+            borderElements.particles.parentNode.removeChild(borderElements.particles);
+        }
+
+        // 移除样式类
+        element.classList.remove('fog-border-container', 'fog-map-border');
+
+        // 清除引用
+        this.borderElements.delete(element);
+    }
+
+    /**
+     * 切换边框样式（在地牢边框和迷雾边框之间切换）
+     * @param {string|HTMLElement} target - 目标元素或选择器
+     * @param {string} style - 边框样式 ('dungeon' 或 'fog')
+     * @param {Object} options - 配置选项
+     */
+    switchBorderStyle(target, style = 'fog', options = {}) {
+        const element = typeof target === 'string' ?
+            document.querySelector(target) : target;
+
+        if (!element) {
+            console.error('目标元素不存在:', target);
+            return null;
+        }
+
+        // 先移除现有边框
+        this.removeBorder(element);
+        this.removeFogBorder(element);
+
+        // 应用新边框
+        if (style === 'fog') {
+            return this.applyFogBorder(element, options);
+        } else if (style === 'dungeon') {
+            return this.applyFullBorder(element, options);
+        } else {
+            console.error('未知的边框样式:', style);
+            return null;
+        }
+    }
 }
 
 // 创建全局实例

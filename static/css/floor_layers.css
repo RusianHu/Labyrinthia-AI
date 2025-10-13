@@ -18,7 +18,7 @@
     z-index: -1; /* 负值确保在地图瓦片下方 */
 }
 
-/* 基础地板类型 */
+/* 基础地板类型 - 地下城系列 */
 .floor-stone-basic {
     background-image: url('../images/floor_stone_basic.png');
     opacity: 0.8;
@@ -36,6 +36,32 @@
 
 .floor-marble-ancient {
     background-image: url('../images/floor_marble_ancient.png');
+    opacity: 0.85;
+}
+
+/* 基础地板类型 - 地上自然系列 */
+.floor-grass-field {
+    background-image: url('../images/floor_grass_field.png');
+    opacity: 0.85;
+}
+
+.floor-sand-desert {
+    background-image: url('../images/floor_sand_desert.png');
+    opacity: 0.8;
+}
+
+.floor-farmland-soil {
+    background-image: url('../images/floor_farmland_soil.png');
+    opacity: 0.8;
+}
+
+.floor-snow-field {
+    background-image: url('../images/floor_snow_field.png');
+    opacity: 0.9;
+}
+
+.floor-cobblestone-street {
+    background-image: url('../images/floor_cobblestone_street.png');
     opacity: 0.85;
 }
 
@@ -101,6 +127,41 @@
     background-image: url('../images/floor_overlay_cracks.png');
     opacity: 0.6;
     mix-blend-mode: multiply;
+}
+
+/* 叠加效果 - 自然系列 */
+.floor-overlay-flowers {
+    background-image: url('../images/floor_overlay_flowers.png');
+    opacity: 0.6;
+    mix-blend-mode: multiply;
+}
+
+.floor-overlay-footprints {
+    background-image: url('../images/floor_overlay_footprints.png');
+    opacity: 0.4;
+    mix-blend-mode: multiply;
+}
+
+.floor-overlay-crops {
+    background-image: url('../images/floor_overlay_crops.png');
+    opacity: 0.7;
+    mix-blend-mode: multiply;
+}
+
+.floor-overlay-ice {
+    background-image: url('../images/floor_overlay_ice.png');
+    opacity: 0.5;
+    mix-blend-mode: screen;
+    animation: ice-sparkle 5s ease-in-out infinite;
+}
+
+@keyframes ice-sparkle {
+    0%, 100% {
+        opacity: 0.4;
+    }
+    50% {
+        opacity: 0.6;
+    }
 }
 
 /* 组合样式 - 预设场景 */
@@ -315,20 +376,30 @@
     .floor-overlay {
         background-size: 48px 48px;
     }
-    
+
     .dungeon-room-normal::before,
     .dungeon-room-magic::before,
     .dungeon-room-abandoned::before,
     .dungeon-room-cave::before,
-    .dungeon-room-combat::before {
+    .dungeon-room-combat::before,
+    .dungeon-room-grassland::before,
+    .dungeon-room-desert::before,
+    .dungeon-room-farmland::before,
+    .dungeon-room-snowfield::before,
+    .dungeon-room-town::before {
         background-size: 48px 48px;
     }
-    
+
     .dungeon-room-normal::after,
     .dungeon-room-magic::after,
     .dungeon-room-abandoned::after,
     .dungeon-room-cave::after,
-    .dungeon-room-combat::after {
+    .dungeon-room-combat::after,
+    .dungeon-room-grassland::after,
+    .dungeon-room-desert::after,
+    .dungeon-room-farmland::after,
+    .dungeon-room-snowfield::after,
+    .dungeon-room-town::after {
         background-size: 96px 96px;
     }
 }
@@ -338,21 +409,214 @@
     .floor-overlay {
         background-size: 32px 32px;
     }
-    
+
     .dungeon-room-normal::before,
     .dungeon-room-magic::before,
     .dungeon-room-abandoned::before,
     .dungeon-room-cave::before,
-    .dungeon-room-combat::before {
+    .dungeon-room-combat::before,
+    .dungeon-room-grassland::before,
+    .dungeon-room-desert::before,
+    .dungeon-room-farmland::before,
+    .dungeon-room-snowfield::before,
+    .dungeon-room-town::before {
         background-size: 32px 32px;
     }
-    
+
     .dungeon-room-normal::after,
     .dungeon-room-magic::after,
     .dungeon-room-abandoned::after,
     .dungeon-room-cave::after,
-    .dungeon-room-combat::after {
+    .dungeon-room-combat::after,
+    .dungeon-room-grassland::after,
+    .dungeon-room-desert::after,
+    .dungeon-room-farmland::after,
+    .dungeon-room-snowfield::after,
+    .dungeon-room-town::after {
         background-size: 64px 64px;
     }
+}
+
+/* ========== 新增地上场景主题 ========== */
+
+/* 草地场景 */
+.dungeon-room-grassland {
+    position: relative;
+}
+
+.dungeon-room-grassland::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-image: url('../images/floor_grass_field.png');
+    background-repeat: repeat;
+    background-size: 64px 64px;
+    opacity: 0.85;
+    z-index: 0;
+    pointer-events: none;
+}
+
+.dungeon-room-grassland::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-image: url('../images/floor_overlay_flowers.png');
+    background-repeat: repeat;
+    background-size: 128px 128px;
+    opacity: 0.6;
+    z-index: 1;
+    pointer-events: none;
+    mix-blend-mode: multiply;
+}
+
+/* 沙漠场景 */
+.dungeon-room-desert {
+    position: relative;
+}
+
+.dungeon-room-desert::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-image: url('../images/floor_sand_desert.png');
+    background-repeat: repeat;
+    background-size: 64px 64px;
+    opacity: 0.8;
+    z-index: 0;
+    pointer-events: none;
+}
+
+.dungeon-room-desert::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-image: url('../images/floor_overlay_footprints.png');
+    background-repeat: repeat;
+    background-size: 128px 128px;
+    opacity: 0.4;
+    z-index: 1;
+    pointer-events: none;
+    mix-blend-mode: multiply;
+}
+
+/* 农田场景 */
+.dungeon-room-farmland {
+    position: relative;
+}
+
+.dungeon-room-farmland::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-image: url('../images/floor_farmland_soil.png');
+    background-repeat: repeat;
+    background-size: 64px 64px;
+    opacity: 0.8;
+    z-index: 0;
+    pointer-events: none;
+}
+
+.dungeon-room-farmland::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-image: url('../images/floor_overlay_crops.png');
+    background-repeat: repeat;
+    background-size: 128px 128px;
+    opacity: 0.7;
+    z-index: 1;
+    pointer-events: none;
+    mix-blend-mode: multiply;
+}
+
+/* 雪地场景 */
+.dungeon-room-snowfield {
+    position: relative;
+}
+
+.dungeon-room-snowfield::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-image: url('../images/floor_snow_field.png');
+    background-repeat: repeat;
+    background-size: 64px 64px;
+    opacity: 0.9;
+    z-index: 0;
+    pointer-events: none;
+}
+
+.dungeon-room-snowfield::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-image: url('../images/floor_overlay_ice.png');
+    background-repeat: repeat;
+    background-size: 128px 128px;
+    opacity: 0.5;
+    z-index: 1;
+    pointer-events: none;
+    mix-blend-mode: screen;
+    animation: ice-sparkle 5s ease-in-out infinite;
+}
+
+/* 城镇街道场景 */
+.dungeon-room-town {
+    position: relative;
+}
+
+.dungeon-room-town::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-image: url('../images/floor_cobblestone_street.png');
+    background-repeat: repeat;
+    background-size: 64px 64px;
+    opacity: 0.85;
+    z-index: 0;
+    pointer-events: none;
+}
+
+.dungeon-room-town::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-image: url('../images/floor_overlay_cracks.png');
+    background-repeat: repeat;
+    background-size: 128px 128px;
+    opacity: 0.3;
+    z-index: 1;
+    pointer-events: none;
+    mix-blend-mode: multiply;
 }
 

@@ -260,21 +260,175 @@
         width: 30px;
         height: 30px;
     }
-    
+
     .dungeon-border-horizontal {
         left: 30px;
         right: 30px;
         height: 20px;
     }
-    
+
     .dungeon-border-vertical {
         top: 30px;
         bottom: 30px;
         width: 20px;
     }
-    
+
     .dungeon-box-style {
         padding: 30px;
+    }
+
+    .fog-border-horizontal {
+        height: 60px !important;
+    }
+
+    .fog-border-vertical {
+        width: 60px !important;
+    }
+
+    .fog-corner {
+        width: 100px !important;
+        height: 100px !important;
+    }
+}
+
+/* ========== 战争迷雾风格边框 ========== */
+
+/* 迷雾边框容器 */
+.fog-border-container {
+    position: relative;
+    padding: 0;
+    background: transparent;
+}
+
+/* 迷雾边框 - 水平（上下） */
+.fog-border-horizontal {
+    position: absolute;
+    left: 0;
+    right: 0;
+    height: 120px;
+    background-size: 100% 100%;
+    background-repeat: no-repeat;
+    z-index: 100;
+    pointer-events: none;
+    opacity: 0.9;
+}
+
+.fog-border-horizontal.top {
+    top: 0;
+    background-image: url('../images/fog_border_top.png');
+}
+
+.fog-border-horizontal.bottom {
+    bottom: 0;
+    background-image: url('../images/fog_border_top.png');
+    transform: rotate(180deg);
+}
+
+/* 迷雾边框 - 垂直（左右） */
+.fog-border-vertical {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 120px;
+    background-size: 100% 100%;
+    background-repeat: no-repeat;
+    z-index: 100;
+    pointer-events: none;
+    opacity: 0.9;
+}
+
+.fog-border-vertical.left {
+    left: 0;
+    background-image: url('../images/fog_border_left.png');
+}
+
+.fog-border-vertical.right {
+    right: 0;
+    background-image: url('../images/fog_border_left.png');
+    transform: rotate(180deg);
+}
+
+/* 迷雾角落 */
+.fog-corner {
+    position: absolute;
+    width: 150px;
+    height: 150px;
+    background-image: url('../images/fog_corner.png');
+    background-size: contain;
+    background-repeat: no-repeat;
+    z-index: 101;
+    pointer-events: none;
+    opacity: 0.95;
+}
+
+.fog-corner.top-left {
+    top: 0;
+    left: 0;
+    transform: rotate(0deg);
+}
+
+.fog-corner.top-right {
+    top: 0;
+    right: 0;
+    transform: rotate(90deg);
+}
+
+.fog-corner.bottom-left {
+    bottom: 0;
+    left: 0;
+    transform: rotate(-90deg);
+}
+
+.fog-corner.bottom-right {
+    bottom: 0;
+    right: 0;
+    transform: rotate(180deg);
+}
+
+/* 迷雾粒子动画层 */
+.fog-particles {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-image: url('../images/fog_particles.png');
+    background-size: 256px 256px;
+    background-repeat: repeat;
+    z-index: 99;
+    pointer-events: none;
+    opacity: 0.15;
+    animation: fog-drift 30s linear infinite;
+}
+
+@keyframes fog-drift {
+    0% {
+        background-position: 0 0;
+    }
+    100% {
+        background-position: 256px 256px;
+    }
+}
+
+/* 迷雾边框组合样式 */
+.fog-map-border {
+    position: relative;
+    overflow: hidden;
+}
+
+/* 响应式调整 - 平板 */
+@media (max-width: 768px) {
+    .fog-border-horizontal {
+        height: 80px;
+    }
+
+    .fog-border-vertical {
+        width: 80px;
+    }
+
+    .fog-corner {
+        width: 120px;
+        height: 120px;
     }
 }
 

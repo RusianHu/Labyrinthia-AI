@@ -155,7 +155,7 @@ class ContentGenerator:
                 game_map.description = map_info.get("description", "一个神秘的地下城层")
                 # 获取地板主题，验证是否为有效值
                 floor_theme = map_info.get("floor_theme", "normal")
-                valid_themes = ["normal", "magic", "abandoned", "cave", "combat"]
+                valid_themes = ["normal", "magic", "abandoned", "cave", "combat", "grassland", "desert", "farmland", "snowfield", "town"]
                 if floor_theme in valid_themes:
                     game_map.floor_theme = floor_theme
                 else:

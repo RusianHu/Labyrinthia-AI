@@ -7,6 +7,7 @@ class FloorLayerManager {
     constructor() {
         this.layers = new Map();
         this.presets = {
+            // 地下城系列主题
             normal: {
                 base: 'floor-stone-basic',
                 overlay: 'floor-overlay-cracks',
@@ -36,6 +37,37 @@ class FloorLayerManager {
                 overlay: 'floor-overlay-blood',
                 baseOpacity: 0.8,
                 overlayOpacity: 0.6
+            },
+            // 地上自然系列主题
+            grassland: {
+                base: 'floor-grass-field',
+                overlay: 'floor-overlay-flowers',
+                baseOpacity: 0.85,
+                overlayOpacity: 0.6
+            },
+            desert: {
+                base: 'floor-sand-desert',
+                overlay: 'floor-overlay-footprints',
+                baseOpacity: 0.8,
+                overlayOpacity: 0.4
+            },
+            farmland: {
+                base: 'floor-farmland-soil',
+                overlay: 'floor-overlay-crops',
+                baseOpacity: 0.8,
+                overlayOpacity: 0.7
+            },
+            snowfield: {
+                base: 'floor-snow-field',
+                overlay: 'floor-overlay-ice',
+                baseOpacity: 0.9,
+                overlayOpacity: 0.5
+            },
+            town: {
+                base: 'floor-cobblestone-street',
+                overlay: 'floor-overlay-cracks',
+                baseOpacity: 0.85,
+                overlayOpacity: 0.3
             }
         };
     }
