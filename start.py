@@ -47,18 +47,36 @@ def check_config():
     """检查配置"""
     try:
         from config import config
-        
-        if not config.llm.api_key or config.llm.api_key == "your-api-key-here":
-            print("⚠️  警告: 未设置Gemini API密钥")
-            print("请在config.py中设置你的API密钥")
-            print("或者设置环境变量 GEMINI_API_KEY")
+
+        # 检查当前 Provider 的 API Key
+        provider_name = config.llm.provider.value
+
+        if not config.llm.api_key:
+            print(f"⚠️  警告: 未设置 {provider_name.upper()} API 密钥")
+            print(f"请在 .env 文件中设置对应的 API Key:")
+
+            # 根据不同的 Provider 给出具体提示
+            if provider_name == "gemini":
+                print("   GEMINI_API_KEY=your_key_here")
+            elif provider_name == "openrouter":
+                print("   OPENROUTER_API_KEY=your_key_here")
+            elif provider_name == "openai":
+                print("   OPENAI_API_KEY=your_key_here")
+            elif provider_name == "lmstudio":
+                print("   LMSTUDIO_BASE_URL=http://localhost:1234/v1")
+
+            print("或者在 config.py 中直接修改默认配置")
             return False
-        
+
         print("✅ 配置检查通过")
+        print(f"   LLM Provider: {provider_name}")
+        print(f"   Model: {config.llm.model_name}")
         return True
-        
+
     except Exception as e:
         print(f"❌ 配置检查失败: {e}")
+        import traceback
+        traceback.print_exc()
         return False
 
 
