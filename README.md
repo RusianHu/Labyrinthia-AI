@@ -8,7 +8,7 @@
 
 > 一个基于 DND 背景的 Roguelike 地牢探险游戏，由大语言模型实时生成游戏内容和叙事。
 
-<img width="811" height="1254" alt="image" src="https://github.com/user-attachments/assets/2b5612ce-b522-40e7-b23e-ae1f15b8f4f4" />
+<img width="784" height="1282" alt="image" src="https://github.com/user-attachments/assets/1cd663be-5162-445f-b96f-3b1b72bc5250" />
 
 ## ✨ 基础功能
 
