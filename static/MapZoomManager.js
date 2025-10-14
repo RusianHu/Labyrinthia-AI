@@ -10,6 +10,13 @@ class MapZoomManager {
 
         // 获取实际的滚动容器（.dungeon-content）
         this.scrollContainer = null;
+        this.scrollPadding = {
+            top: 0,
+            right: 0,
+            bottom: 0,
+            left: 0
+        };
+        this.panBufferThreshold = 1.05;
 
         // 缩放配置
         this.scale = 1;
@@ -57,6 +64,10 @@ class MapZoomManager {
             return;
         }
 
+        // 缓存当前的内边距，供滚动偏移使用
+        this.updateScrollPadding();
+        this.updatePanPaddingForScale(this.scrollPadding, { overrideScroll: true });
+
         // 设置初始样式
         this.mapGrid.style.transformOrigin = 'top left';
         this.mapGrid.style.transition = 'transform 0.1s ease-out';
@@ -96,33 +107,108 @@ class MapZoomManager {
         this.scrollContainer.addEventListener('mouseup', this._handleMouseUp);
         this.scrollContainer.addEventListener('mouseleave', this._handleMouseUp);
     }
+
+    updateScrollPadding() {
+        if (!this.scrollContainer) {
+            this.scrollPadding = { top: 0, right: 0, bottom: 0, left: 0 };
+            return this.scrollPadding;
+        }
+
+        const styles = window.getComputedStyle(this.scrollContainer);
+        const parseValue = (value) => {
+            const parsed = parseFloat(value);
+            return Number.isNaN(parsed) ? 0 : parsed;
+        };
+
+        this.scrollPadding = {
+            top: parseValue(styles.paddingTop),
+            right: parseValue(styles.paddingRight),
+            bottom: parseValue(styles.paddingBottom),
+            left: parseValue(styles.paddingLeft)
+        };
+
+        return this.scrollPadding;
+    }
+
+    computePanBufferScale() {
+        if (this.scale <= this.panBufferThreshold) {
+            return 0;
+        }
+
+        const effectiveRange = this.maxScale - this.panBufferThreshold;
+        if (effectiveRange <= 0) {
+            return 1;
+        }
+
+        const ratio = (this.scale - this.panBufferThreshold) / effectiveRange;
+        return Math.min(1, Math.max(0, ratio));
+    }
+
+    updatePanPaddingForScale(prevPadding = null, options = {}) {
+        if (!this.scrollContainer) {
+            if (prevPadding) {
+                this.scrollPadding = { ...prevPadding };
+                return this.scrollPadding;
+            }
+            return { top: 0, right: 0, bottom: 0, left: 0 };
+        }
+
+        const previousPadding = prevPadding ? { ...prevPadding } : { ...this.scrollPadding };
+        const { overrideScroll = false } = options;
+
+        const bufferScale = this.computePanBufferScale();
+        this.scrollContainer.style.setProperty('--map-pan-scale', bufferScale.toFixed(4));
+
+        const newPadding = this.updateScrollPadding();
+
+        if (!overrideScroll) {
+            const deltaLeft = newPadding.left - previousPadding.left;
+            const deltaTop = newPadding.top - previousPadding.top;
+
+            if (deltaLeft !== 0) {
+                this.scrollContainer.scrollLeft += deltaLeft;
+            }
+            if (deltaTop !== 0) {
+                this.scrollContainer.scrollTop += deltaTop;
+            }
+        }
+
+        return newPadding;
+    }
+
+    getScrollPadding() {
+        return { ...this.updateScrollPadding() };
+    }
     
     handleWheel(e) {
+        if (!this.scrollContainer) return;
+
         e.preventDefault();
 
-        // 获取鼠标在滚动容器中的位置
         const rect = this.scrollContainer.getBoundingClientRect();
         const x = e.clientX - rect.left;
         const y = e.clientY - rect.top;
 
-        // 计算缩放方向
+        const previousScale = this.scale;
         const delta = e.deltaY > 0 ? -this.scaleStep : this.scaleStep;
-        const newScale = Math.max(this.minScale, Math.min(this.maxScale, this.scale + delta));
+        const newScale = Math.max(this.minScale, Math.min(this.maxScale, previousScale + delta));
 
-        if (newScale !== this.scale) {
-            // 计算缩放前后的偏移量，使缩放以鼠标位置为中心
-            const scaleRatio = newScale / this.scale;
-
-            // 更新滚动位置以保持鼠标位置不变
+        if (newScale !== previousScale) {
             const scrollX = this.scrollContainer.scrollLeft;
             const scrollY = this.scrollContainer.scrollTop;
+            const previousPadding = { ...this.scrollPadding };
+            const scaleRatio = newScale / previousScale;
 
             this.scale = newScale;
             this.applyScale();
 
-            // 调整滚动位置
-            this.scrollContainer.scrollLeft = scrollX * scaleRatio + (x * (scaleRatio - 1));
-            this.scrollContainer.scrollTop = scrollY * scaleRatio + (y * (scaleRatio - 1));
+            const newPadding = this.updatePanPaddingForScale(previousPadding, { overrideScroll: true });
+
+            const newScrollLeft = (scrollX + x - previousPadding.left) * scaleRatio + newPadding.left - x;
+            const newScrollTop = (scrollY + y - previousPadding.top) * scaleRatio + newPadding.top - y;
+
+            this.scrollContainer.scrollLeft = newScrollLeft;
+            this.scrollContainer.scrollTop = newScrollTop;
         }
     }
     
@@ -163,16 +249,35 @@ class MapZoomManager {
             const touch2 = e.touches[1];
 
             const currentDistance = this.getDistance(touch1, touch2);
+            if (currentDistance <= 0) {
+                return;
+            }
+
             const scaleChange = currentDistance / this.initialDistance;
+            const previousScale = this.scale;
+            const tentativeScale = this.initialScale * scaleChange;
+            const newScale = Math.max(this.minScale, Math.min(this.maxScale, tentativeScale));
 
-            const newScale = Math.max(
-                this.minScale,
-                Math.min(this.maxScale, this.initialScale * scaleChange)
-            );
+            if (newScale !== previousScale) {
+                const rect = this.scrollContainer.getBoundingClientRect();
+                const anchorX = ((touch1.clientX + touch2.clientX) / 2) - rect.left;
+                const anchorY = ((touch1.clientY + touch2.clientY) / 2) - rect.top;
 
-            if (newScale !== this.scale) {
+                const scrollX = this.scrollContainer.scrollLeft;
+                const scrollY = this.scrollContainer.scrollTop;
+                const previousPadding = { ...this.scrollPadding };
+                const scaleRatio = newScale / previousScale;
+
                 this.scale = newScale;
                 this.applyScale();
+
+                const newPadding = this.updatePanPaddingForScale(previousPadding, { overrideScroll: true });
+
+                const newScrollLeft = (scrollX + anchorX - previousPadding.left) * scaleRatio + newPadding.left - anchorX;
+                const newScrollTop = (scrollY + anchorY - previousPadding.top) * scaleRatio + newPadding.top - anchorY;
+
+                this.scrollContainer.scrollLeft = newScrollLeft;
+                this.scrollContainer.scrollTop = newScrollTop;
             }
         } else if (e.touches.length === 1 && this.isPanning) {
             // 单指拖动
@@ -284,16 +389,56 @@ class MapZoomManager {
     // 公共方法：重置缩放
     resetZoom() {
         if (!this.scrollContainer) return;
+        const previousPadding = { ...this.scrollPadding };
         this.scale = 1;
         this.applyScale();
-        this.scrollContainer.scrollLeft = 0;
-        this.scrollContainer.scrollTop = 0;
+        const newPadding = this.updatePanPaddingForScale(previousPadding, { overrideScroll: true });
+        this.scrollContainer.scrollLeft = newPadding.left;
+        this.scrollContainer.scrollTop = newPadding.top;
     }
     
     // 公共方法：设置缩放级别
     setZoom(scale) {
-        this.scale = Math.max(this.minScale, Math.min(this.maxScale, scale));
+        const clamped = Math.max(this.minScale, Math.min(this.maxScale, scale));
+        if (!this.scrollContainer) {
+            this.scale = clamped;
+            this.applyScale();
+            return;
+        }
+
+        const previousScale = this.scale || 1;
+        const previousPadding = { ...this.scrollPadding };
+
+        this.scale = clamped;
         this.applyScale();
+
+        const newPadding = this.updatePanPaddingForScale(previousPadding, { overrideScroll: true });
+
+        if (clamped !== previousScale) {
+            const ratio = clamped / previousScale;
+            if (Number.isFinite(ratio) && ratio > 0) {
+                const scrollX = this.scrollContainer.scrollLeft;
+                const scrollY = this.scrollContainer.scrollTop;
+                const anchorX = this.scrollContainer.clientWidth / 2;
+                const anchorY = this.scrollContainer.clientHeight / 2;
+
+                const newScrollLeft = (scrollX + anchorX - previousPadding.left) * ratio + newPadding.left - anchorX;
+                const newScrollTop = (scrollY + anchorY - previousPadding.top) * ratio + newPadding.top - anchorY;
+
+                this.scrollContainer.scrollLeft = newScrollLeft;
+                this.scrollContainer.scrollTop = newScrollTop;
+            }
+        } else {
+            const deltaLeft = newPadding.left - previousPadding.left;
+            const deltaTop = newPadding.top - previousPadding.top;
+
+            if (deltaLeft !== 0) {
+                this.scrollContainer.scrollLeft += deltaLeft;
+            }
+            if (deltaTop !== 0) {
+                this.scrollContainer.scrollTop += deltaTop;
+            }
+        }
     }
     
     // 公共方法：获取当前缩放级别
@@ -322,9 +467,10 @@ class MapZoomManager {
             this.mapGrid.style.transition = '';
         }
         this.scrollContainer.style.cursor = '';
+        this.scrollContainer.style.removeProperty('--map-pan-scale');
+        this.scrollPadding = { top: 0, right: 0, bottom: 0, left: 0 };
     }
 }
 
 // 导出到全局作用域
 window.MapZoomManager = MapZoomManager;
-

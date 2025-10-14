@@ -262,11 +262,15 @@ Object.assign(LabyrinthiaGame.prototype, {
         setTimeout(() => {
             if (typeof MapZoomManager !== 'undefined') {
                 // 保存当前缩放级别
-                const currentZoom = this.mapZoomManager ? this.mapZoomManager.getZoom() : 1;
-                const currentScrollLeft = this.mapZoomManager && this.mapZoomManager.mapContainer ?
-                    this.mapZoomManager.mapContainer.scrollLeft : 0;
-                const currentScrollTop = this.mapZoomManager && this.mapZoomManager.mapContainer ?
-                    this.mapZoomManager.mapContainer.scrollTop : 0;
+                const previousManager = this.mapZoomManager || null;
+                const currentZoom = previousManager ? previousManager.getZoom() : 1;
+                const previousScrollContainer = previousManager && previousManager.scrollContainer ?
+                    previousManager.scrollContainer : null;
+                const hadScrollState = Boolean(previousScrollContainer);
+                const currentScrollLeft = previousScrollContainer ?
+                    previousScrollContainer.scrollLeft : null;
+                const currentScrollTop = previousScrollContainer ?
+                    previousScrollContainer.scrollTop : null;
 
                 // 如果已存在，先销毁旧的
                 if (this.mapZoomManager) {
@@ -287,14 +291,31 @@ Object.assign(LabyrinthiaGame.prototype, {
                     // 恢复之前的缩放级别和滚动位置
                     if (currentZoom !== 1) {
                         this.mapZoomManager.setZoom(currentZoom);
-                        // 恢复滚动位置
+                    }
+
+                    const scrollContainer = this.mapZoomManager.scrollContainer;
+                    if (scrollContainer) {
+                        const padding = this.mapZoomManager.getScrollPadding();
+                        const targetLeft = hadScrollState && currentScrollLeft !== null ?
+                            currentScrollLeft : padding.left;
+                        const targetTop = hadScrollState && currentScrollTop !== null ?
+                            currentScrollTop : padding.top;
+
+                        // 恢复或应用默认滚动偏移
                         setTimeout(() => {
-                            if (this.mapZoomManager.mapContainer) {
-                                this.mapZoomManager.mapContainer.scrollLeft = currentScrollLeft;
-                                this.mapZoomManager.mapContainer.scrollTop = currentScrollTop;
+                            if (!this.mapZoomManager || this.mapZoomManager.scrollContainer !== scrollContainer) {
+                                return;
+                            }
+
+                            if (typeof targetLeft === 'number') {
+                                scrollContainer.scrollLeft = targetLeft;
+                            }
+                            if (typeof targetTop === 'number') {
+                                scrollContainer.scrollTop = targetTop;
                             }
                         }, 50);
                     }
+
                     console.log('MapZoomManager initialized and ready after map update (zoom:', currentZoom, ')');
                 } else {
                     console.warn('MapZoomManager initialization failed');
