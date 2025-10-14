@@ -295,10 +295,29 @@ Object.assign(LabyrinthiaGame.prototype, {
                             this.mapZoomManager.getScrollPadding() :
                             { left: 0, top: 0, right: 0, bottom: 0 };
 
-                        const targetLeft = hadScrollState && currentScrollLeft !== null ?
-                            currentScrollLeft : padding.left;
-                        const targetTop = hadScrollState && currentScrollTop !== null ?
-                            currentScrollTop : padding.top;
+                        let targetLeft, targetTop;
+
+                        // 【修复】如果是新地图(没有之前的滚动状态),居中到玩家位置
+                        if (!hadScrollState && this.gameState && this.gameState.player && this.gameState.player.position) {
+                            const [playerX, playerY] = this.gameState.player.position;
+                            const tileSize = 24; // 默认瓦片大小
+                            const containerWidth = scrollContainer.clientWidth;
+                            const containerHeight = scrollContainer.clientHeight;
+
+                            // 计算玩家在地图中的像素位置
+                            const playerPixelX = playerX * tileSize;
+                            const playerPixelY = playerY * tileSize;
+
+                            // 居中到玩家位置
+                            targetLeft = padding.left + playerPixelX - containerWidth / 2;
+                            targetTop = padding.top + playerPixelY - containerHeight / 2;
+                        } else {
+                            // 保持之前的滚动位置
+                            targetLeft = hadScrollState && currentScrollLeft !== null ?
+                                currentScrollLeft : padding.left;
+                            targetTop = hadScrollState && currentScrollTop !== null ?
+                                currentScrollTop : padding.top;
+                        }
 
                         // 【修复抖动】先设置滚动位置，再应用缩放，避免缩放时的抖动
                         if (typeof targetLeft === 'number') {

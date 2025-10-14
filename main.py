@@ -2693,6 +2693,10 @@ if config.game.debug_mode:
                     tile.is_explored = True
                     tile.is_visible = True
 
+                # 【修复】更新周围瓦片的可见性
+                from game_engine import game_engine as ge
+                ge._update_visibility(game_state, spawn_positions[0][0], spawn_positions[0][1])
+
             # 清空旧怪物列表（重要！）
             game_state.monsters.clear()
 

@@ -1329,6 +1329,9 @@ class GameEngine:
             tile.is_explored = True
             tile.is_visible = True
 
+        # 【修复】更新周围瓦片的可见性
+        self._update_visibility(game_state, spawn_position[0], spawn_position[1])
+
         # 清空旧怪物列表（重要！）
         game_state.monsters.clear()
 
@@ -1414,6 +1417,9 @@ class GameEngine:
             tile.character_id = game_state.player.id
             tile.is_explored = True
             tile.is_visible = True
+
+        # 【修复】更新周围瓦片的可见性
+        self._update_visibility(game_state, spawn_position[0], spawn_position[1])
 
         # 清空旧怪物列表（重要！）
         game_state.monsters.clear()

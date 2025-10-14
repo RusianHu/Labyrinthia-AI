@@ -221,6 +221,12 @@ class LabyrinthiaGame {
         this.updateControlPanel();
         this.processPendingEffects();
 
+        // 【修复】更新视野，确保地图样式正确显示
+        if (this.localEngine && this.gameState.player && this.gameState.player.position) {
+            const [x, y] = this.gameState.player.position;
+            this.localEngine.updateVisibility(x, y);
+        }
+
         // 更新方向按钮状态
         this.updateDirectionButtons();
     }

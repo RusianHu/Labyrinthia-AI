@@ -137,12 +137,24 @@ class LocalGameEngine {
                 const x = centerX + dx;
                 const y = centerY + dy;
                 const tile = this.getTile(x, y);
-                
+
                 if (tile) {
                     tile.is_visible = true;
                     // 相邻瓦片标记为已探索
                     if (Math.abs(dx) + Math.abs(dy) <= 1) {
                         tile.is_explored = true;
+                    }
+
+                    // 【修复】同步更新DOM元素的CSS类
+                    const tileElement = document.querySelector(`[data-x="${x}"][data-y="${y}"]`);
+                    if (tileElement) {
+                        if (tile.is_explored) {
+                            tileElement.classList.remove('tile-unexplored');
+                            tileElement.classList.add('tile-explored');
+                        }
+                        if (tile.is_visible) {
+                            tileElement.classList.add('tile-visible');
+                        }
                     }
                 }
             }

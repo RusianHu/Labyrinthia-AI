@@ -761,6 +761,10 @@ class EventChoiceSystem:
                 tile.is_explored = True
                 tile.is_visible = True
 
+            # 【修复】更新周围瓦片的可见性
+            from game_engine import game_engine
+            game_engine._update_visibility(game_state, spawn_positions[0][0], spawn_positions[0][1])
+
         # 清空旧怪物并生成新的
         game_state.monsters.clear()
 
