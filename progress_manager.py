@@ -71,7 +71,7 @@ class ProgressManager:
     
     def _setup_default_rules(self):
         """设置默认进度规则"""
-        # 地图切换规则 - 基于楼层深度计算
+        # 地图切换规则 - 基于楼层变化量计算（修复：改为固定增量而非绝对深度）
         self.progress_rules[ProgressEventType.MAP_TRANSITION] = ProgressRule(
             event_type=ProgressEventType.MAP_TRANSITION,
             custom_calculator=self._calculate_map_transition_progress
@@ -80,7 +80,7 @@ class ProgressManager:
         # 【修复】战斗胜利规则 - 支持任务专属怪物的自定义进度值
         self.progress_rules[ProgressEventType.COMBAT_VICTORY] = ProgressRule(
             event_type=ProgressEventType.COMBAT_VICTORY,
-            base_increment=5.0,
+            base_increment=3.0,  # 降低普通战斗进度（原5.0）
             multiplier=1.0,
             custom_calculator=self._calculate_combat_victory_progress
         )
@@ -88,35 +88,56 @@ class ProgressManager:
         # 探索规则
         self.progress_rules[ProgressEventType.EXPLORATION] = ProgressRule(
             event_type=ProgressEventType.EXPLORATION,
-            base_increment=2.0,
+            base_increment=1.5,  # 降低探索进度（原2.0）
             multiplier=1.0
         )
 
         # 【修复】剧情事件规则 - 支持任务专属事件的自定义进度值
         self.progress_rules[ProgressEventType.STORY_EVENT] = ProgressRule(
             event_type=ProgressEventType.STORY_EVENT,
-            base_increment=10.0,
+            base_increment=8.0,  # 降低普通事件进度（原10.0）
             multiplier=1.0,
             custom_calculator=self._calculate_story_event_progress
         )
-    
+
     def _calculate_map_transition_progress(self, context: Any, current_progress: float) -> float:
-        """计算地图切换的进度增量"""
-        if not isinstance(context, int):
+        """计算地图切换的进度增量
+
+        【重要修复】改为基于楼层变化量而非绝对深度计算
+        这样可以避免进度跳跃式增长，确保每次切换楼层都是固定增量
+        """
+        if not isinstance(context, dict):
+            # 兼容旧的调用方式（直接传入depth整数）
+            # 这种情况下使用固定增量
+            return config.game.map_transition_progress
+
+        # 新的调用方式：传入包含old_depth和new_depth的字典
+        old_depth = context.get('old_depth', 0)
+        new_depth = context.get('new_depth', 0)
+
+        # 计算楼层变化量（绝对值，上楼或下楼都算）
+        depth_change = abs(new_depth - old_depth)
+
+        if depth_change == 0:
+            # 没有楼层变化，不增加进度
             return 0.0
 
-        current_depth = context
-        # 使用配置的进度系数
-        progress_per_floor = config.game.quest_progress_multiplier
-        new_progress = current_depth * progress_per_floor
+        # 使用配置的地图切换进度增量
+        # 每次切换楼层固定增加配置的百分比
+        increment = config.game.map_transition_progress * depth_change
 
-        # 返回增量而不是绝对值
-        return max(0.0, new_progress - current_progress)
+        # 应用单次进度增量上限，避免进度跳跃过大
+        max_single_increment = config.game.max_single_progress_increment
+        increment = min(increment, max_single_increment)
+
+        logger.info(f"Map transition progress: {old_depth} -> {new_depth}, increment: {increment:.1f}%")
+
+        return increment
 
     def _calculate_combat_victory_progress(self, context: Any, current_progress: float) -> float:
         """计算战斗胜利的进度增量"""
         if not isinstance(context, dict):
-            return 5.0  # 默认进度值
+            return 3.0  # 默认进度值（已降低）
 
         # 检查是否是任务专属怪物
         if 'progress_value' in context:
@@ -125,12 +146,12 @@ class ProgressManager:
             return progress_value
 
         # 普通怪物使用默认进度值
-        return 5.0
+        return 3.0
 
     def _calculate_story_event_progress(self, context: Any, current_progress: float) -> float:
         """计算剧情事件的进度增量"""
         if not isinstance(context, dict):
-            return 10.0  # 默认进度值
+            return 8.0  # 默认进度值（已降低）
 
         # 检查是否是任务专属事件
         if 'progress_value' in context:
@@ -139,7 +160,7 @@ class ProgressManager:
             return progress_value
 
         # 普通事件使用默认进度值
-        return 10.0
+        return 8.0
     
     def register_rule(self, rule: ProgressRule):
         """注册进度规则"""
@@ -213,29 +234,53 @@ class ProgressManager:
         """更新任务进度"""
         old_progress = quest.progress_percentage
         new_progress = min(100.0, old_progress + increment)
-        
-        # 构建LLM提示
+
+        # 【新增】检查是否为调试清理（跳过LLM交互）
+        is_debug_clear = (
+            isinstance(context.context_data, dict) and
+            context.context_data.get("debug_clear", False)
+        )
+
+        if is_debug_clear:
+            # 调试清理模式：仅更新进度数值，不触发LLM交互
+            logger.info(f"Debug clear mode: updating progress without LLM interaction ({old_progress:.1f}% -> {new_progress:.1f}%)")
+            quest.progress_percentage = new_progress
+
+            # 检查任务完成（但不触发LLM）
+            if new_progress >= 100.0:
+                await self._complete_quest(context.game_state, quest)
+
+            return {
+                "success": True,
+                "progress_increment": increment,
+                "new_progress": new_progress,
+                "quest_completed": quest.is_completed,
+                "message": f"任务进度更新: {old_progress:.1f}% -> {new_progress:.1f}% (调试模式)",
+                "debug_mode": True
+            }
+
+        # 正常模式：构建LLM提示
         prompt = self._build_progress_update_prompt(context, quest, old_progress, new_progress)
-        
+
         try:
             # 调用LLM更新任务内容
             result = await llm_service._async_generate_json(prompt)
-            
+
             if result:
                 # 更新任务数据
                 quest.progress_percentage = new_progress
                 quest.story_context = result.get("story_context", quest.story_context)
                 quest.llm_notes = result.get("llm_notes", quest.llm_notes)
-                
+
                 # 检查任务完成
                 if new_progress >= 100.0 or result.get("should_complete", False):
                     await self._complete_quest(context.game_state, quest)
-                
+
                 # 更新目标
                 if result.get("new_objectives"):
                     quest.objectives = result["new_objectives"]
                     quest.completed_objectives = [False] * len(quest.objectives)
-                
+
                 return {
                     "success": True,
                     "progress_increment": increment,
@@ -244,15 +289,15 @@ class ProgressManager:
                     "story_update": result.get("story_context", ""),
                     "message": f"任务进度更新: {old_progress:.1f}% -> {new_progress:.1f}%"
                 }
-            
+
         except Exception as e:
             logger.error(f"Failed to update quest progress with LLM: {e}")
             # 降级处理：仅更新进度数值
             quest.progress_percentage = new_progress
-            
+
             if new_progress >= 100.0:
                 await self._complete_quest(context.game_state, quest)
-        
+
         return {
             "success": True,
             "progress_increment": increment,
@@ -261,12 +306,12 @@ class ProgressManager:
             "message": f"任务进度更新: {old_progress:.1f}% -> {new_progress:.1f}%"
         }
     
-    def _build_progress_update_prompt(self, context: ProgressContext, quest: Quest, 
+    def _build_progress_update_prompt(self, context: ProgressContext, quest: Quest,
                                     old_progress: float, new_progress: float) -> str:
         """构建进度更新的LLM提示"""
         return f"""
         任务进度更新请求：
-        
+
         当前任务信息：
         - 标题：{quest.title}
         - 描述：{quest.description}
@@ -274,19 +319,21 @@ class ProgressManager:
         - 新进度：{new_progress:.1f}%
         - 故事背景：{quest.story_context}
         - LLM笔记：{quest.llm_notes}
-        
+
         触发事件：
         - 事件类型：{context.event_type.value}
         - 事件数据：{context.context_data}
         - 玩家等级：{context.game_state.player.stats.level}
         - 当前地图：{context.game_state.current_map.name}
         - 地图深度：{context.game_state.current_map.depth}
-        
+
         进度控制说明：
         - 进度已从 {old_progress:.1f}% 更新到 {new_progress:.1f}%
         - 最大楼层数：{config.game.max_quest_floors}
-        - 进度系数：{config.game.quest_progress_multiplier}
-        
+        - 地图切换进度增量：{config.game.map_transition_progress}%
+        - 战斗胜利进度：{config.game.combat_victory_weight}%
+        - 剧情事件进度：{config.game.story_event_weight}%
+
         请根据新的进度更新任务内容，返回JSON格式：
         {{
             "story_context": "更新的故事背景，反映当前进度和事件",
@@ -295,7 +342,7 @@ class ProgressManager:
             "new_objectives": ["如果需要，更新的目标列表"],
             "narrative_update": "给玩家的叙述更新，描述当前进展"
         }}
-        
+
         注意：
         1. 进度百分比由系统控制，你只需要更新故事内容
         2. 当进度达到100%时，任务应该完成

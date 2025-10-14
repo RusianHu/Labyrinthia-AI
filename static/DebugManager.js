@@ -498,14 +498,28 @@ const DebugMethods = {
             const result = await response.json();
 
             if (result.success) {
-                this.addMessage(`🧹 已清空 ${result.cleared_count} 个敌人`);
+                // 构建详细的反馈消息
+                let message = `🧹 已清理 ${result.cleared_count} 个怪物`;
+
+                if (result.quest_monsters_cleared > 0) {
+                    message += `\n📋 其中包含 ${result.quest_monsters_cleared} 个任务怪物`;
+                    if (result.total_progress_value > 0) {
+                        message += `\n📈 任务进度增加: +${result.total_progress_value.toFixed(1)}%`;
+                    }
+                }
+
+                if (result.progress_updated) {
+                    message += '\n✅ 任务进度已更新';
+                }
+
+                this.addMessage(message);
                 await this.refreshGameState();
             } else {
-                this.addMessage(`❌ 清空敌人失败: ${result.message}`);
+                this.addMessage(`❌ 清理怪物失败: ${result.message}`);
             }
         } catch (error) {
             console.error('Debug clear enemies error:', error);
-            this.addMessage('❌ 清空敌人时发生错误');
+            this.addMessage('❌ 清理怪物时发生错误');
         } finally {
             this.hideLLMOverlay();
         }

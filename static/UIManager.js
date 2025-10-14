@@ -261,7 +261,7 @@ Object.assign(LabyrinthiaGame.prototype, {
         // 使用setTimeout确保DOM已完全更新
         setTimeout(() => {
             if (typeof MapZoomManager !== 'undefined') {
-                // 保存当前缩放级别
+                // 保存当前缩放级别和滚动位置
                 const previousManager = this.mapZoomManager || null;
                 const currentZoom = previousManager ? previousManager.getZoom() : 1;
                 const previousScrollContainer = previousManager && previousManager.scrollContainer ?
@@ -288,32 +288,35 @@ Object.assign(LabyrinthiaGame.prototype, {
                 const reinitSuccess = this.mapZoomManager.reinitialize();
 
                 if (reinitSuccess) {
-                    // 恢复之前的缩放级别和滚动位置
-                    if (currentZoom !== 1) {
-                        this.mapZoomManager.setZoom(currentZoom);
-                    }
-
                     const scrollContainer = this.mapZoomManager.scrollContainer;
                     if (scrollContainer) {
-                        const padding = this.mapZoomManager.getScrollPadding();
+                        // 【修复】确保 getScrollPadding 方法存在
+                        const padding = typeof this.mapZoomManager.getScrollPadding === 'function' ?
+                            this.mapZoomManager.getScrollPadding() :
+                            { left: 0, top: 0, right: 0, bottom: 0 };
+
                         const targetLeft = hadScrollState && currentScrollLeft !== null ?
                             currentScrollLeft : padding.left;
                         const targetTop = hadScrollState && currentScrollTop !== null ?
                             currentScrollTop : padding.top;
 
-                        // 恢复或应用默认滚动偏移
-                        setTimeout(() => {
-                            if (!this.mapZoomManager || this.mapZoomManager.scrollContainer !== scrollContainer) {
-                                return;
-                            }
+                        // 【修复抖动】先设置滚动位置，再应用缩放，避免缩放时的抖动
+                        if (typeof targetLeft === 'number') {
+                            scrollContainer.scrollLeft = targetLeft;
+                        }
+                        if (typeof targetTop === 'number') {
+                            scrollContainer.scrollTop = targetTop;
+                        }
 
-                            if (typeof targetLeft === 'number') {
-                                scrollContainer.scrollLeft = targetLeft;
-                            }
-                            if (typeof targetTop === 'number') {
-                                scrollContainer.scrollTop = targetTop;
-                            }
-                        }, 50);
+                        // 恢复之前的缩放级别（在滚动位置设置之后）
+                        if (currentZoom !== 1) {
+                            // 使用requestAnimationFrame确保在下一帧应用缩放，避免抖动
+                            requestAnimationFrame(() => {
+                                if (this.mapZoomManager && this.mapZoomManager.scrollContainer === scrollContainer) {
+                                    this.mapZoomManager.setZoom(currentZoom);
+                                }
+                            });
+                        }
                     }
 
                     console.log('MapZoomManager initialized and ready after map update (zoom:', currentZoom, ')');

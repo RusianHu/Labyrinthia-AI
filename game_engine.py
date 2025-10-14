@@ -1274,8 +1274,11 @@ class GameEngine:
 
     async def _descend_stairs(self, game_state: GameState) -> str:
         """下楼梯"""
+        # 记录旧的楼层深度
+        old_depth = game_state.current_map.depth
+
         # 生成新的地图层
-        new_depth = game_state.current_map.depth + 1
+        new_depth = old_depth + 1
 
         # 检查是否超过最大楼层限制
         max_floors = config.game.max_quest_floors
@@ -1346,9 +1349,11 @@ class GameEngine:
                 tile.character_id = monster.id
             game_state.monsters.append(monster)
 
-        # 使用新的进程管理器更新任务进度
+        # 【修复】使用新的进程管理器更新任务进度，传递楼层变化信息
         await self._trigger_progress_event(
-            game_state, ProgressEventType.MAP_TRANSITION, new_depth
+            game_state,
+            ProgressEventType.MAP_TRANSITION,
+            {'old_depth': old_depth, 'new_depth': new_depth}
         )
 
         logger.info(f"Descended to floor {new_depth}: {new_map.name}")
@@ -1356,7 +1361,10 @@ class GameEngine:
 
     async def _ascend_stairs(self, game_state: GameState) -> str:
         """上楼梯"""
-        new_depth = game_state.current_map.depth - 1
+        # 记录旧的楼层深度
+        old_depth = game_state.current_map.depth
+
+        new_depth = old_depth - 1
 
         if new_depth < 1:
             return "你已经回到了地面！"
@@ -1427,9 +1435,11 @@ class GameEngine:
                 tile.character_id = monster.id
             game_state.monsters.append(monster)
 
-        # 使用新的进程管理器更新任务进度
+        # 【修复】使用新的进程管理器更新任务进度，传递楼层变化信息
         await self._trigger_progress_event(
-            game_state, ProgressEventType.MAP_TRANSITION, new_depth
+            game_state,
+            ProgressEventType.MAP_TRANSITION,
+            {'old_depth': old_depth, 'new_depth': new_depth}
         )
 
         logger.info(f"Ascended to floor {new_depth}: {new_map.name}")

@@ -956,8 +956,11 @@ async def get_config():
                     "show_quest_progress": config.game.show_quest_progress,
                     "version": config.game.version,
                     "game_name": config.game.game_name,
-                    "quest_progress_multiplier": config.game.quest_progress_multiplier,
-                    "max_quest_floors": config.game.max_quest_floors
+                    "map_transition_progress": config.game.map_transition_progress,
+                    "max_single_progress_increment": config.game.max_single_progress_increment,
+                    "max_quest_floors": config.game.max_quest_floors,
+                    "combat_victory_weight": config.game.combat_victory_weight,
+                    "story_event_weight": config.game.story_event_weight
                 },
                 "llm": {
                     "provider": config.llm.provider.value,
@@ -2845,7 +2848,7 @@ if config.game.debug_mode:
 
     @app.post("/api/game/{game_id}/debug/clear-enemies")
     async def debug_clear_all_enemies(game_id: str, request: Request, response: Response):
-        """调试：清空所有敌人"""
+        """调试：清空所有敌人（触发任务进度检查但不触发LLM交互）"""
         try:
             # 获取用户ID
             user_id = user_session_manager.get_or_create_user_id(request, response)
@@ -2856,8 +2859,24 @@ if config.game.debug_mode:
 
             game_state = game_engine.active_games[game_key]
 
-            # 记录清空的敌人数量
+            # 记录清空的敌人数量和任务怪物信息
             cleared_count = len(game_state.monsters)
+            quest_monsters_cleared = 0
+            total_progress_value = 0.0
+
+            # 统计任务怪物
+            for monster in game_state.monsters:
+                if monster.quest_monster_id:
+                    quest_monsters_cleared += 1
+                    # 查找对应的任务怪物配置
+                    active_quest = next((q for q in game_state.quests if q.is_active), None)
+                    if active_quest:
+                        quest_monster = next(
+                            (qm for qm in active_quest.special_monsters if qm.id == monster.quest_monster_id),
+                            None
+                        )
+                        if quest_monster:
+                            total_progress_value += quest_monster.progress_value
 
             # 清除地图上的敌人标记
             for monster in game_state.monsters:
@@ -2869,10 +2888,37 @@ if config.game.debug_mode:
             # 清空敌人列表
             game_state.monsters.clear()
 
+            # 【新增】触发任务进度检查（如果清理了任务怪物）
+            progress_updated = False
+            if quest_monsters_cleared > 0 and total_progress_value > 0:
+                from progress_manager import progress_manager, ProgressEventType, ProgressContext
+
+                # 为所有任务怪物触发一次进度事件
+                context_data = {
+                    "debug_clear": True,  # 标记为调试清理
+                    "quest_monsters_count": quest_monsters_cleared,
+                    "progress_value": total_progress_value  # 使用总进度值
+                }
+
+                progress_context = ProgressContext(
+                    event_type=ProgressEventType.COMBAT_VICTORY,
+                    game_state=game_state,
+                    context_data=context_data
+                )
+
+                # 触发进度事件（不触发LLM交互）
+                result = await progress_manager.process_event(progress_context)
+                progress_updated = result.get("success", False)
+
+                logger.info(f"Debug clear enemies: cleared {quest_monsters_cleared} quest monsters, total progress: {total_progress_value:.1f}%, updated: {progress_updated}")
+
             return {
                 "success": True,
                 "message": f"已清空所有敌人",
-                "cleared_count": cleared_count
+                "cleared_count": cleared_count,
+                "quest_monsters_cleared": quest_monsters_cleared,
+                "progress_updated": progress_updated,
+                "total_progress_value": total_progress_value
             }
 
         except Exception as e:
