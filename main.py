@@ -1392,6 +1392,80 @@ if config.game.debug_mode:
         user_id = user_session_manager.get_or_create_user_id(request, response)
         return debug_api.get_game_detail(user_id, game_id)
 
+    # ==================== LLM 上下文日志接口 ====================
+
+    @app.get("/api/debug/llm-context/statistics")
+    async def debug_get_llm_context_statistics():
+        """调试：获取LLM上下文统计信息"""
+        from llm_context_manager import llm_context_manager
+        return {
+            "success": True,
+            "statistics": llm_context_manager.get_statistics()
+        }
+
+    @app.get("/api/debug/llm-context/entries")
+    async def debug_get_llm_context_entries(
+        max_entries: int = 50,
+        entry_type: Optional[str] = None
+    ):
+        """调试：获取LLM上下文条目列表"""
+        from llm_context_manager import llm_context_manager, ContextEntryType
+
+        # 筛选类型
+        entry_types = None
+        if entry_type:
+            try:
+                entry_types = [ContextEntryType(entry_type)]
+            except ValueError:
+                return {
+                    "success": False,
+                    "message": f"无效的条目类型: {entry_type}"
+                }
+
+        entries = llm_context_manager.get_recent_context(
+            max_entries=max_entries,
+            entry_types=entry_types
+        )
+
+        return {
+            "success": True,
+            "total_entries": len(entries),
+            "entries": [entry.to_dict() for entry in entries]
+        }
+
+    @app.get("/api/debug/llm-context/formatted")
+    async def debug_get_llm_context_formatted(
+        max_entries: int = 20,
+        include_metadata: bool = False
+    ):
+        """调试：获取格式化的LLM上下文字符串"""
+        from llm_context_manager import llm_context_manager
+
+        context_string = llm_context_manager.build_context_string(
+            max_entries=max_entries,
+            include_metadata=include_metadata
+        )
+
+        return {
+            "success": True,
+            "context_string": context_string,
+            "statistics": llm_context_manager.get_statistics()
+        }
+
+    @app.post("/api/debug/llm-context/clear")
+    async def debug_clear_llm_context():
+        """调试：清空LLM上下文"""
+        from llm_context_manager import llm_context_manager
+
+        old_stats = llm_context_manager.get_statistics()
+        llm_context_manager.clear_all()
+
+        return {
+            "success": True,
+            "message": "LLM上下文已清空",
+            "cleared_entries": old_stats["total_entries"]
+        }
+
     # ==================== 内容生成测试接口 ====================
 
     @app.post("/api/debug/generate-content")
@@ -2615,7 +2689,7 @@ if config.game.debug_mode:
             narrative = treasure_data.get("narrative", "你打开了宝箱，发现了一些宝物！")
 
             # 保存游戏状态
-            await game_engine._save_game_async(game_state)
+            await game_engine._save_game_async(game_state, user_id)
 
             return {
                 "success": True,

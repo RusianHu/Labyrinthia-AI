@@ -12,6 +12,7 @@ from data_models import GameState, Monster, Item
 from llm_service import llm_service
 from prompt_manager import prompt_manager
 from config import config
+from llm_context_manager import llm_context_manager, ContextEntryType
 
 
 logger = logging.getLogger(__name__)
@@ -58,22 +59,25 @@ class LLMInteractionManager:
     def add_context(self, context: InteractionContext):
         """添加交互上下文"""
         self.recent_contexts.append(context)
-        
+
         # 记录到会话事件中
         self.session_events.extend(context.events)
-        
+
         # 根据类型更新特定历史
         if context.interaction_type in [InteractionType.COMBAT_ATTACK, InteractionType.COMBAT_DEFENSE]:
             if context.combat_data:
                 self.combat_history.append(context.combat_data)
-        
+
         if context.movement_data:
             position = context.movement_data.get('new_position')
             if position:
                 self.movement_trail.append(position)
-        
+
         # 保持历史记录不过长
         self._cleanup_history()
+
+        # 同时添加到统一的上下文管理器
+        self._add_to_unified_context(context)
     
     def _cleanup_history(self):
         """清理历史记录 - 基于数量和token估算的智能清理"""
@@ -329,6 +333,46 @@ class LLMInteractionManager:
 
         interaction_key = interaction_type_map.get(context.interaction_type, "default")
         return prompt_manager.get_fallback_message(interaction_key)
+
+    def _add_to_unified_context(self, context: InteractionContext):
+        """将交互上下文添加到统一的上下文管理器"""
+        # 映射InteractionType到ContextEntryType
+        type_mapping = {
+            InteractionType.MOVEMENT: ContextEntryType.MOVEMENT,
+            InteractionType.COMBAT_ATTACK: ContextEntryType.COMBAT_ATTACK,
+            InteractionType.COMBAT_DEFENSE: ContextEntryType.COMBAT_DEFENSE,
+            InteractionType.ITEM_USE: ContextEntryType.ITEM_USE,
+            InteractionType.EVENT_TRIGGER: ContextEntryType.EVENT_TRIGGER,
+            InteractionType.MAP_TRANSITION: ContextEntryType.MAP_TRANSITION,
+            InteractionType.QUEST_PROGRESS: ContextEntryType.QUEST_PROGRESS,
+            InteractionType.EXPLORATION: ContextEntryType.EXPLORATION,
+        }
+
+        entry_type = type_mapping.get(context.interaction_type, ContextEntryType.SYSTEM)
+
+        # 构建内容字符串
+        content = f"{context.primary_action}"
+        if context.events:
+            content += f": {'; '.join(context.events)}"
+
+        # 构建元数据
+        metadata = {
+            "primary_action": context.primary_action,
+            "events": context.events,
+            "environmental_changes": context.environmental_changes
+        }
+
+        if context.combat_data:
+            metadata["combat_data"] = context.combat_data
+        if context.item_data:
+            metadata["item_data"] = context.item_data
+        if context.movement_data:
+            metadata["movement_data"] = context.movement_data
+        if context.quest_data:
+            metadata["quest_data"] = context.quest_data
+
+        # 添加到统一上下文管理器
+        llm_context_manager.add_entry(entry_type, content, metadata)
 
 
 # 全局LLM交互管理器实例

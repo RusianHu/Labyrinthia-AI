@@ -669,6 +669,100 @@ const DebugMethods = {
         }
 
         this.addMessage('🧹 消息日志已清空');
+    },
+
+    async debugShowLLMContext() {
+        // 显示LLM上下文日志
+        try {
+            this.showLLMOverlay('正在加载LLM上下文日志...');
+
+            // 获取统计信息
+            const statsResponse = await fetch('/api/debug/llm-context/statistics');
+            const statsData = await statsResponse.json();
+
+            // 获取最近的上下文条目
+            const entriesResponse = await fetch('/api/debug/llm-context/entries?max_entries=20');
+            const entriesData = await entriesResponse.json();
+
+            this.hideLLMOverlay();
+
+            if (statsData.success && entriesData.success) {
+                // 更新统计信息显示
+                const statsElement = document.getElementById('debug-llm-context-stats');
+                if (statsElement) {
+                    const stats = statsData.statistics;
+                    statsElement.textContent = JSON.stringify(stats, null, 2);
+                }
+
+                // 更新上下文日志显示
+                const logElement = document.getElementById('debug-llm-context-log');
+                if (logElement) {
+                    if (entriesData.entries.length === 0) {
+                        logElement.textContent = '暂无上下文记录';
+                    } else {
+                        // 格式化显示
+                        const formattedEntries = entriesData.entries.map(entry => {
+                            const time = new Date(entry.timestamp).toLocaleTimeString('zh-CN');
+                            return `[${time}] [${entry.entry_type}] ${entry.content}\n  Token估算: ${entry.token_estimate}`;
+                        }).join('\n\n');
+                        logElement.textContent = formattedEntries;
+                    }
+                }
+
+                this.addMessage(`📊 LLM上下文日志已加载（共 ${entriesData.total_entries} 条）`);
+
+                // 确保调试面板是打开的
+                const debugPanel = document.getElementById('debug-panel');
+                if (debugPanel && !debugPanel.classList.contains('show')) {
+                    debugPanel.classList.add('show');
+                }
+            } else {
+                this.addMessage('❌ 加载LLM上下文日志失败', 'error');
+            }
+        } catch (error) {
+            this.hideLLMOverlay();
+            console.error('Failed to load LLM context:', error);
+            this.addMessage('❌ 加载LLM上下文日志时发生错误: ' + error.message, 'error');
+        }
+    },
+
+    async debugClearLLMContext() {
+        // 清空LLM上下文缓存
+        if (!confirm('确定要清空所有LLM上下文缓存吗？这将删除所有历史记录。')) {
+            return;
+        }
+
+        try {
+            this.showLLMOverlay('正在清空LLM上下文缓存...');
+
+            const response = await fetch('/api/debug/llm-context/clear', {
+                method: 'POST'
+            });
+            const data = await response.json();
+
+            this.hideLLMOverlay();
+
+            if (data.success) {
+                this.addMessage(`✅ ${data.message}（已清除 ${data.cleared_entries} 条记录）`);
+
+                // 刷新显示
+                const statsElement = document.getElementById('debug-llm-context-stats');
+                if (statsElement) {
+                    statsElement.textContent = '暂无数据';
+                }
+
+                const logElement = document.getElementById('debug-llm-context-log');
+                if (logElement) {
+                    logElement.textContent = '暂无数据';
+                }
+            } else {
+                this.addMessage('❌ 清空LLM上下文缓存失败', 'error');
+            }
+        } catch (error) {
+            this.hideLLMOverlay();
+            console.error('Failed to clear LLM context:', error);
+            this.addMessage('❌ 清空LLM上下文缓存时发生错误: ' + error.message, 'error');
+        }
     }
 };
 

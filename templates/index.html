@@ -428,6 +428,17 @@
                         <i class="material-icons">clear</i>清空消息日志
                     </button>
                 </div>
+
+                <!-- LLM上下文管理 -->
+                <div class="debug-button-group">
+                    <h5>LLM上下文</h5>
+                    <button class="debug-btn" onclick="game.debugShowLLMContext()" title="查看LLM上下文日志和统计信息">
+                        <i class="material-icons">history</i>查看上下文日志
+                    </button>
+                    <button class="debug-btn" onclick="game.debugClearLLMContext()" title="清空所有LLM上下文缓存" style="background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);">
+                        <i class="material-icons">delete_sweep</i>清空上下文缓存
+                    </button>
+                </div>
             </div>
         </div>
 
@@ -444,6 +455,16 @@
         <div class="debug-section">
             <h4>游戏状态</h4>
             <div id="debug-gamestate" class="debug-content">暂无数据</div>
+        </div>
+
+        <div class="debug-section">
+            <h4>LLM上下文统计</h4>
+            <div id="debug-llm-context-stats" class="debug-content">暂无数据</div>
+        </div>
+
+        <div class="debug-section">
+            <h4>LLM上下文日志（最近20条）</h4>
+            <div id="debug-llm-context-log" class="debug-content">暂无数据</div>
         </div>
     </div>
 
@@ -464,7 +485,7 @@
     <script src="/static/DebugManager.js?v=8"></script>
     <script src="/static/OverlayManager.js?v=4"></script>
     <script src="/static/EffectsManager.js?v=4"></script>
-    <script src="/static/UIManager.js?v=11"></script>
+    <script src="/static/UIManager.js?v=12"></script>
     <script src="/static/MapInteraction.js?v=5"></script>
     <script src="/static/MapZoomManager.js?v=7"></script>
     <script src="/static/GameActions.js?v=5"></script>

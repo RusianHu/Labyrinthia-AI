@@ -32,6 +32,7 @@ class MapZoomManager {
 
         // 平移相关
         this.isPanning = false;
+        this.isReadyToPan = false;
         this.startX = 0;
         this.startY = 0;
         this.scrollLeft = 0;
@@ -224,19 +225,27 @@ class MapZoomManager {
             this.initialDistance = this.getDistance(touch1, touch2);
             this.initialScale = this.scale;
         } else if (e.touches.length === 1) {
-            // 单指触摸 - 直接进入拖动模式
+            // 检查是否触摸在地图瓦片上
+            const touch = e.touches[0];
+            const target = document.elementFromPoint(touch.clientX, touch.clientY);
+            if (target && (target.classList.contains('map-tile') ||
+                target.classList.contains('character-player') ||
+                target.classList.contains('character-monster') ||
+                target.closest('.map-tile'))) {
+                return;
+            }
+
+            // 单指触摸 - 准备拖动模式
             this.touchStartTime = Date.now();
             this.hasMoved = false;
 
-            const touch = e.touches[0];
             this.startX = touch.pageX;
             this.startY = touch.pageY;
             this.scrollLeft = this.scrollContainer.scrollLeft;
             this.scrollTop = this.scrollContainer.scrollTop;
 
-            // 直接进入拖动模式
-            this.isPanning = true;
-            this.scrollContainer.style.cursor = 'grabbing';
+            // 标记准备拖动
+            this.isReadyToPan = true;
         }
     }
     
@@ -279,17 +288,31 @@ class MapZoomManager {
                 this.scrollContainer.scrollLeft = newScrollLeft;
                 this.scrollContainer.scrollTop = newScrollTop;
             }
-        } else if (e.touches.length === 1 && this.isPanning) {
-            // 单指拖动
-            e.preventDefault();
-            const touch = e.touches[0];
-            const x = touch.pageX;
-            const y = touch.pageY;
-            const walkX = this.startX - x;
-            const walkY = this.startY - y;
+        } else if (e.touches.length === 1) {
+            // 如果准备拖动但还没开始
+            if (this.isReadyToPan && !this.isPanning) {
+                const touch = e.touches[0];
+                const moveX = Math.abs(this.startX - touch.pageX);
+                const moveY = Math.abs(this.startY - touch.pageY);
 
-            this.scrollContainer.scrollLeft = this.scrollLeft + walkX;
-            this.scrollContainer.scrollTop = this.scrollTop + walkY;
+                // 只有移动超过阈值才进入拖动模式
+                if (moveX > 5 || moveY > 5) {
+                    this.isPanning = true;
+                    this.hasMoved = true;
+                    this.scrollContainer.style.cursor = 'grabbing';
+                }
+            }
+
+            // 单指拖动
+            if (this.isPanning) {
+                e.preventDefault();
+                const touch = e.touches[0];
+                const walkX = this.startX - touch.pageX;
+                const walkY = this.startY - touch.pageY;
+
+                this.scrollContainer.scrollLeft = this.scrollLeft + walkX;
+                this.scrollContainer.scrollTop = this.scrollTop + walkY;
+            }
         }
     }
     
@@ -304,6 +327,7 @@ class MapZoomManager {
         if (e.touches.length === 0) {
             // 所有手指都离开了
             this.isPanning = false;
+            this.isReadyToPan = false;
             this.scrollContainer.style.cursor = '';
         }
     }
@@ -312,18 +336,42 @@ class MapZoomManager {
         // 只处理左键
         if (e.button !== 0) return;
 
+        // 如果点击的是地图瓦片或角色图标，不启动拖拽
+        const target = e.target;
+        if (target.classList.contains('map-tile') ||
+            target.classList.contains('character-player') ||
+            target.classList.contains('character-monster') ||
+            target.closest('.map-tile')) {
+            return;
+        }
+
         this.hasMoved = false;
         this.startX = e.pageX;
         this.startY = e.pageY;
         this.scrollLeft = this.scrollContainer.scrollLeft;
         this.scrollTop = this.scrollContainer.scrollTop;
 
-        // 直接进入拖动模式
-        this.isPanning = true;
-        this.scrollContainer.style.cursor = 'grabbing';
+        // 标记准备拖动，但不立即进入拖动模式
+        this.isPanning = false;
+        this.isReadyToPan = true;
     }
 
     handleMouseMove(e) {
+        // 如果准备拖动但还没开始
+        if (this.isReadyToPan && !this.isPanning) {
+            const x = e.pageX;
+            const y = e.pageY;
+            const moveX = Math.abs(this.startX - x);
+            const moveY = Math.abs(this.startY - y);
+
+            // 只有移动超过阈值才进入拖动模式（避免误触）
+            if (moveX > 3 || moveY > 3) {
+                this.isPanning = true;
+                this.hasMoved = true;
+                this.scrollContainer.style.cursor = 'grabbing';
+            }
+        }
+
         // 如果正在拖动模式
         if (this.isPanning) {
             e.preventDefault();
@@ -339,6 +387,7 @@ class MapZoomManager {
 
     handleMouseUp() {
         this.isPanning = false;
+        this.isReadyToPan = false;
         this.scrollContainer.style.cursor = '';
     }
     

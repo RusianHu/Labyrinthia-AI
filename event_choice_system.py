@@ -17,6 +17,7 @@ from prompt_manager import prompt_manager
 from config import config
 from async_task_manager import async_task_manager, TaskType
 from game_state_modifier import game_state_modifier
+from llm_context_manager import llm_context_manager, ContextEntryType
 
 
 logger = logging.getLogger(__name__)
@@ -327,6 +328,13 @@ class EventChoiceSystem:
             "choice_text": selected_choice.text,
             "timestamp": context.created_at.isoformat()
         })
+
+        # 添加到统一上下文管理器
+        llm_context_manager.add_choice(
+            choice_type=context.event_type,
+            choice_text=selected_choice.text,
+            result=f"处理中..."  # 结果将在处理后更新
+        )
 
         # 根据事件类型处理选择
         try:

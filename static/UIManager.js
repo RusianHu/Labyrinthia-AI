@@ -126,9 +126,42 @@ Object.assign(LabyrinthiaGame.prototype, {
 
         const tileSize = getTileSize();
 
-        // 设置网格样式
-        mapContainer.style.gridTemplateColumns = `repeat(${gameMap.width}, ${tileSize}px)`;
+        // 【修复抖动】只在地图尺寸变化时才更新网格样式
+        const expectedColumns = `repeat(${gameMap.width}, ${tileSize}px)`;
+        if (mapContainer.style.gridTemplateColumns !== expectedColumns) {
+            mapContainer.style.gridTemplateColumns = expectedColumns;
+        }
 
+        // 检查是否需要完全重建地图（地图尺寸变化或首次加载）
+        const existingTiles = mapContainer.querySelectorAll('.map-tile');
+        const expectedTileCount = gameMap.width * gameMap.height;
+        const needsFullRebuild = existingTiles.length !== expectedTileCount;
+
+        if (needsFullRebuild) {
+            // 完全重建地图
+            await this._rebuildMap(mapContainer, gameMap, player, tileSize);
+        } else {
+            // 增量更新：只更新变化的瓦片
+            await this._updateMapTiles(mapContainer, gameMap, player);
+        }
+
+        // 应用地板图层效果
+        this.applyFloorTheme(gameMap.floor_theme || 'normal');
+
+        // 【修复抖动】只在完全重建时才重新初始化 MapZoomManager
+        if (needsFullRebuild) {
+            // 初始化或重新初始化地图缩放管理器
+            // 使用setTimeout确保DOM已完全更新
+            setTimeout(() => {
+                this._initializeMapZoomManager();
+            }, 100);
+        }
+    },
+
+    /**
+     * 完全重建地图（用于地图尺寸变化或首次加载）
+     */
+    async _rebuildMap(mapContainer, gameMap, player, tileSize) {
         // 保存地板图层（如果存在）
         const floorLayers = Array.from(mapContainer.querySelectorAll('.floor-layer, .floor-overlay'));
 
@@ -145,151 +178,202 @@ Object.assign(LabyrinthiaGame.prototype, {
             for (let x = 0; x < gameMap.width; x++) {
                 const tileKey = `${x},${y}`;
                 const tileData = gameMap.tiles[tileKey];
-                
-                const tile = document.createElement('div');
-                tile.className = 'map-tile';
-                tile.dataset.x = x;
-                tile.dataset.y = y;
-
-                // 添加悬停事件
-                tile.addEventListener('mouseenter', (e) => {
-                    this.showTileTooltip(e, tileData, x, y);
-                    this.handleTileHover(x, y, tileData, true);
-                });
-
-                tile.addEventListener('mouseleave', () => {
-                    this.hideTileTooltip();
-                    this.handleTileHover(x, y, tileData, false);
-                });
-
-                // 添加点击移动事件
-                tile.addEventListener('click', () => {
-                    this.handleTileClick(x, y, tileData);
-                });
-                
-                if (tileData) {
-                    // 设置地形样式
-                    tile.classList.add(`terrain-${tileData.terrain}`);
-
-                    // 设置房间类型样式
-                    if (tileData.room_type) {
-                        tile.classList.add(`room-${tileData.room_type}`);
-
-                        // 为特殊类型的门添加额外样式
-                        if (tileData.terrain === 'door') {
-                            if (tileData.room_type === 'treasure') {
-                                tile.classList.add('door-treasure');
-                            } else if (tileData.room_type === 'boss') {
-                                tile.classList.add('door-boss');
-                            } else if (tileData.room_type === 'special') {
-                                tile.classList.add('door-special');
-                            }
-                        }
-                    }
-
-                    // 设置可见性
-                    if (tileData.is_explored) {
-                        tile.classList.add('tile-explored');
-                    } else {
-                        tile.classList.add('tile-unexplored');
-                    }
-
-                    if (tileData.is_visible) {
-                        tile.classList.add('tile-visible');
-                    }
-
-                    // 检查是否为任务事件
-                    if (tileData.has_event && tileData.event_data && tileData.event_data.quest_event_id) {
-                        tile.classList.add('quest-event');
-                    }
-                    
-                    // 添加角色 - 使用精灵图系统
-                    if (tileData.character_id === player.id) {
-                        // 添加玩家图标
-                        if (window.characterSprites) {
-                            await window.characterSprites.addCharacterToTile(tile, player, true);
-                        } else {
-                            // 回退到原始方式
-                            const playerIcon = document.createElement('div');
-                            playerIcon.className = 'character-player';
-                            tile.appendChild(playerIcon);
-                        }
-                    } else if (tileData.character_id) {
-                        // 查找怪物
-                        const monster = this.gameState.monsters.find(m => m.id === tileData.character_id);
-                        if (monster) {
-                            // 添加怪物图标
-                            if (window.characterSprites) {
-                                const monsterIcon = await window.characterSprites.addMonsterToTile(tile, monster);
-                                monsterIcon.addEventListener('click', (e) => {
-                                    e.stopPropagation(); // 阻止事件冒泡到瓦片
-                                    this.attackMonster(monster.id);
-                                });
-                            } else {
-                                // 回退到原始方式
-                                const monsterIcon = document.createElement('div');
-                                monsterIcon.className = 'character-monster';
-
-                                // 检查是否为任务怪物
-                                if (this.isQuestMonster(monster)) {
-                                    if (monster.is_boss) {
-                                        monsterIcon.classList.add('quest-boss');
-                                    } else {
-                                        monsterIcon.classList.add('quest-monster');
-                                    }
-                                }
-
-                                monsterIcon.title = monster.name;
-                                monsterIcon.addEventListener('click', (e) => {
-                                    e.stopPropagation(); // 阻止事件冒泡到瓦片
-                                    this.attackMonster(monster.id);
-                                });
-                                tile.appendChild(monsterIcon);
-                            }
-                        }
-                    }
-                }
-                
+                const tile = await this._createTile(x, y, tileData, player);
                 mapContainer.appendChild(tile);
             }
         }
+    },
 
-        // 应用地板图层效果
-        this.applyFloorTheme(gameMap.floor_theme || 'normal');
+    /**
+     * 增量更新地图瓦片（只更新变化的部分）
+     */
+    async _updateMapTiles(mapContainer, gameMap, player) {
+        const tiles = mapContainer.querySelectorAll('.map-tile');
 
-        // 初始化或重新初始化地图缩放管理器
-        // 使用setTimeout确保DOM已完全更新
-        setTimeout(() => {
-            if (typeof MapZoomManager !== 'undefined') {
-                // 保存当前缩放级别和滚动位置
-                const previousManager = this.mapZoomManager || null;
-                const currentZoom = previousManager ? previousManager.getZoom() : 1;
-                const previousScrollContainer = previousManager && previousManager.scrollContainer ?
-                    previousManager.scrollContainer : null;
-                const hadScrollState = Boolean(previousScrollContainer);
-                const currentScrollLeft = previousScrollContainer ?
-                    previousScrollContainer.scrollLeft : null;
-                const currentScrollTop = previousScrollContainer ?
-                    previousScrollContainer.scrollTop : null;
+        for (const tile of tiles) {
+            const x = parseInt(tile.dataset.x);
+            const y = parseInt(tile.dataset.y);
+            const tileKey = `${x},${y}`;
+            const tileData = gameMap.tiles[tileKey];
 
-                // 如果已存在，先销毁旧的
-                if (this.mapZoomManager) {
-                    try {
-                        this.mapZoomManager.destroy();
-                    } catch (e) {
-                        console.warn('Failed to destroy old MapZoomManager:', e);
+            // 更新瓦片内容
+            await this._updateTile(tile, x, y, tileData, player);
+        }
+    },
+
+    /**
+     * 创建单个瓦片元素
+     */
+    async _createTile(x, y, tileData, player) {
+        const tile = document.createElement('div');
+        tile.className = 'map-tile';
+        tile.dataset.x = x;
+        tile.dataset.y = y;
+
+        // 添加悬停事件
+        tile.addEventListener('mouseenter', (e) => {
+            this.showTileTooltip(e, tileData, x, y);
+            this.handleTileHover(x, y, tileData, true);
+        });
+
+        tile.addEventListener('mouseleave', () => {
+            this.hideTileTooltip();
+            this.handleTileHover(x, y, tileData, false);
+        });
+
+        // 添加点击移动事件
+        tile.addEventListener('click', () => {
+            this.handleTileClick(x, y, tileData);
+        });
+
+        // 更新瓦片内容
+        await this._updateTileContent(tile, tileData, player);
+
+        return tile;
+    },
+
+    /**
+     * 更新现有瓦片
+     */
+    async _updateTile(tile, x, y, tileData, player) {
+        // 清除旧的类名（保留基础类）
+        tile.className = 'map-tile';
+
+        // 更新瓦片内容
+        await this._updateTileContent(tile, tileData, player);
+    },
+
+    /**
+     * 更新瓦片的内容和样式
+     */
+    async _updateTileContent(tile, tileData, player) {
+        // 清空瓦片内容（移除角色图标等）
+        tile.innerHTML = '';
+
+        if (tileData) {
+            // 设置地形样式
+            tile.classList.add(`terrain-${tileData.terrain}`);
+
+            // 设置房间类型样式
+            if (tileData.room_type) {
+                tile.classList.add(`room-${tileData.room_type}`);
+
+                // 为特殊类型的门添加额外样式
+                if (tileData.terrain === 'door') {
+                    if (tileData.room_type === 'treasure') {
+                        tile.classList.add('door-treasure');
+                    } else if (tileData.room_type === 'boss') {
+                        tile.classList.add('door-boss');
+                    } else if (tileData.room_type === 'special') {
+                        tile.classList.add('door-special');
                     }
                 }
+            }
 
-                // 创建新的MapZoomManager
-                this.mapZoomManager = new MapZoomManager('map-container', 'map-grid');
+            // 设置可见性
+            if (tileData.is_explored) {
+                tile.classList.add('tile-explored');
+            } else {
+                tile.classList.add('tile-unexplored');
+            }
 
-                // 重新初始化以确保容器已存在
-                const reinitSuccess = this.mapZoomManager.reinitialize();
+            if (tileData.is_visible) {
+                tile.classList.add('tile-visible');
+            }
 
-                if (reinitSuccess) {
-                    const scrollContainer = this.mapZoomManager.scrollContainer;
-                    if (scrollContainer) {
+            // 检查是否为任务事件
+            if (tileData.has_event && tileData.event_data && tileData.event_data.quest_event_id) {
+                tile.classList.add('quest-event');
+            }
+
+            // 添加角色 - 使用精灵图系统
+            if (tileData.character_id === player.id) {
+                // 添加玩家图标
+                if (window.characterSprites) {
+                    await window.characterSprites.addCharacterToTile(tile, player, true);
+                } else {
+                    // 回退到原始方式
+                    const playerIcon = document.createElement('div');
+                    playerIcon.className = 'character-player';
+                    tile.appendChild(playerIcon);
+                }
+            } else if (tileData.character_id) {
+                // 查找怪物
+                const monster = this.gameState.monsters.find(m => m.id === tileData.character_id);
+                if (monster) {
+                    // 添加怪物图标
+                    if (window.characterSprites) {
+                        const monsterIcon = await window.characterSprites.addMonsterToTile(tile, monster);
+                        monsterIcon.addEventListener('click', (e) => {
+                            e.stopPropagation(); // 阻止事件冒泡到瓦片
+                            this.attackMonster(monster.id);
+                        });
+                    } else {
+                        // 回退到原始方式
+                        const monsterIcon = document.createElement('div');
+                        monsterIcon.className = 'character-monster';
+
+                        // 检查是否为任务怪物
+                        if (this.isQuestMonster(monster)) {
+                            if (monster.is_boss) {
+                                monsterIcon.classList.add('quest-boss');
+                            } else {
+                                monsterIcon.classList.add('quest-monster');
+                            }
+                        }
+
+                        monsterIcon.title = monster.name;
+                        monsterIcon.addEventListener('click', (e) => {
+                            e.stopPropagation(); // 阻止事件冒泡到瓦片
+                            this.attackMonster(monster.id);
+                        });
+                        tile.appendChild(monsterIcon);
+                    }
+                }
+            }
+        }
+    },
+
+    /**
+     * 初始化地图缩放管理器
+     */
+    _initializeMapZoomManager() {
+        if (typeof MapZoomManager !== 'undefined') {
+            // 保存当前缩放级别和滚动位置
+            const previousManager = this.mapZoomManager || null;
+            const currentZoom = previousManager ? previousManager.getZoom() : 1;
+            const previousScrollContainer = previousManager && previousManager.scrollContainer ?
+                previousManager.scrollContainer : null;
+            const hadScrollState = Boolean(previousScrollContainer);
+            const currentScrollLeft = previousScrollContainer ?
+                previousScrollContainer.scrollLeft : null;
+            const currentScrollTop = previousScrollContainer ?
+                previousScrollContainer.scrollTop : null;
+
+            // 如果已存在，先销毁旧的
+            if (this.mapZoomManager) {
+                try {
+                    this.mapZoomManager.destroy();
+                } catch (e) {
+                    console.warn('Failed to destroy old MapZoomManager:', e);
+                }
+            }
+
+            // 创建新的MapZoomManager
+            this.mapZoomManager = new MapZoomManager('map-container', 'map-grid');
+
+            // 重新初始化以确保容器已存在
+            const reinitSuccess = this.mapZoomManager.reinitialize();
+
+            if (reinitSuccess) {
+                const scrollContainer = this.mapZoomManager.scrollContainer;
+                if (scrollContainer) {
+                    // 【修复抖动】暂时禁用过渡动画，避免缩放时的抖动
+                    const mapGrid = document.getElementById('map-grid');
+                    if (mapGrid) {
+                        const originalTransition = mapGrid.style.transition;
+                        mapGrid.style.transition = 'none';
+
                         // 【修复】确保 getScrollPadding 方法存在
                         const padding = typeof this.mapZoomManager.getScrollPadding === 'function' ?
                             this.mapZoomManager.getScrollPadding() :
@@ -319,7 +403,13 @@ Object.assign(LabyrinthiaGame.prototype, {
                                 currentScrollTop : padding.top;
                         }
 
-                        // 【修复抖动】先设置滚动位置，再应用缩放，避免缩放时的抖动
+                        // 恢复之前的缩放级别（先应用缩放，再设置滚动位置）
+                        if (currentZoom !== 1) {
+                            this.mapZoomManager.scale = currentZoom;
+                            this.mapZoomManager.applyScale();
+                        }
+
+                        // 【修复抖动】设置滚动位置
                         if (typeof targetLeft === 'number') {
                             scrollContainer.scrollLeft = targetLeft;
                         }
@@ -327,23 +417,20 @@ Object.assign(LabyrinthiaGame.prototype, {
                             scrollContainer.scrollTop = targetTop;
                         }
 
-                        // 恢复之前的缩放级别（在滚动位置设置之后）
-                        if (currentZoom !== 1) {
-                            // 使用requestAnimationFrame确保在下一帧应用缩放，避免抖动
-                            requestAnimationFrame(() => {
-                                if (this.mapZoomManager && this.mapZoomManager.scrollContainer === scrollContainer) {
-                                    this.mapZoomManager.setZoom(currentZoom);
-                                }
-                            });
-                        }
+                        // 恢复过渡动画（在下一帧）
+                        requestAnimationFrame(() => {
+                            if (mapGrid) {
+                                mapGrid.style.transition = originalTransition;
+                            }
+                        });
                     }
-
-                    console.log('MapZoomManager initialized and ready after map update (zoom:', currentZoom, ')');
-                } else {
-                    console.warn('MapZoomManager initialization failed');
                 }
+
+                console.log('MapZoomManager initialized and ready after map update (zoom:', currentZoom, ')');
+            } else {
+                console.warn('MapZoomManager initialization failed');
             }
-        }, 100);
+        }
     },
 
     /**
