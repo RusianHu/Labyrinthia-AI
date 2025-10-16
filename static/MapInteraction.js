@@ -4,21 +4,31 @@
 // 扩展核心游戏类，添加地图交互功能
 Object.assign(LabyrinthiaGame.prototype, {
     
-    handleTileClick(x, y, tileData) {
+    async handleTileClick(x, y, tileData) {
         if (this.isLoading) return;
 
         const player = this.gameState.player;
         const playerX = player.position[0];
         const playerY = player.position[1];
 
+        // 【修复】从游戏状态中获取实时的瓦片数据，而不是使用闭包中的旧数据
+        const tileKey = `${x},${y}`;
+        const currentTileData = this.gameState.current_map.tiles[tileKey];
+
+        if (!currentTileData) {
+            console.warn(`Tile data not found for (${x}, ${y})`);
+            return;
+        }
+
         // 检查是否点击了怪物
-        if (tileData.character_id && tileData.character_id !== player.id) {
-            const monster = this.gameState.monsters.find(m => m.id === tileData.character_id);
+        if (currentTileData.character_id && currentTileData.character_id !== player.id) {
+            const monster = this.gameState.monsters.find(m => m.id === currentTileData.character_id);
             if (monster) {
                 // 检查攻击距离（使用切比雪夫距离，允许对角线攻击）
                 const distance = Math.max(Math.abs(x - playerX), Math.abs(y - playerY));
                 if (distance <= 1) {  // 玩家只能近战攻击
-                    this.attackMonster(monster.id);
+                    // 【修复】使用await等待攻击完成，避免继续执行移动逻辑
+                    await this.attackMonster(monster.id);
                     return;
                 } else {
                     this.addMessage('目标距离太远，无法攻击', 'error');
@@ -103,6 +113,10 @@ Object.assign(LabyrinthiaGame.prototype, {
             // 清除之前的高亮
             this.clearTileHighlights();
 
+            // 【修复】从游戏状态中获取实时的瓦片数据
+            const tileKey = `${x},${y}`;
+            const currentTileData = this.gameState.current_map.tiles[tileKey];
+
             // 检查是否可以移动到该位置（不显示错误消息）
             if (this.canMoveToTile(x, y, playerX, playerY, false)) {
                 this.highlightMovableTile(x, y);
@@ -110,8 +124,8 @@ Object.assign(LabyrinthiaGame.prototype, {
             }
 
             // 检查是否可以攻击该位置的怪物
-            if (tileData && tileData.character_id && tileData.character_id !== player.id) {
-                const monster = this.gameState.monsters.find(m => m.id === tileData.character_id);
+            if (currentTileData && currentTileData.character_id && currentTileData.character_id !== player.id) {
+                const monster = this.gameState.monsters.find(m => m.id === currentTileData.character_id);
                 if (monster) {
                     const distance = Math.max(Math.abs(x - playerX), Math.abs(y - playerY));
                     if (distance <= 1) {  // 玩家只能近战攻击
@@ -217,9 +231,13 @@ Object.assign(LabyrinthiaGame.prototype, {
         const tooltip = document.getElementById('tile-tooltip');
         if (!tooltip) return;
 
+        // 【修复】从游戏状态中获取实时的瓦片数据
+        const tileKey = `${x},${y}`;
+        const currentTileData = this.gameState.current_map.tiles[tileKey];
+
         let tooltipText = `位置: (${x}, ${y})\n`;
 
-        if (tileData) {
+        if (currentTileData) {
             // 地形信息
             const terrainNames = {
                 'floor': '地板',
@@ -234,10 +252,10 @@ Object.assign(LabyrinthiaGame.prototype, {
                 'pit': '深坑'
             };
 
-            tooltipText += `地形: ${terrainNames[tileData.terrain] || tileData.terrain}\n`;
+            tooltipText += `地形: ${terrainNames[currentTileData.terrain] || currentTileData.terrain}\n`;
 
             // 房间类型信息
-            if (tileData.room_type) {
+            if (currentTileData.room_type) {
                 const roomTypeNames = {
                     'entrance': '入口房间',
                     'treasure': '宝库房间',
@@ -246,19 +264,19 @@ Object.assign(LabyrinthiaGame.prototype, {
                     'normal': '普通房间',
                     'corridor': '走廊'
                 };
-                tooltipText += `房间类型: ${roomTypeNames[tileData.room_type] || tileData.room_type}\n`;
+                tooltipText += `房间类型: ${roomTypeNames[currentTileData.room_type] || currentTileData.room_type}\n`;
             }
 
             // 探索状态
-            if (tileData.is_explored) {
+            if (currentTileData.is_explored) {
                 tooltipText += '状态: 已探索\n';
             } else {
                 tooltipText += '状态: 未探索\n';
             }
 
             // 角色信息
-            if (tileData.character_id) {
-                if (tileData.character_id === this.gameState.player.id) {
+            if (currentTileData.character_id) {
+                if (currentTileData.character_id === this.gameState.player.id) {
                     const player = this.gameState.player;
                     tooltipText += `角色: ${player.name} (玩家)\n`;
                     tooltipText += `生命值: ${player.stats.hp}/${player.stats.max_hp}\n`;
@@ -273,7 +291,7 @@ Object.assign(LabyrinthiaGame.prototype, {
                         tooltipText += `属性: 力${str} 敏${dex} 体${con}\n`;
                     }
                 } else {
-                    const monster = this.gameState.monsters.find(m => m.id === tileData.character_id);
+                    const monster = this.gameState.monsters.find(m => m.id === currentTileData.character_id);
                     if (monster) {
                         // 检查是否为任务怪物
                         const isQuestMonster = this.isQuestMonster(monster);
@@ -326,12 +344,12 @@ Object.assign(LabyrinthiaGame.prototype, {
             }
 
             // 物品信息
-            if (tileData.items && tileData.items.length > 0) {
-                tooltipText += `物品: ${tileData.items.length}个\n`;
+            if (currentTileData.items && currentTileData.items.length > 0) {
+                tooltipText += `物品: ${currentTileData.items.length}个\n`;
             }
 
             // 事件信息（如果有且不隐藏）
-            if (tileData.has_event && !tileData.is_event_hidden) {
+            if (currentTileData.has_event && !currentTileData.is_event_hidden) {
                 const eventNames = {
                     'combat': '战斗',
                     'treasure': '宝藏',
@@ -341,19 +359,19 @@ Object.assign(LabyrinthiaGame.prototype, {
                 };
 
                 // 检查是否为任务事件
-                if (tileData.event_data && tileData.event_data.quest_event_id) {
-                    tooltipText += `任务事件: ${tileData.event_data.name || '特殊事件'}\n`;
-                    if (tileData.event_data.description) {
-                        tooltipText += `描述: ${tileData.event_data.description}\n`;
+                if (currentTileData.event_data && currentTileData.event_data.quest_event_id) {
+                    tooltipText += `任务事件: ${currentTileData.event_data.name || '特殊事件'}\n`;
+                    if (currentTileData.event_data.description) {
+                        tooltipText += `描述: ${currentTileData.event_data.description}\n`;
                     }
-                    if (tileData.event_data.is_mandatory) {
+                    if (currentTileData.event_data.is_mandatory) {
                         tooltipText += '类型: 必要任务事件\n';
                     }
                 } else {
-                    tooltipText += `事件: ${eventNames[tileData.event_type] || tileData.event_type}\n`;
+                    tooltipText += `事件: ${eventNames[currentTileData.event_type] || currentTileData.event_type}\n`;
                 }
 
-                if (tileData.event_triggered) {
+                if (currentTileData.event_triggered) {
                     tooltipText += '状态: 已触发\n';
                 } else {
                     tooltipText += '状态: 未触发\n';

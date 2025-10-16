@@ -768,7 +768,30 @@ class LocalGameEngine {
                 this.addMessage('恭喜升级！', 'success');
             }
         } finally {
-            // 【重要】现在才从怪物列表中移除（无论成功还是失败）
+            // 【关键修复】在移除怪物之前触发特效（此时怪物图标还在DOM中）
+            const tileElement = document.querySelector(`[data-x="${monster.position[0]}"][data-y="${monster.position[1]}"]`);
+            console.log('[LocalGameEngine] Checking monster defeat effect:', {
+                tileElement: !!tileElement,
+                enhancedEffects: !!this.game.enhancedEffects,
+                monsterPosition: monster.position,
+                monsterName: monster.name,
+                hasMonsterIcon: !!tileElement?.querySelector('.character-monster')
+            });
+
+            let effectDuration = 0;
+            if (tileElement && this.game.enhancedEffects) {
+                console.log('[LocalGameEngine] Triggering monster defeat effect for:', monster.name);
+                this.game.enhancedEffects.showMonsterDefeatEffect(monster, tileElement);
+                // 特效持续时间：怪物淡出(300ms) + 碎片爆炸(800ms) = 1100ms
+                effectDuration = 1100;
+            } else {
+                console.warn('[LocalGameEngine] Cannot show monster defeat effect:', {
+                    tileElement: !!tileElement,
+                    enhancedEffects: !!this.game.enhancedEffects
+                });
+            }
+
+            // 【重要】从怪物列表中移除（在特效触发之后）
             const finalIndex = gameState.monsters.findIndex(m => m.id === monster.id);
             if (finalIndex !== -1) {
                 gameState.monsters.splice(finalIndex, 1);
@@ -780,11 +803,13 @@ class LocalGameEngine {
                 tile.character_id = null;
             }
 
+            // 【修复】延迟更新UI，等待特效完成
+            setTimeout(() => {
+                this.game.updateUI();
+            }, effectDuration);
+
             // 隐藏LLM遮罩
             this.game.hideLLMOverlay();
-
-            // 【修复】只在这里更新一次UI，此时怪物已经被正确移除
-            this.game.updateUI();
 
             // 同步状态到后端
             await this.syncToBackend();

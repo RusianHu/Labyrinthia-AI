@@ -253,7 +253,9 @@ body {
 }
 
 /* 地形类型样式 */
-.terrain-floor { background: #ecf0f1; }
+.terrain-floor {
+    background: rgba(236, 240, 241, 0.8); /* 轻微半透明背景，让地板纹理图层更明显 */
+}
 .terrain-wall { background: #34495e; }
 .terrain-door {
     background: #8b4513 url('/static/assets/terrain/door_icon.png') center center no-repeat;

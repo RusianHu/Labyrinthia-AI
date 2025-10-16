@@ -16,6 +16,7 @@ class LabyrinthiaGame {
         this.config = null;
         this.localEngine = null; // 本地游戏引擎
         this.mapZoomManager = null; // 地图缩放管理器
+        this.enhancedEffects = null; // 增强版特效管理器
 
         this.init();
         this.initializeDebugMode();
@@ -31,6 +32,12 @@ class LabyrinthiaGame {
 
         // 事件选择管理器已改为事件驱动模式，不需要初始化轮询
         // 回合制游戏只在玩家操作后检查待处理选择
+
+        // 初始化增强版特效管理器
+        if (typeof EnhancedEffectsManager !== 'undefined') {
+            this.enhancedEffects = new EnhancedEffectsManager(this);
+            console.log('[GameCore] EnhancedEffectsManager initialized');
+        }
     }
 
     checkUrlGameId() {
@@ -293,9 +300,19 @@ class LabyrinthiaGame {
     }
 
     triggerEffect(effect) {
+        // 初始化增强版特效管理器（如果还没有）
+        if (!this.enhancedEffects && typeof EnhancedEffectsManager !== 'undefined') {
+            this.enhancedEffects = new EnhancedEffectsManager(this);
+        }
+
         switch (effect.type) {
             case 'quest_completion':
-                this.showQuestCompletionEffect(effect);
+                // 优先使用增强版特效
+                if (this.enhancedEffects) {
+                    this.enhancedEffects.showQuestCompletionEffect(effect);
+                } else {
+                    this.showQuestCompletionEffect(effect);
+                }
                 break;
             default:
                 console.log('Unknown effect type:', effect.type);
@@ -494,10 +511,11 @@ class LabyrinthiaGame {
                     ${buttonText}
                 `;
 
-                // 使用addEventListener而不是onclick，确保事件绑定稳定
+                // 【修复】使用事件委托，从游戏状态中获取实时的转换类型，避免闭包问题
                 transitionButton.addEventListener('click', () => {
-                    console.log('[Transition Button] Clicked! Type:', this.gameState.pending_map_transition);
-                    this.transitionMap(this.gameState.pending_map_transition);
+                    const currentTransitionType = this.gameState.pending_map_transition;
+                    console.log('[Transition Button] Clicked! Type:', currentTransitionType);
+                    this.transitionMap(currentTransitionType);
                 });
 
                 controlPanel.appendChild(transitionButton);

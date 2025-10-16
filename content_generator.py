@@ -158,6 +158,7 @@ class ContentGenerator:
                 valid_themes = ["normal", "magic", "abandoned", "cave", "combat", "grassland", "desert", "farmland", "snowfield", "town"]
                 if floor_theme in valid_themes:
                     game_map.floor_theme = floor_theme
+                    logger.info(f"Map '{game_map.name}' (depth {depth}) floor_theme set to: {floor_theme}")
                 else:
                     logger.warning(f"Invalid floor_theme '{floor_theme}', using 'normal'")
                     game_map.floor_theme = "normal"

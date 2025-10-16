@@ -3,11 +3,11 @@
     "map_info_generation": {
       "name": "map_info_generation",
       "category": "map_generation",
-      "template": "为一个{width}x{height}的地下城第{depth}层生成名称和描述。\n基础主题：{theme}{quest_info}\n\n请返回JSON格式：\n{{\n    \"name\": \"地图名称（中文，体现主题和任务特色）\",\n    \"description\": \"地图描述（详细描述环境、氛围和可能的挑战）\",\n    \"floor_theme\": \"地板主题类型（必须从以下选项中选择一个）\"\n}}\n\n**地板主题选项说明**：\n- \"normal\": 普通地牢（石质地板+裂纹效果）- 适合常规地牢、走廊、普通房间\n- \"magic\": 魔法房间（大理石+魔法符文）- 适合魔法区域、神殿、法师塔、魔法阵\n- \"abandoned\": 废弃房间（木质地板+苔藓）- 适合废弃建筑、老旧房间、被遗忘的区域\n- \"cave\": 洞穴（泥土地面+水渍）- 适合天然洞穴、地下通道、潮湿区域\n- \"combat\": 战斗区域（石质地板+血迹）- 适合竞技场、战场、屠宰场、血腥场景\n\n**重要**：请根据地图的主题、任务内容和环境氛围，选择最合适的地板主题。",
+      "template": "为一个{width}x{height}的地下城第{depth}层生成名称和描述。\n基础主题：{theme}{quest_info}\n\n请返回JSON格式：\n{{\n    \"name\": \"地图名称（中文，体现主题和任务特色）\",\n    \"description\": \"地图描述（详细描述环境、氛围和可能的挑战）\",\n    \"floor_theme\": \"地板主题类型（必须从以下选项中选择一个）\"\n}}\n\n**地板主题选项说明**：\n- \"normal\": 普通地牢（石质地板+裂纹效果）- 适合常规地牢、走廊、普通房间\n- \"magic\": 魔法房间（大理石+魔法符文）- 适合魔法区域、神殿、法师塔、魔法阵\n- \"abandoned\": 废弃房间（木质地板+苔藓）- 适合废弃建筑、老旧房间、被遗忘的区域\n- \"cave\": 洞穴（泥土地面+水渍）- 适合天然洞穴、地下通道、潮湿区域\n- \"combat\": 战斗区域（石质地板+血迹）- 适合竞技场、战场、屠宰场、血腥场景\n\n**重要**：\n1. 请根据地图的主题、任务内容、环境氛围和**楼层深度**，选择最合适的地板主题\n2. **不同楼层应该使用不同的地板主题**，以体现探索的深入和环境的变化\n3. 建议：第1层使用normal，第2层使用cave或abandoned，第3层使用magic或combat等\n4. 地板主题应该与地图名称和描述相呼应，营造统一的氛围",
       "required_params": ["width", "height", "depth", "theme"],
       "optional_params": {"quest_info": ""},
       "description": "生成地图基本信息（名称、描述和地板主题）",
-      "version": "1.1"
+      "version": "1.2"
     },
     "item_pickup_generation": {
       "name": "item_pickup_generation", 

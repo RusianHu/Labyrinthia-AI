@@ -140,13 +140,19 @@ Object.assign(LabyrinthiaGame.prototype, {
         if (needsFullRebuild) {
             // 完全重建地图
             await this._rebuildMap(mapContainer, gameMap, player, tileSize);
+
+            // 【修复】在地图重建完成后立即应用地板图层效果
+            // 使用 requestAnimationFrame 确保 DOM 已完全渲染
+            requestAnimationFrame(() => {
+                this.applyFloorTheme(gameMap.floor_theme || 'normal');
+            });
         } else {
             // 增量更新：只更新变化的瓦片
             await this._updateMapTiles(mapContainer, gameMap, player);
-        }
 
-        // 应用地板图层效果
-        this.applyFloorTheme(gameMap.floor_theme || 'normal');
+            // 增量更新时也应用地板图层效果
+            this.applyFloorTheme(gameMap.floor_theme || 'normal');
+        }
 
         // 【修复抖动】只在完全重建时才重新初始化 MapZoomManager
         if (needsFullRebuild) {
@@ -162,16 +168,9 @@ Object.assign(LabyrinthiaGame.prototype, {
      * 完全重建地图（用于地图尺寸变化或首次加载）
      */
     async _rebuildMap(mapContainer, gameMap, player, tileSize) {
-        // 保存地板图层（如果存在）
-        const floorLayers = Array.from(mapContainer.querySelectorAll('.floor-layer, .floor-overlay'));
-
-        // 清空地图容器
+        // 【修复】清空地图容器（包括旧的地板图层）
+        // 地板图层将在 applyFloorTheme 中重新创建
         mapContainer.innerHTML = '';
-
-        // 重新添加地板图层（在地图瓦片之前）
-        floorLayers.forEach(layer => {
-            mapContainer.appendChild(layer);
-        });
 
         // 创建地图瓦片
         for (let y = 0; y < gameMap.height; y++) {
@@ -455,13 +454,22 @@ Object.assign(LabyrinthiaGame.prototype, {
         const floorTheme = validThemes.includes(theme) ? theme : 'normal';
 
         try {
-            // 移除旧的地板图层
-            floorLayerManager.removeFloorLayers(mapGridContainer);
+            // 【修复】检查是否已有地板图层，只有存在时才移除
+            // 这样可以避免在地图刚创建时出现警告
+            const hasExistingLayers = floorLayerManager.layers.has(mapGridContainer);
+            if (hasExistingLayers) {
+                floorLayerManager.removeFloorLayers(mapGridContainer);
+            }
 
             // 应用新的地板主题
             floorLayerManager.applyPreset(mapGridContainer, floorTheme);
 
             console.log(`Applied floor theme: ${floorTheme}`);
+
+            // 【新增】应用环境粒子特效
+            if (this.enhancedEffects) {
+                this.enhancedEffects.createEnvironmentParticles(mapGridContainer, floorTheme);
+            }
         } catch (error) {
             console.error('Failed to apply floor theme:', error);
         }
@@ -485,8 +493,14 @@ Object.assign(LabyrinthiaGame.prototype, {
                 slot.title = `${item.name}\n${item.description}`;
                 slot.textContent = item.name.charAt(0).toUpperCase();
 
+                // 【修复】存储物品ID而不是整个物品对象，避免闭包问题
+                const itemId = item.id;
                 slot.addEventListener('click', () => {
-                    this.showItemUseDialog(item);
+                    // 从当前游戏状态中获取最新的物品数据
+                    const currentItem = this.gameState.player.inventory.find(it => it.id === itemId);
+                    if (currentItem) {
+                        this.showItemUseDialog(currentItem);
+                    }
                 });
             }
 

@@ -267,14 +267,15 @@ class DataManager:
         game_map.width = data.get("width", 20)
         game_map.height = data.get("height", 20)
         game_map.depth = data.get("depth", 1)
-        
+        game_map.floor_theme = data.get("floor_theme", "normal")  # 【修复】加载地板主题
+
         # 瓦片
         if tiles_data := data.get("tiles"):
             for coord_str, tile_data in tiles_data.items():
                 x, y = map(int, coord_str.split(","))
                 tile = self._dict_to_map_tile(tile_data)
                 game_map.tiles[(x, y)] = tile
-        
+
         return game_map
     
     def _dict_to_map_tile(self, data: Dict[str, Any]) -> MapTile:
