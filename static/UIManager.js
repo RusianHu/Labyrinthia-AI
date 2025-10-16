@@ -223,6 +223,10 @@ Object.assign(LabyrinthiaGame.prototype, {
 
         // 添加点击移动事件
         tile.addEventListener('click', () => {
+            // 【修复】检查是否在拖动，如果是则不触发点击
+            if (this.mapZoomManager && this.mapZoomManager.hasMoved) {
+                return;
+            }
             this.handleTileClick(x, y, tileData);
         });
 
@@ -295,6 +299,8 @@ Object.assign(LabyrinthiaGame.prototype, {
                     // 回退到原始方式
                     const playerIcon = document.createElement('div');
                     playerIcon.className = 'character-player';
+                    // 【修复】设置 pointer-events: none，让鼠标事件穿透到瓦片
+                    playerIcon.style.pointerEvents = 'none';
                     tile.appendChild(playerIcon);
                 }
             } else if (tileData.character_id) {
@@ -303,11 +309,7 @@ Object.assign(LabyrinthiaGame.prototype, {
                 if (monster) {
                     // 添加怪物图标
                     if (window.characterSprites) {
-                        const monsterIcon = await window.characterSprites.addMonsterToTile(tile, monster);
-                        monsterIcon.addEventListener('click', (e) => {
-                            e.stopPropagation(); // 阻止事件冒泡到瓦片
-                            this.attackMonster(monster.id);
-                        });
+                        await window.characterSprites.addMonsterToTile(tile, monster);
                     } else {
                         // 回退到原始方式
                         const monsterIcon = document.createElement('div');
@@ -323,10 +325,8 @@ Object.assign(LabyrinthiaGame.prototype, {
                         }
 
                         monsterIcon.title = monster.name;
-                        monsterIcon.addEventListener('click', (e) => {
-                            e.stopPropagation(); // 阻止事件冒泡到瓦片
-                            this.attackMonster(monster.id);
-                        });
+                        // 【修复】设置 pointer-events: none，让鼠标事件穿透到瓦片
+                        monsterIcon.style.pointerEvents = 'none';
                         tile.appendChild(monsterIcon);
                     }
                 }

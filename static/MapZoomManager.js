@@ -225,17 +225,12 @@ class MapZoomManager {
             this.initialDistance = this.getDistance(touch1, touch2);
             this.initialScale = this.scale;
         } else if (e.touches.length === 1) {
-            // 检查是否触摸在地图瓦片上
-            const touch = e.touches[0];
-            const target = document.elementFromPoint(touch.clientX, touch.clientY);
-            if (target && (target.classList.contains('map-tile') ||
-                target.classList.contains('character-player') ||
-                target.classList.contains('character-monster') ||
-                target.closest('.map-tile'))) {
-                return;
-            }
+            // 【修复】不再阻止在瓦片上启动拖动
+            // 角色图标已经设置了 pointer-events: none，所以不会干扰
+            // 瓦片的点击事件会在 UIManager 中根据 hasMoved 判断是否触发
 
             // 单指触摸 - 准备拖动模式
+            const touch = e.touches[0];
             this.touchStartTime = Date.now();
             this.hasMoved = false;
 
@@ -336,14 +331,9 @@ class MapZoomManager {
         // 只处理左键
         if (e.button !== 0) return;
 
-        // 如果点击的是地图瓦片或角色图标，不启动拖拽
-        const target = e.target;
-        if (target.classList.contains('map-tile') ||
-            target.classList.contains('character-player') ||
-            target.classList.contains('character-monster') ||
-            target.closest('.map-tile')) {
-            return;
-        }
+        // 【修复】不再阻止在瓦片上启动拖动
+        // 角色图标已经设置了 pointer-events: none，所以不会干扰
+        // 瓦片的点击事件会在 handleMouseUp 中根据 hasMoved 判断是否触发
 
         this.hasMoved = false;
         this.startX = e.pageX;

@@ -255,6 +255,10 @@ class CharacterSprites {
             icon.title = character.name;
         }
 
+        // 【修复】设置 pointer-events: none，让鼠标事件穿透到瓦片
+        // 这样悬停提示工具栏才能正常工作
+        icon.style.pointerEvents = 'none';
+
         tile.appendChild(icon);
         return icon;
     }
@@ -280,6 +284,10 @@ class CharacterSprites {
 
         const icon = this.createMonsterIcon(monsterType, isQuestMonster, isBoss);
         icon.title = monster.name || '怪物';
+
+        // 【修复】设置 pointer-events: none，让鼠标事件穿透到瓦片
+        // 这样悬停提示工具栏才能正常工作
+        icon.style.pointerEvents = 'none';
 
         tile.appendChild(icon);
         return icon;
