@@ -1040,7 +1040,7 @@ async def get_config():
                 "game": {
                     "debug_mode": config.game.debug_mode,
                     "show_llm_debug": config.game.show_llm_debug,
-                    "show_quest_progress": config.game.show_quest_progress,
+                    # 注意：任务进度始终显示，不再通过配置控制
                     "version": config.game.version,
                     "game_name": config.game.game_name,
                     "map_transition_progress": config.game.map_transition_progress,

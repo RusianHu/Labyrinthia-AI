@@ -570,12 +570,8 @@ Object.assign(LabyrinthiaGame.prototype, {
                 <p>${quest.description}</p>
             `;
 
-            // 根据配置显示进度百分比
-            const showProgress = this.config &&
-                                (this.config.show_quest_progress ||
-                                 (this.config.game && this.config.game.show_quest_progress));
-
-            if (showProgress && quest.progress_percentage !== undefined) {
+            // 任务进度始终显示（不受调试模式控制）
+            if (quest.progress_percentage !== undefined) {
                 questHTML += `
                     <div class="quest-progress">
                         <div class="progress-bar-small">
