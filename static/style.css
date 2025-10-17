@@ -1020,6 +1020,19 @@ body {
 .event-choice-dialog {
     max-width: 600px;
     width: 95%;
+    max-height: 80vh; /* 限制对话框最大高度为视口的80% */
+    display: flex;
+    flex-direction: column;
+    overflow: hidden; /* 防止整个对话框溢出 */
+}
+
+/* 事件选择对话框内容容器 */
+#event-choice-content {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden; /* 让子元素处理滚动 */
+    flex: 1;
+    min-height: 0; /* 允许flex子项收缩 */
 }
 
 .event-description {
@@ -1032,12 +1045,87 @@ body {
     line-height: 1.6;
     color: #2c3e50;
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+    /* 添加滚动条支持 */
+    max-height: 30vh; /* 描述区域最大高度 */
+    overflow-y: auto; /* 内容超出时显示滚动条 */
+    overflow-x: hidden;
+    flex-shrink: 0; /* 不收缩 */
+}
+
+/* 事件描述滚动条样式 - 增强可见性 */
+.event-description::-webkit-scrollbar {
+    width: 10px; /* 增加宽度从8px到10px */
+}
+
+.event-description::-webkit-scrollbar-track {
+    background: rgba(94, 53, 177, 0.15); /* 增加不透明度从0.1到0.15 */
+    border-radius: 5px;
+    border: 1px solid rgba(94, 53, 177, 0.2); /* 添加边框增强可见性 */
+}
+
+.event-description::-webkit-scrollbar-thumb {
+    background: linear-gradient(135deg, #5e35b1 0%, #7e57c2 100%);
+    border-radius: 5px;
+    transition: all 0.3s ease;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2); /* 添加阴影增强立体感 */
+}
+
+.event-description::-webkit-scrollbar-thumb:hover {
+    background: linear-gradient(135deg, #4a2c8f 0%, #6a47a0 100%);
+    box-shadow: 0 3px 6px rgba(0, 0, 0, 0.3); /* 悬停时增强阴影 */
+    transform: scaleX(1.1); /* 悬停时略微放大 */
+}
+
+/* Firefox滚动条样式 */
+.event-description {
+    scrollbar-width: thin;
+    scrollbar-color: #5e35b1 rgba(94, 53, 177, 0.1);
 }
 
 .choice-options {
     display: flex;
     flex-direction: column;
     gap: 16px;
+    /* 添加滚动条支持 */
+    max-height: 40vh; /* 选项列表最大高度 */
+    overflow-y: auto; /* 内容超出时显示滚动条 */
+    overflow-x: hidden;
+    padding-right: 8px; /* 为滚动条留出空间 */
+    flex: 1; /* 占用剩余空间 */
+    min-height: 0; /* 允许收缩 */
+}
+
+/* 选项列表滚动条样式 - 增强可见性 */
+.choice-options::-webkit-scrollbar {
+    width: 12px; /* 增加宽度从10px到12px */
+}
+
+.choice-options::-webkit-scrollbar-track {
+    background: rgba(94, 53, 177, 0.15); /* 增加不透明度从0.1到0.15 */
+    border-radius: 6px;
+    border: 1px solid rgba(94, 53, 177, 0.2); /* 添加边框增强可见性 */
+}
+
+.choice-options::-webkit-scrollbar-thumb {
+    background: linear-gradient(135deg, #5e35b1 0%, #7e57c2 100%);
+    border-radius: 6px;
+    transition: all 0.3s ease;
+    border: 2px solid rgba(255, 255, 255, 0.1); /* 添加浅色边框 */
+    background-clip: padding-box;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2); /* 添加阴影增强立体感 */
+}
+
+.choice-options::-webkit-scrollbar-thumb:hover {
+    background: linear-gradient(135deg, #4a2c8f 0%, #6a47a0 100%);
+    background-clip: padding-box;
+    box-shadow: 0 3px 6px rgba(0, 0, 0, 0.3); /* 悬停时增强阴影 */
+    transform: scaleX(1.1); /* 悬停时略微放大 */
+}
+
+/* Firefox滚动条样式 */
+.choice-options {
+    scrollbar-width: thin;
+    scrollbar-color: #5e35b1 rgba(94, 53, 177, 0.1);
 }
 
 .choice-option {
@@ -1048,7 +1136,7 @@ body {
     cursor: pointer;
     transition: all 0.3s ease;
     position: relative;
-    overflow: hidden;
+    overflow: visible; /* 修复：允许内容完整显示，不裁剪描述和后果文本 */
 }
 
 .choice-option:hover {
@@ -1486,6 +1574,18 @@ body {
     .event-choice-dialog {
         width: 98%;
         margin: 10px;
+        max-height: 85vh; /* 移动端增加可用高度 */
+    }
+
+    .event-description {
+        max-height: 25vh; /* 移动端调整描述区域高度 */
+        font-size: 15px; /* 稍微减小字体 */
+        padding: 16px;
+    }
+
+    .choice-options {
+        max-height: 45vh; /* 移动端调整选项列表高度 */
+        gap: 12px; /* 减小间距 */
     }
 
     .choice-option {
@@ -1615,6 +1715,19 @@ body {
         width: 100%;
         margin: 5px;
         padding: 15px;
+        max-height: 90vh; /* 超小屏幕最大化可用空间 */
+    }
+
+    .event-description {
+        max-height: 20vh; /* 超小屏幕进一步压缩描述区域 */
+        font-size: 14px;
+        padding: 12px;
+        line-height: 1.5;
+    }
+
+    .choice-options {
+        max-height: 50vh; /* 超小屏幕优先显示选项 */
+        gap: 10px;
     }
 
     .choice-option {
@@ -1623,6 +1736,15 @@ body {
 
     .choice-text {
         font-size: 14px;
+    }
+
+    .choice-description {
+        font-size: 13px;
+    }
+
+    .choice-consequences {
+        font-size: 12px;
+        padding: 6px 10px;
     }
 }
 
