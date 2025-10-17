@@ -1,0 +1,408 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>粒子系统测试 - Labyrinthia AI</title>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/icon?family=Material+Icons">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Roboto', 'Noto Sans CJK SC', sans-serif;
+            background: #1a1a2e;
+            color: #fff;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        h1 {
+            text-align: center;
+            margin-bottom: 30px;
+            color: #00d4ff;
+            text-shadow: 0 0 20px rgba(0, 212, 255, 0.5);
+        }
+
+        .controls {
+            background: rgba(255, 255, 255, 0.1);
+            padding: 20px;
+            border-radius: 12px;
+            margin-bottom: 30px;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 15px;
+            align-items: center;
+        }
+
+        .control-group {
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+        }
+
+        .control-group label {
+            font-size: 14px;
+            color: #aaa;
+        }
+
+        select, button {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 6px;
+            font-size: 14px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        select {
+            background: rgba(255, 255, 255, 0.2);
+            color: #fff;
+        }
+
+        button {
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            color: white;
+            font-weight: bold;
+        }
+
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+        }
+
+        .test-area {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+            gap: 20px;
+        }
+
+        .test-box {
+            position: relative;
+            height: 400px;
+            background: #2c3e50;
+            border-radius: 12px;
+            overflow: hidden;
+            border: 2px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .test-box-title {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 8px 15px;
+            border-radius: 6px;
+            font-size: 14px;
+            font-weight: bold;
+            z-index: 100;
+        }
+
+        .test-box-info {
+            position: absolute;
+            bottom: 10px;
+            left: 10px;
+            right: 10px;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 10px;
+            border-radius: 6px;
+            font-size: 12px;
+            z-index: 100;
+        }
+
+        /* 环境粒子容器 */
+        .environment-particles {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: 1;
+            overflow: hidden;
+        }
+
+        /* 粒子样式 */
+        .particle-dust {
+            filter: blur(1px);
+        }
+
+        .particle-leaves {
+            filter: blur(0.5px);
+            transform-origin: center;
+        }
+
+        .particle-sunlight {
+            filter: blur(2px);
+            box-shadow: 0 0 10px rgba(255, 235, 59, 0.6);
+        }
+
+        .particle-rain {
+            width: 2px !important;
+            height: 20px !important;
+            background: linear-gradient(to bottom, rgba(173, 216, 230, 0.8), transparent) !important;
+            border-radius: 1px;
+        }
+
+        .particle-snow {
+            filter: blur(1px);
+            box-shadow: 0 0 5px rgba(255, 255, 255, 0.8);
+        }
+
+        .particle-sand {
+            filter: blur(0.5px);
+        }
+
+        /* 地板背景模拟 */
+        .floor-normal {
+            background: linear-gradient(135deg, #34495e 0%, #2c3e50 100%);
+        }
+
+        .floor-grassland {
+            background: linear-gradient(135deg, #27ae60 0%, #229954 100%);
+        }
+
+        .floor-town {
+            background: linear-gradient(135deg, #95a5a6 0%, #7f8c8d 100%);
+        }
+
+        .floor-cave {
+            background: linear-gradient(135deg, #2c3e50 0%, #1a252f 100%);
+        }
+
+        .floor-abandoned {
+            background: linear-gradient(135deg, #5d4037 0%, #4e342e 100%);
+        }
+
+        .floor-desert {
+            background: linear-gradient(135deg, #f39c12 0%, #e67e22 100%);
+        }
+
+        .floor-snowfield {
+            background: linear-gradient(135deg, #ecf0f1 0%, #bdc3c7 100%);
+        }
+
+        .stats {
+            background: rgba(255, 255, 255, 0.05);
+            padding: 15px;
+            border-radius: 8px;
+            margin-top: 20px;
+        }
+
+        .stats h3 {
+            margin-bottom: 10px;
+            color: #00d4ff;
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 10px;
+        }
+
+        .stat-item {
+            background: rgba(255, 255, 255, 0.1);
+            padding: 10px;
+            border-radius: 6px;
+        }
+
+        .stat-label {
+            font-size: 12px;
+            color: #aaa;
+        }
+
+        .stat-value {
+            font-size: 18px;
+            font-weight: bold;
+            color: #00d4ff;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎨 环境粒子系统测试</h1>
+
+        <div class="controls">
+            <div class="control-group">
+                <label>选择主题</label>
+                <select id="theme-select">
+                    <option value="normal">Normal (地牢-落灰)</option>
+                    <option value="abandoned">Abandoned (废弃-浓灰)</option>
+                    <option value="cave">Cave (洞穴-落灰)</option>
+                    <option value="magic">Magic (魔法-紫色灰尘)</option>
+                    <option value="combat">Combat (战斗-红色灰尘)</option>
+                    <option value="grassland">Grassland (草地-落叶)</option>
+                    <option value="town">Town (城镇-阳光)</option>
+                    <option value="desert">Desert (沙漠-沙尘)</option>
+                    <option value="snowfield">Snowfield (雪地-雪花)</option>
+                    <option value="farmland">Farmland (农田-绿叶)</option>
+                </select>
+            </div>
+
+            <button id="apply-btn">应用到所有测试框</button>
+            <button id="clear-btn">清除所有粒子</button>
+            <button id="toggle-stats">显示/隐藏统计</button>
+        </div>
+
+        <div class="test-area" id="test-area">
+            <!-- 测试框将通过 JavaScript 动态生成 -->
+        </div>
+
+        <div class="stats" id="stats" style="display: none;">
+            <h3>📊 性能统计</h3>
+            <div class="stats-grid">
+                <div class="stat-item">
+                    <div class="stat-label">活跃粒子系统</div>
+                    <div class="stat-value" id="stat-systems">0</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-label">总粒子数</div>
+                    <div class="stat-value" id="stat-particles">0</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-label">活跃动画</div>
+                    <div class="stat-value" id="stat-animations">0</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-label">Anime.js 状态</div>
+                    <div class="stat-value" id="stat-anime">未加载</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 加载 anime.js -->
+    <script src="/static/js/anime.min.js"></script>
+    
+    <!-- 加载 EnhancedEffectsManager -->
+    <script src="/static/EnhancedEffectsManager.js"></script>
+
+    <script>
+        // 创建一个模拟的游戏对象
+        const mockGame = {
+            addMessage: (msg, type) => console.log(`[${type}] ${msg}`)
+        };
+
+        // 初始化特效管理器
+        const effectsManager = new EnhancedEffectsManager(mockGame);
+
+        // 主题配置
+        const themes = [
+            { id: 'normal', name: 'Normal (地牢)', floor: 'floor-normal' },
+            { id: 'abandoned', name: 'Abandoned (废弃)', floor: 'floor-abandoned' },
+            { id: 'cave', name: 'Cave (洞穴)', floor: 'floor-cave' },
+            { id: 'magic', name: 'Magic (魔法)', floor: 'floor-normal' },
+            { id: 'combat', name: 'Combat (战斗)', floor: 'floor-normal' },
+            { id: 'grassland', name: 'Grassland (草地)', floor: 'floor-grassland' },
+            { id: 'town', name: 'Town (城镇)', floor: 'floor-town' },
+            { id: 'desert', name: 'Desert (沙漠)', floor: 'floor-desert' },
+            { id: 'snowfield', name: 'Snowfield (雪地)', floor: 'floor-snowfield' },
+            { id: 'farmland', name: 'Farmland (农田)', floor: 'floor-grassland' }
+        ];
+
+        // 创建测试框
+        function createTestBoxes() {
+            const testArea = document.getElementById('test-area');
+            testArea.innerHTML = '';
+
+            themes.forEach(theme => {
+                const box = document.createElement('div');
+                box.className = `test-box ${theme.floor}`;
+                box.id = `test-box-${theme.id}`;
+                box.innerHTML = `
+                    <div class="test-box-title">${theme.name}</div>
+                    <div class="test-box-info">
+                        <div>主题: <strong>${theme.id}</strong></div>
+                        <div>粒子数: <span id="count-${theme.id}">0</span></div>
+                    </div>
+                `;
+                testArea.appendChild(box);
+            });
+        }
+
+        // 应用粒子效果到单个测试框
+        function applyParticlesToBox(themeId) {
+            const box = document.getElementById(`test-box-${themeId}`);
+            if (!box) return;
+
+            // 清除旧的粒子
+            const oldParticles = box.querySelector('.environment-particles');
+            if (oldParticles) {
+                oldParticles.remove();
+            }
+
+            // 创建新的粒子
+            effectsManager.createEnvironmentParticles(box, themeId);
+
+            // 更新粒子计数
+            const particleContainer = box.querySelector('.environment-particles');
+            if (particleContainer) {
+                const count = particleContainer.children.length;
+                document.getElementById(`count-${themeId}`).textContent = count;
+            }
+        }
+
+        // 应用到所有测试框
+        function applyToAll() {
+            const selectedTheme = document.getElementById('theme-select').value;
+            themes.forEach(theme => {
+                applyParticlesToBox(selectedTheme);
+            });
+            updateStats();
+        }
+
+        // 清除所有粒子
+        function clearAll() {
+            effectsManager.clearEnvironmentParticles();
+            themes.forEach(theme => {
+                document.getElementById(`count-${theme.id}`).textContent = '0';
+            });
+            updateStats();
+        }
+
+        // 更新统计信息
+        function updateStats() {
+            document.getElementById('stat-systems').textContent = effectsManager.particleSystems.size;
+            
+            let totalParticles = 0;
+            effectsManager.particleSystems.forEach(system => {
+                totalParticles += system.particles.length;
+            });
+            document.getElementById('stat-particles').textContent = totalParticles;
+            
+            document.getElementById('stat-animations').textContent = effectsManager.activeAnimations.size;
+            document.getElementById('stat-anime').textContent = typeof anime !== 'undefined' ? '✅ 已加载' : '❌ 未加载';
+        }
+
+        // 事件监听
+        document.getElementById('apply-btn').addEventListener('click', applyToAll);
+        document.getElementById('clear-btn').addEventListener('click', clearAll);
+        document.getElementById('toggle-stats').addEventListener('click', () => {
+            const stats = document.getElementById('stats');
+            stats.style.display = stats.style.display === 'none' ? 'block' : 'none';
+            updateStats();
+        });
+
+        // 初始化
+        createTestBoxes();
+        
+        // 自动应用每个主题到对应的测试框
+        setTimeout(() => {
+            themes.forEach(theme => {
+                applyParticlesToBox(theme.id);
+            });
+            updateStats();
+            console.log('✅ 粒子系统测试页面已加载');
+            console.log('📊 EnhancedEffectsManager:', effectsManager);
+        }, 500);
+    </script>
+</body>
+</html>
+

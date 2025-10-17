@@ -467,8 +467,18 @@ Object.assign(LabyrinthiaGame.prototype, {
             console.log(`Applied floor theme: ${floorTheme}`);
 
             // 【新增】应用环境粒子特效
+            console.log('[UIManager] Checking enhancedEffects:', {
+                hasEnhancedEffects: !!this.enhancedEffects,
+                enhancedEffectsType: typeof this.enhancedEffects,
+                floorTheme: floorTheme
+            });
+
             if (this.enhancedEffects) {
+                console.log('[UIManager] Calling createEnvironmentParticles...');
                 this.enhancedEffects.createEnvironmentParticles(mapGridContainer, floorTheme);
+                console.log('[UIManager] createEnvironmentParticles completed');
+            } else {
+                console.warn('[UIManager] enhancedEffects not available, skipping particle creation');
             }
         } catch (error) {
             console.error('Failed to apply floor theme:', error);

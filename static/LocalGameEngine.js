@@ -211,13 +211,16 @@ class LocalGameEngine {
 
     /**
      * 同步游戏状态到后端
+     *
+     * 【重要】此方法会将前端的"计算型"数据同步到后端，
+     * 并从后端获取最新的"生成型"数据（如任务进度、经验值等）
      */
     async syncToBackend() {
         const gameState = this.getGameState();
         if (!gameState || !this.game.gameId) return;
 
         try {
-            await fetch('/api/sync-state', {
+            const response = await fetch('/api/sync-state', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -226,8 +229,20 @@ class LocalGameEngine {
                 })
             });
 
+            const result = await response.json();
+
+            if (result.success && result.game_state) {
+                // 【关键】更新前端游戏状态，获取后端的最新数据
+                // 特别是任务进度、经验值、等级等"生成型"数据
+                this.game.gameState.quests = result.game_state.quests;
+                this.game.gameState.player.stats.experience = result.game_state.player.stats.experience;
+                this.game.gameState.player.stats.level = result.game_state.player.stats.level;
+                this.game.gameState.player.inventory = result.game_state.player.inventory;
+
+                console.log(`[LocalGameEngine] 状态已同步到后端并更新 (回合 ${gameState.turn_count})`);
+            }
+
             this.lastSyncTurn = gameState.turn_count;
-            console.log(`[LocalGameEngine] 状态已同步到后端 (回合 ${gameState.turn_count})`);
         } catch (error) {
             console.error('[LocalGameEngine] 同步状态失败:', error);
         }
@@ -377,6 +392,13 @@ class LocalGameEngine {
             if (result.success) {
                 // 应用后端返回的更新
                 this.applyBackendUpdates(result);
+
+                // 【优化】只在后端明确返回 has_pending_choice 时才检查
+                // 避免不必要的 GET 请求
+                if (result.has_pending_choice && window.eventChoiceManager) {
+                    console.log('[LocalGameEngine] Backend event created pending choice, checking...');
+                    window.eventChoiceManager.checkAfterPlayerAction();
+                }
             } else {
                 this.addMessage(result.message || '事件处理失败', 'error');
             }
@@ -566,10 +588,9 @@ class LocalGameEngine {
                 await this.syncToBackend();
             }
 
-            // 回合制游戏：移动后检查是否有待处理的选择
-            if (window.eventChoiceManager) {
-                window.eventChoiceManager.checkAfterPlayerAction();
-            }
+            // 【优化】移除普通移动后的自动检查
+            // 普通移动不会产生 pending-choice，不需要每次都发起 GET 请求
+            // 只在后端事件（陷阱、宝藏、特殊事件）完成后才检查
         }
     }
 
@@ -749,6 +770,14 @@ class LocalGameEngine {
                 this.checkLevelUp(player);
             }
 
+            // 【新增】检查是否有任务完成需要处理选择
+            // 后端在处理任务怪物时会触发任务进度更新，如果任务完成会设置 pending_quest_completion
+            if (combatResult.has_pending_choice && window.eventChoiceManager) {
+                console.log('[LocalGameEngine] Quest completion detected after monster defeat, will check pending choice');
+                // 标记需要检查 pending-choice，在 finally 块中执行
+                this._needCheckPendingChoice = true;
+            }
+
             // 【修复】不在这里更新UI，等到finally块中统一更新
             // this.game.updateUI(); // 移除这里的UI更新
 
@@ -813,6 +842,13 @@ class LocalGameEngine {
 
             // 同步状态到后端
             await this.syncToBackend();
+
+            // 【新增】检查是否需要处理任务完成选择
+            if (this._needCheckPendingChoice && window.eventChoiceManager) {
+                console.log('[LocalGameEngine] Checking for pending choice after monster defeat');
+                window.eventChoiceManager.checkAfterPlayerAction();
+                this._needCheckPendingChoice = false;
+            }
         }
     }
 
@@ -920,10 +956,9 @@ class LocalGameEngine {
                 await this.syncToBackend();
             }
 
-            // 回合制游戏：攻击后检查是否有待处理的选择
-            if (window.eventChoiceManager) {
-                window.eventChoiceManager.checkAfterPlayerAction();
-            }
+            // 【优化】移除攻击后的自动检查
+            // 任务完成检查已经在 handleMonsterDeath 中根据后端响应的 has_pending_choice 标志处理
+            // 普通攻击不会产生 pending-choice，不需要每次都发起 GET 请求
         } finally {
             // 隐藏攻击遮罩
             this.game.hideLLMOverlay();

@@ -10,7 +10,19 @@ class EnhancedEffectsManager {
         this.game = game;
         this.activeAnimations = new Map(); // 存储活跃的动画
         this.particleSystems = new Map(); // 存储粒子系统
-        
+
+        // 【新增】粒子层同步相关
+        this.scrollContainer = null;  // .dungeon-content 滚动容器
+        this.lastScrollLeft = 0;
+        this.lastScrollTop = 0;
+        this.scrollSyncRAF = null;  // requestAnimationFrame ID
+        this._boundSyncParticlePosition = null;  // 绑定的同步函数
+
+        // 【新增】粒子层缩放相关
+        this.mapContainer = null;  // #map-container 容器
+        this.currentScale = 1;  // 当前缩放比例
+        this._boundSyncParticleScale = null;  // 绑定的缩放同步函数
+
         // 确保 anime.js 已加载
         if (typeof anime === 'undefined') {
             console.warn('Anime.js not loaded, effects will be limited');
@@ -238,18 +250,58 @@ class EnhancedEffectsManager {
 
     /**
      * 创建环境粒子系统
+     * @param {HTMLElement} mapElement - 地图元素（map-grid），用于获取尺寸
+     * @param {string} floorTheme - 地板主题
      */
     createEnvironmentParticles(mapElement, floorTheme) {
-        if (typeof anime === 'undefined') return;
+        console.log('[EnhancedEffectsManager] createEnvironmentParticles called:', {
+            mapElement: !!mapElement,
+            floorTheme: floorTheme,
+            animeAvailable: typeof anime !== 'undefined'
+        });
+
+        if (typeof anime === 'undefined') {
+            console.warn('[EnhancedEffectsManager] anime.js not available');
+            return;
+        }
+
+        // 【重要】获取 map-container 作为粒子层的父容器
+        // 这样粒子层不会被 map-grid 的 innerHTML 清除
+        // 如果没有 map-container（测试页面），则使用 mapElement 本身
+        const mapContainer = document.getElementById('map-container') || mapElement;
+        if (!mapContainer) {
+            console.warn('[EnhancedEffectsManager] No valid container found');
+            return;
+        }
 
         // 移除旧的粒子系统
-        this.clearEnvironmentParticles();
+        const oldContainer = mapContainer.querySelector('.environment-particles');
+        if (oldContainer) {
+            oldContainer.remove();
+            console.log('[EnhancedEffectsManager] Removed old particle container');
+        }
 
         const config = this.getParticleConfig(floorTheme);
-        if (!config) return;
+        console.log('[EnhancedEffectsManager] Particle config:', config);
 
+        if (!config) {
+            console.warn('[EnhancedEffectsManager] No config found for theme:', floorTheme);
+            return;
+        }
+
+        // 【重要】创建独立的粒子容器层
+        // 使用绝对定位覆盖在 map-grid 上方，但在 fog-canvas 下方
         const container = document.createElement('div');
         container.className = 'environment-particles';
+        container.id = 'particle-layer';
+
+        // 【修复】保存粒子容器引用，供同步方法使用
+        this.particleContainer = container;
+
+        // 【修复】使用 100% 宽高自动匹配 map-container
+        // 不依赖 map-grid 的尺寸（可能还未渲染）
+        // z-index 150 确保粒子在迷雾层（z-index 100）之上可见
+        // 【新增】transform-origin: top left 与 map-grid 保持一致
         container.style.cssText = `
             position: absolute;
             top: 0;
@@ -257,36 +309,148 @@ class EnhancedEffectsManager {
             width: 100%;
             height: 100%;
             pointer-events: none;
-            z-index: 1;
+            z-index: 150;
             overflow: hidden;
+            transform-origin: top left;
         `;
 
-        // 创建粒子
+        console.log('[EnhancedEffectsManager] Particle container created with 100% size, z-index: 150');
+
+        // 创建粒子/光线
         const particles = [];
-        for (let i = 0; i < config.count; i++) {
-            const particle = document.createElement('div');
-            particle.className = `particle-${config.type}`;
-            particle.style.cssText = `
-                position: absolute;
-                width: ${config.size}px;
-                height: ${config.size}px;
-                background: ${config.color};
-                border-radius: ${config.shape === 'circle' ? '50%' : '0'};
-                opacity: ${config.opacity};
-                left: ${Math.random() * 100}%;
-                top: ${Math.random() * 100}%;
-            `;
-            container.appendChild(particle);
-            particles.push(particle);
+
+        // 特殊处理：阳光光线
+        if (config.type === 'sunlight' && config.shape === 'ray') {
+            for (let i = 0; i < config.count; i++) {
+                const ray = document.createElement('div');
+                ray.className = 'light-ray';
+
+                // 光线参数
+                const rayWidth = config.size + anime.random(-20, 20);
+                const rayHeight = 300; // 光线长度
+                const rayAngle = anime.random(-15, 15); // 倾斜角度
+                const rayLeft = anime.random(0, 100); // 水平位置
+
+                ray.style.cssText = `
+                    position: absolute;
+                    width: ${rayWidth}px;
+                    height: ${rayHeight}px;
+                    left: ${rayLeft}%;
+                    top: -50px;
+                    transform: rotate(${rayAngle}deg);
+                    background: linear-gradient(to bottom,
+                        rgba(255, 245, 200, 0) 0%,
+                        rgba(255, 235, 150, ${config.opacity * 0.8}) 20%,
+                        rgba(255, 235, 100, ${config.opacity}) 50%,
+                        rgba(255, 235, 150, ${config.opacity * 0.8}) 80%,
+                        rgba(255, 245, 200, 0) 100%
+                    );
+                    filter: blur(8px);
+                    pointer-events: none;
+                    z-index: 1;
+                    opacity: 0;
+                `;
+
+                // 存储光线参数
+                ray.dataset.rayAngle = rayAngle;
+                ray.dataset.rayLeft = rayLeft;
+
+                container.appendChild(ray);
+                particles.push(ray);
+            }
+        } else {
+            // 普通粒子系统 - 多层系统（背景、中景、前景）
+            for (let i = 0; i < config.count; i++) {
+                const particle = document.createElement('div');
+                particle.className = `particle-${config.type}`;
+
+                // 随机层次（模拟远近）
+                const layer = Math.random();
+                let sizeMultiplier, opacityMultiplier, zIndex, blur;
+
+                if (layer < 0.3) {
+                    // 背景层 - 远处（大、慢、模糊）
+                    sizeMultiplier = 1.5;
+                    opacityMultiplier = 0.4;
+                    zIndex = 1;
+                    blur = 2;
+                } else if (layer < 0.7) {
+                    // 中景层 - 中等
+                    sizeMultiplier = 1.0;
+                    opacityMultiplier = 0.7;
+                    zIndex = 2;
+                    blur = 1;
+                } else {
+                    // 前景层 - 近处（小、快、清晰）
+                    sizeMultiplier = 0.7;
+                    opacityMultiplier = 1.0;
+                    zIndex = 3;
+                    blur = 0;
+                }
+
+                const actualSize = config.size * sizeMultiplier;
+                const actualOpacity = config.opacity * opacityMultiplier;
+
+                // 基础样式
+                let styleText = `
+                    position: absolute;
+                    width: ${actualSize}px;
+                    height: ${actualSize}px;
+                    background: ${config.color};
+                    border-radius: ${config.shape === 'circle' ? '50%' : '0'};
+                    opacity: ${actualOpacity};
+                    left: ${Math.random() * 100}%;
+                    top: ${Math.random() * 100}%;
+                    z-index: ${zIndex};
+                    pointer-events: none;
+                `;
+
+                // 【优化】添加光晕效果
+                if (config.glow) {
+                    // 使用配置中的光晕参数
+                    const glowSize = config.glowSize || 3;
+                    const glowColor = config.glowColor || config.color;
+                    styleText += `
+                        box-shadow: 0 0 ${glowSize}px ${glowColor}, 0 0 ${glowSize * 1.5}px ${glowColor};
+                    `;
+                }
+
+                // 添加模糊效果（如果需要）
+                if (blur > 0) {
+                    styleText += `filter: blur(${blur}px);`;
+                }
+
+                particle.style.cssText = styleText;
+
+                // 存储层次信息用于动画速度调整
+                particle.dataset.layer = layer < 0.3 ? 'back' : (layer < 0.7 ? 'mid' : 'front');
+                particle.dataset.speedMultiplier = layer < 0.3 ? '0.7' : (layer < 0.7 ? '1.0' : '1.3');
+
+                container.appendChild(particle);
+                particles.push(particle);
+            }
         }
 
-        mapElement.appendChild(container);
+        // 【重要】将粒子容器添加到 map-container，而不是 map-grid
+        // 这样粒子层不会被 map-grid 的 innerHTML 清除
+        mapContainer.appendChild(container);
+        console.log('[EnhancedEffectsManager] Particle container appended to map-container, particles created:', particles.length);
 
         // 创建粒子动画
         this.animateParticles(particles, config);
 
         // 存储粒子系统
         this.particleSystems.set(floorTheme, { container, particles, config });
+        console.log('[EnhancedEffectsManager] Particle system created successfully for theme:', floorTheme);
+
+        // 【新增】初始化粒子层位置同步
+        // 先销毁旧的同步（如果有）
+        this.destroyParticlePositionSync();
+        this.destroyParticleScaleSync();
+
+        // 初始化新的同步
+        this.initParticlePositionSync();
+        this.initParticleScaleSync();
     }
 
     /**
@@ -294,52 +458,136 @@ class EnhancedEffectsManager {
      */
     getParticleConfig(floorTheme) {
         const configs = {
-            // 地牢主题 - 落灰效果
+            // ========== 地牢主题 - 落灰效果 ==========
             'normal': {
                 type: 'dust',
                 count: 20,
-                size: 2,
-                color: 'rgba(200, 200, 200, 0.3)',
+                size: 7,  // 增大尺寸：4 → 7
+                color: 'rgba(200, 200, 200, 0.85)',  // 提高不透明度：0.6 → 0.85
                 shape: 'circle',
-                opacity: 0.3,
-                speed: 'slow'
+                opacity: 0.85,
+                speed: 'slow',
+                glow: true,  // 添加光晕
+                glowColor: 'rgba(220, 220, 220, 0.6)',
+                glowSize: 3
             },
             'abandoned': {
                 type: 'dust',
                 count: 30,
-                size: 3,
-                color: 'rgba(150, 150, 150, 0.4)',
+                size: 8,  // 增大尺寸：5 → 8
+                color: 'rgba(150, 150, 150, 0.9)',  // 提高不透明度：0.7 → 0.9
                 shape: 'circle',
-                opacity: 0.4,
-                speed: 'slow'
+                opacity: 0.9,
+                speed: 'slow',
+                glow: true,
+                glowColor: 'rgba(170, 170, 170, 0.7)',
+                glowSize: 4
             },
             'cave': {
                 type: 'dust',
                 count: 25,
-                size: 2,
-                color: 'rgba(100, 100, 100, 0.3)',
+                size: 7,  // 增大尺寸：4 → 7
+                color: 'rgba(100, 100, 100, 0.85)',  // 提高不透明度：0.6 → 0.85
                 shape: 'circle',
-                opacity: 0.3,
-                speed: 'slow'
+                opacity: 0.85,
+                speed: 'slow',
+                glow: true,
+                glowColor: 'rgba(120, 120, 120, 0.6)',
+                glowSize: 3
             },
-            // 地上主题 - 自然效果
+            'magic': {
+                type: 'dust',
+                count: 25,
+                size: 8,  // 增大尺寸：5 → 8
+                color: 'rgba(138, 43, 226, 0.9)',  // 提高不透明度：0.7 → 0.9
+                shape: 'circle',
+                opacity: 0.9,
+                speed: 'slow',
+                glow: true,
+                glowColor: 'rgba(138, 43, 226, 0.8)',  // 紫色光晕更强
+                glowSize: 6  // 更大的光晕
+            },
+            'combat': {
+                type: 'dust',
+                count: 20,
+                size: 7,  // 增大尺寸：4 → 7
+                color: 'rgba(200, 50, 50, 0.85)',  // 提高不透明度：0.6 → 0.85
+                shape: 'circle',
+                opacity: 0.85,
+                speed: 'medium',
+                glow: true,
+                glowColor: 'rgba(255, 80, 80, 0.7)',  // 红色光晕
+                glowSize: 5
+            },
+
+            // ========== 地上主题 - 自然效果 ==========
             'grassland': {
                 type: 'leaves',
-                count: 15,
-                size: 4,
-                color: 'rgba(76, 175, 80, 0.6)',
+                count: 20,
+                size: 9,  // 增大尺寸：6 → 9
+                color: 'rgba(76, 175, 80, 0.95)',  // 提高不透明度：0.8 → 0.95
                 shape: 'square',
-                opacity: 0.6,
-                speed: 'medium'
+                opacity: 0.95,
+                speed: 'medium',
+                glow: true,
+                glowColor: 'rgba(76, 175, 80, 0.6)',  // 绿色光晕
+                glowSize: 3
             },
             'town': {
                 type: 'sunlight',
-                count: 10,
-                size: 3,
-                color: 'rgba(255, 235, 59, 0.4)',
-                shape: 'circle',
-                opacity: 0.4,
+                count: 5,
+                size: 110,  // 增大光线宽度：80 → 110
+                color: 'rgba(255, 235, 59, 0.3)',  // 提高不透明度：0.15 → 0.3
+                shape: 'ray',
+                opacity: 0.3,
                 speed: 'very-slow'
+            },
+            'desert': {
+                type: 'sand',
+                count: 35,
+                size: 6,  // 增大尺寸：3 → 6
+                color: 'rgba(244, 164, 96, 0.9)',  // 提高不透明度：0.7 → 0.9
+                shape: 'circle',
+                opacity: 0.9,
+                speed: 'fast',
+                glow: true,
+                glowColor: 'rgba(244, 164, 96, 0.7)',  // 橙色光晕
+                glowSize: 4
+            },
+            'snowfield': {
+                type: 'snow',
+                count: 40,
+                size: 8,  // 增大尺寸：5 → 8
+                color: 'rgba(255, 255, 255, 1.0)',  // 完全不透明：0.9 → 1.0
+                shape: 'circle',
+                opacity: 1.0,
+                speed: 'medium',
+                glow: true,
+                glowColor: 'rgba(255, 255, 255, 0.9)',  // 白色光晕更强
+                glowSize: 5
+            },
+            'farmland': {
+                type: 'leaves',
+                count: 15,
+                size: 8,  // 增大尺寸：5 → 8
+                color: 'rgba(139, 195, 74, 0.9)',  // 提高不透明度：0.7 → 0.9
+                shape: 'square',
+                opacity: 0.9,
+                speed: 'slow',
+                glow: true,
+                glowColor: 'rgba(139, 195, 74, 0.6)',  // 绿色光晕
+                glowSize: 3
+            },
+
+            // ========== 特殊天气效果（可选） ==========
+            'rainy': {
+                type: 'rain',
+                count: 50,  // 雨水需要更多粒子
+                size: 2,
+                color: 'rgba(173, 216, 230, 0.6)',
+                shape: 'circle',
+                opacity: 0.6,
+                speed: 'fast'
             }
         };
 
@@ -347,33 +595,409 @@ class EnhancedEffectsManager {
     }
 
     /**
-     * 动画化粒子
+     * 【新增】初始化粒子层位置同步
+     * 监听滚动容器的滚动事件，同步更新粒子层位置
+     */
+    initParticlePositionSync() {
+        // 获取滚动容器
+        const mapContainer = document.getElementById('map-container');
+        if (!mapContainer) {
+            console.warn('[EnhancedEffectsManager] map-container not found, cannot sync particle position');
+            return;
+        }
+
+        this.scrollContainer = mapContainer.querySelector('.dungeon-content');
+        if (!this.scrollContainer) {
+            console.warn('[EnhancedEffectsManager] .dungeon-content not found, cannot sync particle position');
+            return;
+        }
+
+        // 绑定同步函数
+        this._boundSyncParticlePosition = this.syncParticlePosition.bind(this);
+
+        // 监听滚动事件（使用 passive 优化性能）
+        this.scrollContainer.addEventListener('scroll', this._boundSyncParticlePosition, { passive: true });
+
+        // 初始化滚动位置
+        this.lastScrollLeft = this.scrollContainer.scrollLeft;
+        this.lastScrollTop = this.scrollContainer.scrollTop;
+
+        console.log('[EnhancedEffectsManager] Particle position sync initialized');
+    }
+
+    /**
+     * 【新增】同步粒子层位置
+     * 根据滚动容器的滚动位置，更新粒子层的 transform
+     */
+    syncParticlePosition() {
+        // 使用 requestAnimationFrame 优化性能
+        if (this.scrollSyncRAF) {
+            return;  // 已经有待处理的同步任务
+        }
+
+        this.scrollSyncRAF = requestAnimationFrame(() => {
+            this.scrollSyncRAF = null;
+
+            if (!this.scrollContainer || !this.particleContainer) {
+                return;
+            }
+
+            const scrollLeft = this.scrollContainer.scrollLeft;
+            const scrollTop = this.scrollContainer.scrollTop;
+
+            // 只在滚动位置变化时更新
+            if (scrollLeft !== this.lastScrollLeft || scrollTop !== this.lastScrollTop) {
+                // 【修改】同时应用 translate（滚动同步）和 scale（缩放同步）
+                // 注意：translate 是负值，因为要反向移动
+                this.particleContainer.style.transform = `translate(${-scrollLeft}px, ${-scrollTop}px) scale(${this.currentScale})`;
+
+                this.lastScrollLeft = scrollLeft;
+                this.lastScrollTop = scrollTop;
+            }
+        });
+    }
+
+    /**
+     * 【新增】销毁粒子层位置同步
+     * 移除滚动事件监听器
+     */
+    destroyParticlePositionSync() {
+        if (this.scrollContainer && this._boundSyncParticlePosition) {
+            this.scrollContainer.removeEventListener('scroll', this._boundSyncParticlePosition);
+            this._boundSyncParticlePosition = null;
+            console.log('[EnhancedEffectsManager] Particle position sync destroyed');
+        }
+
+        if (this.scrollSyncRAF) {
+            cancelAnimationFrame(this.scrollSyncRAF);
+            this.scrollSyncRAF = null;
+        }
+
+        this.scrollContainer = null;
+        this.lastScrollLeft = 0;
+        this.lastScrollTop = 0;
+    }
+
+    /**
+     * 【新增】初始化粒子层缩放同步
+     * 监听地图缩放事件，同步更新粒子层缩放
+     */
+    initParticleScaleSync() {
+        // 获取 map-container
+        this.mapContainer = document.getElementById('map-container');
+        if (!this.mapContainer) {
+            console.warn('[EnhancedEffectsManager] map-container not found, cannot sync particle scale');
+            return;
+        }
+
+        // 绑定缩放同步函数
+        this._boundSyncParticleScale = this.syncParticleScale.bind(this);
+
+        // 监听 mapZoomChanged 自定义事件
+        this.mapContainer.addEventListener('mapZoomChanged', this._boundSyncParticleScale);
+
+        // 初始化缩放比例（从 MapZoomManager 获取）
+        const mapZoomManager = window.game?.mapZoomManager;
+        if (mapZoomManager) {
+            this.currentScale = mapZoomManager.getZoom();
+        } else {
+            this.currentScale = 1;
+        }
+
+        console.log('[EnhancedEffectsManager] Particle scale sync initialized, initial scale:', this.currentScale);
+    }
+
+    /**
+     * 【新增】同步粒子层缩放
+     * 根据地图缩放比例，更新粒子层的 scale transform
+     */
+    syncParticleScale(event) {
+        if (!this.particleContainer) {
+            return;
+        }
+
+        // 从事件中获取新的缩放比例
+        const newScale = event.detail.scale;
+
+        if (newScale !== this.currentScale) {
+            this.currentScale = newScale;
+
+            // 更新粒子层的 transform
+            // 需要同时保持 translate（滚动同步）和 scale（缩放同步）
+            const scrollLeft = this.lastScrollLeft || 0;
+            const scrollTop = this.lastScrollTop || 0;
+
+            this.particleContainer.style.transform = `translate(${-scrollLeft}px, ${-scrollTop}px) scale(${newScale})`;
+
+            console.log('[EnhancedEffectsManager] Particle scale synced:', newScale);
+        }
+    }
+
+    /**
+     * 【新增】销毁粒子层缩放同步
+     * 移除缩放事件监听器
+     */
+    destroyParticleScaleSync() {
+        if (this.mapContainer && this._boundSyncParticleScale) {
+            this.mapContainer.removeEventListener('mapZoomChanged', this._boundSyncParticleScale);
+            this._boundSyncParticleScale = null;
+            console.log('[EnhancedEffectsManager] Particle scale sync destroyed');
+        }
+
+        this.mapContainer = null;
+        this.currentScale = 1;
+    }
+
+    /**
+     * 动画化粒子 - 游戏级别的真实效果
      */
     animateParticles(particles, config) {
         const speedMap = {
-            'very-slow': 8000,
-            'slow': 5000,
-            'medium': 3000,
-            'fast': 1500
+            'very-slow': 12000,
+            'slow': 8000,
+            'medium': 5000,
+            'fast': 2000
         };
 
-        const duration = speedMap[config.speed] || 5000;
+        const baseDuration = speedMap[config.speed] || 5000;
 
         particles.forEach((particle, index) => {
-            anime({
-                targets: particle,
-                translateY: config.type === 'dust' || config.type === 'leaves' 
-                    ? ['-100%', '100vh'] 
-                    : ['0', '20px'],
-                translateX: config.type === 'leaves'
-                    ? () => [0, anime.random(-50, 50)]
-                    : 0,
-                opacity: [config.opacity, 0],
-                duration: duration,
-                delay: index * (duration / particles.length),
-                easing: 'linear',
-                loop: true
+            // 为每个粒子生成随机参数，模拟真实的不规则性
+            const speedMultiplier = parseFloat(particle.dataset.speedMultiplier || 1.0);
+            const randomDuration = (baseDuration / speedMultiplier) + anime.random(-1000, 1000);
+            const randomDelay = index * (baseDuration / particles.length) + anime.random(0, 500);
+
+            // 根据粒子类型应用不同的动画
+            switch(config.type) {
+                case 'dust':
+                    this.animateDust(particle, randomDuration, randomDelay, config);
+                    break;
+                case 'leaves':
+                    this.animateLeaves(particle, randomDuration, randomDelay, config);
+                    break;
+                case 'sunlight':
+                    this.animateSunlight(particle, randomDuration, randomDelay, config);
+                    break;
+                case 'rain':
+                    this.animateRain(particle, randomDuration, randomDelay, config);
+                    break;
+                case 'snow':
+                    this.animateSnow(particle, randomDuration, randomDelay, config);
+                    break;
+                case 'sand':
+                    this.animateSand(particle, randomDuration, randomDelay, config);
+                    break;
+                default:
+                    this.animateDefault(particle, randomDuration, randomDelay, config);
+            }
+        });
+    }
+
+    /**
+     * 落灰动画 - 轻微飘动 + 不规则下落
+     */
+    animateDust(particle, duration, delay, config) {
+        const timeline = anime.timeline({
+            loop: true,
+            delay: delay
+        });
+
+        // 主下落动画
+        timeline.add({
+            targets: particle,
+            translateY: ['-20%', '120%'],
+            translateX: [
+                { value: () => anime.random(-15, 15), duration: duration * 0.3 },
+                { value: () => anime.random(-15, 15), duration: duration * 0.4 },
+                { value: () => anime.random(-15, 15), duration: duration * 0.3 }
+            ],
+            opacity: [
+                { value: config.opacity * 0.7, duration: duration * 0.2 },
+                { value: config.opacity, duration: duration * 0.6 },
+                { value: config.opacity * 0.3, duration: duration * 0.2 }
+            ],
+            rotate: () => anime.random(-30, 30),
+            duration: duration,
+            easing: 'linear'
+        });
+    }
+
+    /**
+     * 落叶动画 - 摇摆飘落 + 自然旋转
+     */
+    animateLeaves(particle, duration, delay, config) {
+        const swingAmplitude = anime.random(30, 60);
+
+        const timeline = anime.timeline({
+            loop: true,
+            delay: delay
+        });
+
+        timeline.add({
+            targets: particle,
+            translateY: ['-20%', '120%'],
+            translateX: [
+                { value: -swingAmplitude, duration: duration * 0.25, easing: 'easeInOutSine' },
+                { value: swingAmplitude, duration: duration * 0.25, easing: 'easeInOutSine' },
+                { value: -swingAmplitude, duration: duration * 0.25, easing: 'easeInOutSine' },
+                { value: 0, duration: duration * 0.25, easing: 'easeInOutSine' }
+            ],
+            rotate: [
+                { value: () => anime.random(-180, 180), duration: duration * 0.5 },
+                { value: () => anime.random(-360, 360), duration: duration * 0.5 }
+            ],
+            opacity: config.opacity,
+            duration: duration,
+            easing: 'linear'
+        });
+    }
+
+    /**
+     * 阳光光线动画 - 缓慢摇曳 + 透明度变化
+     */
+    animateSunlight(particle, duration, delay, config) {
+        // 检查是否是光线（而不是光斑）
+        if (particle.className === 'light-ray') {
+            const baseAngle = parseFloat(particle.dataset.rayAngle || 0);
+            const baseLeft = parseFloat(particle.dataset.rayLeft || 50);
+
+            const timeline = anime.timeline({
+                loop: true,
+                delay: delay
             });
+
+            timeline.add({
+                targets: particle,
+                // 光线摇曳（角度变化）
+                rotate: [
+                    { value: baseAngle - 3, duration: duration * 0.5, easing: 'easeInOutSine' },
+                    { value: baseAngle + 3, duration: duration * 0.5, easing: 'easeInOutSine' }
+                ],
+                // 水平位置微调
+                left: [
+                    { value: `${baseLeft - 2}%`, duration: duration * 0.5, easing: 'easeInOutSine' },
+                    { value: `${baseLeft + 2}%`, duration: duration * 0.5, easing: 'easeInOutSine' }
+                ],
+                // 透明度呼吸
+                opacity: [
+                    { value: 0.3, duration: duration * 0.25, easing: 'easeInOutQuad' },
+                    { value: 0.8, duration: duration * 0.25, easing: 'easeInOutQuad' },
+                    { value: 0.5, duration: duration * 0.25, easing: 'easeInOutQuad' },
+                    { value: 0.3, duration: duration * 0.25, easing: 'easeInOutQuad' }
+                ],
+                duration: duration
+            });
+        } else {
+            // 旧版光斑动画（备用）
+            const timeline = anime.timeline({
+                loop: true,
+                delay: delay
+            });
+
+            timeline.add({
+                targets: particle,
+                scale: [
+                    { value: 0.8, duration: duration * 0.5, easing: 'easeInOutQuad' },
+                    { value: 1.2, duration: duration * 0.5, easing: 'easeInOutQuad' }
+                ],
+                opacity: [
+                    { value: config.opacity * 0.3, duration: duration * 0.5, easing: 'easeInOutQuad' },
+                    { value: config.opacity * 0.8, duration: duration * 0.5, easing: 'easeInOutQuad' }
+                ],
+                duration: duration
+            });
+        }
+    }
+
+    /**
+     * 雨水动画 - 快速斜向下落
+     */
+    animateRain(particle, duration, delay, config) {
+        anime({
+            targets: particle,
+            translateY: ['-10%', '110%'],
+            translateX: [0, anime.random(20, 40)], // 斜向
+            opacity: [config.opacity, config.opacity * 0.5],
+            duration: duration * 0.4, // 雨水更快
+            delay: delay,
+            easing: 'linear',
+            loop: true
+        });
+    }
+
+    /**
+     * 雪花动画 - 轻盈飘摇
+     */
+    animateSnow(particle, duration, delay, config) {
+        const swingAmplitude = anime.random(20, 40);
+
+        const timeline = anime.timeline({
+            loop: true,
+            delay: delay
+        });
+
+        timeline.add({
+            targets: particle,
+            translateY: ['-20%', '120%'],
+            translateX: [
+                { value: -swingAmplitude, duration: duration * 0.33, easing: 'easeInOutSine' },
+                { value: swingAmplitude, duration: duration * 0.34, easing: 'easeInOutSine' },
+                { value: 0, duration: duration * 0.33, easing: 'easeInOutSine' }
+            ],
+            rotate: [
+                { value: () => anime.random(-90, 90), duration: duration * 0.5 },
+                { value: () => anime.random(-180, 180), duration: duration * 0.5 }
+            ],
+            opacity: [
+                { value: config.opacity, duration: duration * 0.8 },
+                { value: config.opacity * 0.5, duration: duration * 0.2 }
+            ],
+            duration: duration,
+            easing: 'linear'
+        });
+    }
+
+    /**
+     * 沙尘动画 - 快速飘动 + 随机方向
+     */
+    animateSand(particle, duration, delay, config) {
+        const timeline = anime.timeline({
+            loop: true,
+            delay: delay
+        });
+
+        timeline.add({
+            targets: particle,
+            translateY: ['-20%', '120%'],
+            translateX: [
+                { value: () => anime.random(-50, 50), duration: duration * 0.25 },
+                { value: () => anime.random(-50, 50), duration: duration * 0.25 },
+                { value: () => anime.random(-50, 50), duration: duration * 0.25 },
+                { value: () => anime.random(-50, 50), duration: duration * 0.25 }
+            ],
+            opacity: [
+                { value: config.opacity * 0.5, duration: duration * 0.3 },
+                { value: config.opacity, duration: duration * 0.4 },
+                { value: config.opacity * 0.3, duration: duration * 0.3 }
+            ],
+            rotate: () => anime.random(-180, 180),
+            duration: duration,
+            easing: 'linear'
+        });
+    }
+
+    /**
+     * 默认动画
+     */
+    animateDefault(particle, duration, delay, config) {
+        anime({
+            targets: particle,
+            translateY: ['-20%', '120%'],
+            opacity: config.opacity,
+            duration: duration,
+            delay: delay,
+            easing: 'linear',
+            loop: true
         });
     }
 

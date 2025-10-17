@@ -196,12 +196,10 @@ class LabyrinthiaGame {
             if (gameState.pending_choice_context && window.eventChoiceManager) {
                 console.log('[GameCore] Found pending_choice_context in refreshed state, showing dialog');
                 window.eventChoiceManager.showChoiceDialog(gameState.pending_choice_context);
-            } else {
-                // 回合制游戏：刷新状态后检查是否有待处理的选择
-                if (window.eventChoiceManager) {
-                    window.eventChoiceManager.checkAfterPlayerAction();
-                }
             }
+            // 【优化】移除自动检查 pending-choice
+            // refreshGameState 通常在加载游戏时调用，此时会在 updateGameState 中检查
+            // 普通移动后的 updateUI 不应该触发 pending-choice 检查
         } catch (error) {
             console.error('Failed to refresh game state:', error);
 
@@ -266,12 +264,11 @@ class LabyrinthiaGame {
         if (newGameState.pending_choice_context && window.eventChoiceManager) {
             console.log('[GameCore] Found pending_choice_context in updated state, showing dialog');
             window.eventChoiceManager.showChoiceDialog(newGameState.pending_choice_context);
-        } else {
-            // 回合制游戏：加载游戏后检查是否有待处理的选择
-            if (window.eventChoiceManager) {
-                window.eventChoiceManager.checkAfterPlayerAction();
-            }
         }
+        // 【优化】移除自动检查 pending-choice
+        // updateGameState 在多种情况下被调用（加载游戏、后端事件、普通移动）
+        // 只有后端事件会产生 pending-choice，应该由 triggerBackendEvent 负责检查
+        // 普通移动后的 updateUI -> updateGameState 不应该触发 pending-choice 检查
     }
 
     async renderGame() {

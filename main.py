@@ -516,7 +516,13 @@ async def handle_llm_event(request: LLMEventRequest, http_request: Request, resp
 
 @app.post("/api/sync-state")
 async def sync_game_state(request: SyncStateRequest, http_request: Request, response: Response):
-    """同步游戏状态（用于存档）"""
+    """同步游戏状态（用于存档）
+
+    【重要】此接口会合并前端和后端的游戏状态：
+    - 前端状态：玩家位置、怪物状态、地图状态等"计算型"数据
+    - 后端状态：任务进度、经验值、等级等"生成型"数据
+    - 返回合并后的状态，确保前端获取最新的后端数据
+    """
     try:
         # 获取用户ID
         user_id = user_session_manager.get_or_create_user_id(http_request, response)
@@ -524,21 +530,41 @@ async def sync_game_state(request: SyncStateRequest, http_request: Request, resp
 
         logger.info(f"Syncing game state for user {user_id}, game: {request.game_id}")
 
-        # 从请求中重建游戏状态
+        # 获取后端当前的游戏状态（包含最新的任务进度等数据）
+        backend_game_state = game_engine.active_games.get(game_key)
+
+        if not backend_game_state:
+            raise HTTPException(status_code=404, detail="游戏未找到")
+
+        # 从请求中重建前端游戏状态
         from data_manager import data_manager
-        game_state = data_manager._dict_to_game_state(request.game_state)
+        frontend_game_state = data_manager._dict_to_game_state(request.game_state)
+
+        # 【关键】合并前端和后端状态
+        # 前端状态：玩家位置、怪物列表、地图状态（前端计算）
+        backend_game_state.player.position = frontend_game_state.player.position
+        backend_game_state.monsters = frontend_game_state.monsters
+        backend_game_state.current_map = frontend_game_state.current_map
+        backend_game_state.turn_count = frontend_game_state.turn_count
+
+        # 后端状态：任务进度、经验值、等级、物品栏（后端生成）
+        # 这些数据保持后端的值，不被前端覆盖
 
         # 更新内存中的游戏状态
-        game_engine.active_games[game_key] = game_state
+        game_engine.active_games[game_key] = backend_game_state
 
         # 可选：立即保存到文件
-        # data_manager.save_game_state(game_state)
+        # data_manager.save_game_state(backend_game_state)
 
+        # 【新增】返回合并后的游戏状态，确保前端获取最新数据
         return {
             "success": True,
-            "message": "游戏状态已同步"
+            "message": "游戏状态已同步",
+            "game_state": backend_game_state.to_dict()
         }
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Failed to sync game state: {e}")
         raise HTTPException(status_code=500, detail=f"同步游戏状态失败: {str(e)}")
@@ -584,8 +610,47 @@ async def process_combat_result(game_id: str, request: Request, response: Respon
                 game_state, monster, damage_dealt
             )
 
-            # 返回战斗结果
-            return combat_result.to_dict()
+            # 【新增】如果是任务怪物，触发任务进度更新
+            if monster.quest_monster_id and combat_result.quest_progress > 0:
+                from progress_manager import progress_manager, ProgressEventType, ProgressContext
+
+                logger.info(f"Triggering quest progress update for quest monster: {monster.name}, progress: {combat_result.quest_progress}%")
+
+                # 创建进度上下文
+                context_data = {
+                    "monster_name": monster.name,
+                    "challenge_rating": monster.challenge_rating,
+                    "quest_monster_id": monster.quest_monster_id,
+                    "progress_value": combat_result.quest_progress
+                }
+
+                progress_context = ProgressContext(
+                    event_type=ProgressEventType.COMBAT_VICTORY,
+                    game_state=game_state,
+                    context_data=context_data
+                )
+
+                # 触发进度更新
+                progress_result = await progress_manager.process_event(progress_context)
+
+                if progress_result.get("success"):
+                    logger.info(f"Quest progress updated: {progress_result.get('new_progress', 0):.1f}%")
+
+                    # 如果任务完成，记录到响应中
+                    if progress_result.get("quest_completed"):
+                        logger.info("Quest completed after monster defeat")
+
+            # 【新增】检查是否有任务完成需要处理选择
+            has_pending_choice = False
+            if hasattr(game_state, 'pending_quest_completion') and game_state.pending_quest_completion:
+                has_pending_choice = True
+                logger.info(f"Quest completion detected: {game_state.pending_quest_completion.title}")
+
+            # 构建响应
+            result_dict = combat_result.to_dict()
+            result_dict["has_pending_choice"] = has_pending_choice
+
+            return result_dict
 
     except HTTPException:
         raise
