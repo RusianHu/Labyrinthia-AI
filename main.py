@@ -642,6 +642,17 @@ async def process_combat_result(game_id: str, request: Request, response: Respon
                 game_state, monster, damage_dealt
             )
 
+            # 【新增】从后端游戏状态中移除被击败的怪物，并清理地图标记
+            try:
+                tile = game_state.current_map.get_tile(monster.position[0], monster.position[1])
+                if tile:
+                    tile.character_id = None
+                if monster in game_state.monsters:
+                    game_state.monsters.remove(monster)
+                logger.info(f"Removed defeated monster from backend state: {monster.name}")
+            except Exception as e:
+                logger.error(f"Failed to remove monster from backend state: {e}")
+
             # 【新增】如果是任务怪物，触发任务进度更新
             if monster.quest_monster_id and combat_result.quest_progress > 0:
                 from progress_manager import progress_manager, ProgressEventType, ProgressContext
@@ -662,15 +673,13 @@ async def process_combat_result(game_id: str, request: Request, response: Respon
                     context_data=context_data
                 )
 
-                # 触发进度更新
-                progress_result = await progress_manager.process_event(progress_context)
-
-                if progress_result.get("success"):
-                    logger.info(f"Quest progress updated: {progress_result.get('new_progress', 0):.1f}%")
-
-                    # 如果任务完成，记录到响应中
-                    if progress_result.get("quest_completed"):
-                        logger.info("Quest completed after monster defeat")
+            # 【新增】在进度更新之后检查任务进度补偿（确保在移除怪物后再检查）
+            from quest_progress_compensator import quest_progress_compensator
+            compensation_result = await quest_progress_compensator.check_and_compensate(game_state)
+            if compensation_result.get("compensated"):
+                logger.info(
+                    f"Progress compensated during combat-result: +{compensation_result['compensation_amount']:.1f}% ({compensation_result['reason']})"
+                )
 
             # 【修复】检查是否有任务完成需要处理选择，立即创建选择上下文
             has_pending_choice = False
@@ -3446,9 +3455,9 @@ app.mount("/", StaticFiles(directory="static", html=True), name="root_static")
 
 if __name__ == "__main__":
     import uvicorn
-    
+
     logger.info(f"Starting Labyrinthia AI on {config.web.host}:{config.web.port}")
-    
+
     uvicorn.run(
         "main:app",
         host=config.web.host,
