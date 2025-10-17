@@ -224,15 +224,22 @@ class EventChoiceSystem:
     async def create_quest_completion_choice(self, game_state: GameState, completed_quest: Quest) -> EventChoiceContext:
         """创建任务完成选择"""
         # 构建LLM提示
+        # 【修复】处理 completed_quest 可能是字典或对象的情况
+        quest_title = completed_quest.get('title') if isinstance(completed_quest, dict) else completed_quest.title
+        quest_description = completed_quest.get('description') if isinstance(completed_quest, dict) else completed_quest.description
+        quest_type = completed_quest.get('quest_type') if isinstance(completed_quest, dict) else completed_quest.quest_type
+        experience_reward = completed_quest.get('experience_reward') if isinstance(completed_quest, dict) else completed_quest.experience_reward
+        story_context = completed_quest.get('story_context') if isinstance(completed_quest, dict) else completed_quest.story_context
+
         prompt = prompt_manager.format_prompt(
             "quest_completion_choices",
-            quest_title=completed_quest.title,
-            quest_description=completed_quest.description,
-            quest_type=completed_quest.quest_type,
+            quest_title=quest_title,
+            quest_description=quest_description,
+            quest_type=quest_type,
             player_name=game_state.player.name,
             player_level=game_state.player.stats.level,
-            experience_reward=completed_quest.experience_reward,
-            story_context=completed_quest.story_context,
+            experience_reward=experience_reward,
+            story_context=story_context,
             current_map=game_state.current_map.name,
             map_depth=game_state.current_map.depth
         )
@@ -249,11 +256,11 @@ class EventChoiceSystem:
             try:
                 context = EventChoiceContext(
                     event_type=ChoiceEventType.QUEST_COMPLETION.value,
-                    title=llm_response.get("title", f"任务完成：{completed_quest.title}"),
+                    title=llm_response.get("title", f"任务完成：{completed_quest.get('title') if isinstance(completed_quest, dict) else completed_quest.title}"),
                     description=llm_response.get("description", "恭喜完成任务！"),
                     context_data={
-                        "completed_quest_id": completed_quest.id,
-                        "quest_data": completed_quest.to_dict()
+                        "completed_quest_id": completed_quest.id if not isinstance(completed_quest, dict) else completed_quest.get("id"),
+                        "quest_data": completed_quest if isinstance(completed_quest, dict) else completed_quest.to_dict()
                     }
                 )
 
@@ -434,13 +441,17 @@ class EventChoiceSystem:
 
     def _create_default_quest_completion_choice(self, game_state: GameState, completed_quest: Quest) -> EventChoiceContext:
         """创建默认任务完成选择"""
+        # 【修复】处理 completed_quest 可能是字典或对象的情况
+        quest_title = completed_quest.get('title') if isinstance(completed_quest, dict) else completed_quest.title
+        experience_reward = completed_quest.get('experience_reward') if isinstance(completed_quest, dict) else completed_quest.experience_reward
+
         context = EventChoiceContext(
             event_type=ChoiceEventType.QUEST_COMPLETION.value,
-            title=f"任务完成：{completed_quest.title}",
-            description=f"恭喜完成任务！获得了 {completed_quest.experience_reward} 经验值。",
+            title=f"任务完成：{quest_title}",
+            description=f"恭喜完成任务！获得了 {experience_reward} 经验值。",
             context_data={
-                "completed_quest_id": completed_quest.id,
-                "quest_data": completed_quest.to_dict()
+                "completed_quest_id": completed_quest.id if not isinstance(completed_quest, dict) else completed_quest.get("id"),
+                "quest_data": completed_quest if isinstance(completed_quest, dict) else completed_quest.to_dict()
             }
         )
 
@@ -547,6 +558,10 @@ class EventChoiceSystem:
                 # 应用更新到游戏状态
                 await self._apply_choice_result(game_state, result)
 
+                # 【修复问题1】处理新任务创建（如果LLM建议）
+                if llm_response.get("new_quest_data"):
+                    await self._create_new_quest_from_choice(game_state, llm_response["new_quest_data"], choice)
+
                 # 处理地图切换（如果LLM建议）
                 if result.map_transition and result.map_transition.get("should_transition", False):
                     await self._handle_story_event_map_transition(game_state, result.map_transition)
@@ -629,8 +644,15 @@ class EventChoiceSystem:
             events=[choice.consequences or "你的选择为未来的冒险做好了准备..."]
         )
 
-    async def _handle_story_event_map_transition(self, game_state: GameState, transition_data: Dict[str, Any]):
-        """处理故事事件中的地图切换"""
+    async def _handle_map_transition(self, game_state: GameState, transition_data: Dict[str, Any],
+                                     source: str = "story_event") -> None:
+        """统一的地图切换处理
+
+        Args:
+            game_state: 游戏状态
+            transition_data: 地图切换数据
+            source: 触发来源（"story_event" 或 "quest_completion"）
+        """
         try:
             from game_engine import game_engine
 
@@ -638,85 +660,41 @@ class EventChoiceSystem:
             target_depth = transition_data.get("target_depth")
 
             if transition_type == "new_area":
-                # 生成新区域
+                # 根据来源设置默认深度
                 if target_depth is None:
-                    # 故事事件的地图切换可以是同层的不同区域
-                    target_depth = game_state.current_map.depth
+                    if source == "quest_completion":
+                        target_depth = game_state.current_map.depth + 1  # 任务完成：下一层
+                    else:
+                        target_depth = game_state.current_map.depth  # 故事事件：同层
 
                 # 确保楼层数合理
                 max_floors = config.game.max_quest_floors
-                if target_depth > max_floors:
-                    target_depth = max_floors
-                elif target_depth < 1:
-                    target_depth = 1
+                target_depth = max(1, min(target_depth, max_floors))
 
                 # 获取活跃任务上下文
                 active_quest = next((q for q in game_state.quests if q.is_active), None)
-                quest_context = active_quest.to_dict() if active_quest else None
+                # 【修复】处理 active_quest 可能是字典或对象的情况
+                if active_quest:
+                    if isinstance(active_quest, dict):
+                        quest_context = active_quest
+                    else:
+                        quest_context = active_quest.to_dict()
+                else:
+                    quest_context = None
 
-                # 生成新地图
-                from content_generator import content_generator
-                new_map = await content_generator.generate_dungeon_map(
-                    width=config.game.default_map_size[0],
-                    height=config.game.default_map_size[1],
-                    depth=target_depth,
-                    theme=transition_data.get("theme", f"神秘区域（第{target_depth}层）"),
-                    quest_context=quest_context
+                # 根据来源设置默认主题
+                default_theme = (
+                    f"地下城第{target_depth}层" if source == "quest_completion"
+                    else f"神秘区域（第{target_depth}层）"
                 )
 
-                # 确保新地图的深度正确设置
-                new_map.depth = target_depth
-
-                # 执行地图切换
-                await self._execute_map_transition(game_state, new_map)
-
-                # 添加切换消息
-                transition_message = transition_data.get("message", f"你被传送到了{new_map.name}（第{target_depth}层）")
-                game_state.pending_events.append(transition_message)
-
-                logger.info(f"Story event map transition completed: {new_map.name} (Depth: {target_depth})")
-
-            elif transition_type == "existing_area":
-                # 切换到已存在的区域（如果有的话）
-                # 这里可以实现切换到之前访问过的地图的逻辑
-                pass
-
-        except Exception as e:
-            logger.error(f"Error handling story event map transition: {e}")
-            # 如果地图切换失败，添加错误消息但不中断游戏
-            game_state.pending_events.append("地图切换遇到了一些问题，但你的冒险将继续...")
-
-    async def _handle_quest_completion_map_transition(self, game_state: GameState, transition_data: Dict[str, Any]):
-        """处理任务完成后的地图切换"""
-        try:
-            from game_engine import game_engine
-
-            transition_type = transition_data.get("transition_type", "new_area")
-            target_depth = transition_data.get("target_depth")
-
-            if transition_type == "new_area":
-                # 生成新区域
-                if target_depth is None:
-                    target_depth = game_state.current_map.depth + 1
-
-                # 确保楼层数合理
-                max_floors = config.game.max_quest_floors
-                if target_depth > max_floors:
-                    target_depth = max_floors
-                elif target_depth < 1:
-                    target_depth = 1
-
-                # 获取活跃任务上下文
-                active_quest = next((q for q in game_state.quests if q.is_active), None)
-                quest_context = active_quest.to_dict() if active_quest else None
-
                 # 生成新地图
                 from content_generator import content_generator
                 new_map = await content_generator.generate_dungeon_map(
                     width=config.game.default_map_size[0],
                     height=config.game.default_map_size[1],
                     depth=target_depth,
-                    theme=transition_data.get("theme", f"地下城第{target_depth}层"),
+                    theme=transition_data.get("theme", default_theme),
                     quest_context=quest_context
                 )
 
@@ -730,7 +708,7 @@ class EventChoiceSystem:
                 transition_message = transition_data.get("message", f"进入了{new_map.name}（第{target_depth}层）")
                 game_state.pending_events.append(transition_message)
 
-                logger.info(f"Quest completion map transition completed: {new_map.name} (Depth: {target_depth})")
+                logger.info(f"{source.capitalize()} map transition completed: {new_map.name} (Depth: {target_depth})")
 
             elif transition_type == "existing_area":
                 # 切换到已存在的区域（如果有的话）
@@ -738,9 +716,25 @@ class EventChoiceSystem:
                 pass
 
         except Exception as e:
-            logger.error(f"Error handling quest completion map transition: {e}")
+            import traceback
+            logger.error(f"Error handling map transition ({source}): {e}")
+            logger.error(f"Traceback: {traceback.format_exc()}")
             # 如果地图切换失败，添加错误消息但不中断游戏
             game_state.pending_events.append("地图切换遇到了一些问题，但你的冒险将继续...")
+
+    async def _handle_story_event_map_transition(self, game_state: GameState, transition_data: Dict[str, Any]):
+        """处理故事事件中的地图切换
+
+        【修复问题3】简化为调用统一的地图切换方法
+        """
+        await self._handle_map_transition(game_state, transition_data, source="story_event")
+
+    async def _handle_quest_completion_map_transition(self, game_state: GameState, transition_data: Dict[str, Any]):
+        """处理任务完成后的地图切换
+
+        【修复问题3】简化为调用统一的地图切换方法
+        """
+        await self._handle_map_transition(game_state, transition_data, source="quest_completion")
 
     async def _execute_map_transition(self, game_state: GameState, new_map: 'GameMap'):
         """执行地图切换的核心逻辑"""
@@ -883,6 +877,23 @@ class EventChoiceSystem:
         except Exception as e:
             logger.error(f"Error applying choice result: {e}")
 
+    def _is_field_missing_or_empty(self, data: Dict, field: str) -> bool:
+        """检查字段是否缺失或为空（包括空数组、空字符串）
+
+        Args:
+            data: 数据字典
+            field: 字段名
+
+        Returns:
+            True 如果字段缺失或为空，否则 False
+        """
+        value = data.get(field)
+        if value is None:
+            return True
+        if isinstance(value, (list, str)) and len(value) == 0:
+            return True
+        return False
+
     async def _create_new_quest_from_choice(self, game_state: GameState, quest_data: Dict[str, Any], choice: EventChoice):
         """基于玩家选择创建新任务"""
         try:
@@ -910,8 +921,17 @@ class EventChoiceSystem:
             else:
                 new_quest.story_context = choice_context
 
-            # 如果LLM没有提供完整的任务数据，使用任务生成器补充
-            if not quest_data.get("title") or not quest_data.get("description"):
+            # 【修复问题4】检查关键字段是否缺失或为空（包括空数组）
+            needs_generation = (
+                self._is_field_missing_or_empty(quest_data, "title") or
+                self._is_field_missing_or_empty(quest_data, "description") or
+                self._is_field_missing_or_empty(quest_data, "map_themes") or
+                self._is_field_missing_or_empty(quest_data, "special_events") or
+                self._is_field_missing_or_empty(quest_data, "special_monsters") or
+                self._is_field_missing_or_empty(quest_data, "target_floors")
+            )
+
+            if needs_generation:
                 # 使用现有的任务生成系统，传递选择上下文
                 context_for_generation = f"玩家选择了：{choice.text} - {choice.description}"
                 generated_quests = await content_generator.generate_quest_chain(
@@ -920,17 +940,27 @@ class EventChoiceSystem:
 
                 if generated_quests:
                     generated_quest = generated_quests[0]
-                    # 合并LLM提供的数据和生成的数据
-                    new_quest.title = quest_data.get("title", generated_quest.title)
-                    new_quest.description = quest_data.get("description", generated_quest.description)
-                    new_quest.quest_type = quest_data.get("type", generated_quest.quest_type)
-                    new_quest.experience_reward = quest_data.get("experience_reward", generated_quest.experience_reward)
-                    new_quest.objectives = quest_data.get("objectives", generated_quest.objectives)
+                    # 【修复】合并LLM提供的数据和生成的数据，优先使用LLM数据但补充缺失字段
+                    new_quest.title = quest_data.get("title") or generated_quest.title
+                    new_quest.description = quest_data.get("description") or generated_quest.description
+                    new_quest.quest_type = quest_data.get("type") or generated_quest.quest_type
+                    new_quest.experience_reward = quest_data.get("experience_reward") or generated_quest.experience_reward
+                    new_quest.objectives = quest_data.get("objectives") or generated_quest.objectives
                     new_quest.completed_objectives = [False] * len(new_quest.objectives)
-                    new_quest.special_events = generated_quest.special_events
-                    new_quest.special_monsters = generated_quest.special_monsters
-                    new_quest.target_floors = generated_quest.target_floors
-                    new_quest.map_themes = generated_quest.map_themes
+
+                    # 【关键修复】确保这些字段总是被填充
+                    new_quest.special_events = quest_data.get("special_events") or generated_quest.special_events
+                    new_quest.special_monsters = quest_data.get("special_monsters") or generated_quest.special_monsters
+                    new_quest.target_floors = quest_data.get("target_floors") or generated_quest.target_floors
+                    new_quest.map_themes = quest_data.get("map_themes") or generated_quest.map_themes
+
+                    logger.info(f"Quest data supplemented from generator. map_themes: {new_quest.map_themes}")
+            else:
+                # LLM提供了完整数据，直接使用
+                new_quest.special_events = quest_data.get("special_events", [])
+                new_quest.special_monsters = quest_data.get("special_monsters", [])
+                new_quest.target_floors = quest_data.get("target_floors", [1])
+                new_quest.map_themes = quest_data.get("map_themes", [])
 
             # 添加到游戏状态
             game_state.quests.append(new_quest)
@@ -943,7 +973,7 @@ class EventChoiceSystem:
             if hasattr(game_state, 'pending_new_quest_generation'):
                 game_state.pending_new_quest_generation = False
 
-            logger.info(f"Created new quest from choice: {new_quest.title}")
+            logger.info(f"Created new quest from choice: {new_quest.title} (type: {new_quest.quest_type}, map_themes: {new_quest.map_themes})")
 
         except Exception as e:
             logger.error(f"Error creating new quest from choice: {e}")

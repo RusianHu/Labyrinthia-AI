@@ -717,6 +717,36 @@ class PromptManager:
     "quest_updates": {{
         "{quest_id}": {{"progress_percentage": 新进度}}
     }},
+
+    // 【修复问题5】新增：新任务数据（可选，仅在选择导向新任务时提供）
+    "new_quest_data": {{
+        "title": "新任务标题",
+        "description": "新任务描述（100-150字）",
+        "type": "任务类型（exploration/investigation/combat/rescue/mystery/story/retrieval）",
+        "experience_reward": 经验奖励,
+        "objectives": ["目标1", "目标2"],
+        "story_context": "故事背景",
+        "map_themes": ["主题1", "主题2"],  // 地图主题建议
+        "target_floors": [1, 2, 3],  // 任务涉及的楼层
+        "special_events": [  // 任务专属事件
+            {{
+                "floor": 1,
+                "event_type": "story/puzzle/treasure",
+                "description": "事件描述",
+                "is_required": true
+            }}
+        ],
+        "special_monsters": [  // 任务专属怪物
+            {{
+                "floor": 2,
+                "name": "怪物名称",
+                "description": "怪物描述",
+                "is_boss": false,
+                "is_quest_target": true
+            }}
+        ]
+    }},
+
     "map_transition": {{
         "should_transition": false,  // 是否需要切换地图
         "transition_type": "new_area",  // new_area 或 existing_area
@@ -726,8 +756,9 @@ class PromptManager:
     }}
 }}
 
-**地图切换说明**：
-- 只有在选择涉及传送、进入新区域、发现传送门等情况时才设置 should_transition 为 true
+**重要说明**：
+- **新任务创建**：如果选择导向新任务（如接受新的委托、发现新的线索等），请提供完整的new_quest_data
+- **地图切换**：只有在选择涉及传送、进入新区域、发现传送门等情况时才设置 should_transition 为 true
 - transition_type 通常使用 "new_area" 来生成全新的地图
 - theme 应该描述新地图的风格和特点（如"神秘的地下湖泊"、"古老的图书馆"等）
 - message 是玩家看到的切换提示
@@ -760,6 +791,22 @@ class PromptManager:
                     },
                     "quest_updates": {"type": "object"},
                     "new_items": {"type": "array"},
+                    # 【修复问题5】添加new_quest_data字段的Schema定义
+                    "new_quest_data": {
+                        "type": "object",
+                        "properties": {
+                            "title": {"type": "string"},
+                            "description": {"type": "string"},
+                            "type": {"type": "string"},
+                            "experience_reward": {"type": "integer"},
+                            "objectives": {"type": "array", "items": {"type": "string"}},
+                            "story_context": {"type": "string"},
+                            "map_themes": {"type": "array", "items": {"type": "string"}},
+                            "target_floors": {"type": "array", "items": {"type": "integer"}},
+                            "special_events": {"type": "array", "items": {"type": "object"}},
+                            "special_monsters": {"type": "array", "items": {"type": "object"}}
+                        }
+                    },
                     "map_transition": {
                         "type": "object",
                         "properties": {
@@ -803,7 +850,7 @@ class PromptManager:
 - 深度：第{map_depth}层
 
 请根据玩家的选择生成合理的结果：
-1. 如果选择导向新任务，生成新任务的基本信息
+1. 如果选择导向新任务，生成新任务的完整信息（包括所有必需字段）
 2. 如果选择导向地图切换，生成地图切换的信息
 3. 否则处理当前地图内的活动（玩家状态调整、发现隐藏区域等）
 
@@ -817,11 +864,32 @@ class PromptManager:
     "quest_updates": {{}},
     "new_quest_data": {{
         "title": "新任务标题",
-        "description": "新任务描述",
-        "type": "任务类型",
+        "description": "新任务描述（100-150字，详细描述任务背景和目标）",
+        "type": "任务类型（exploration/investigation/combat/rescue/mystery/story/retrieval）",
         "experience_reward": 经验奖励,
-        "objectives": ["目标1", "目标2"],
-        "story_context": "故事背景"
+        "objectives": ["目标1", "目标2", "目标3"],
+        "story_context": "故事背景",
+
+        // 【重要】以下字段必须填写，用于地图生成和任务管理
+        "map_themes": ["主题1", "主题2", "主题3"],  // 地图主题建议（如["地下墓穴", "古代陵墓", "潮湿的洞穴"]、["城镇", "街道", "民居"]等）
+        "target_floors": [1, 2, 3],  // 任务涉及的楼层列表
+        "special_events": [  // 任务专属事件（至少1个）
+            {{
+                "floor": 1,
+                "event_type": "story/puzzle/treasure/trap",
+                "description": "事件描述",
+                "is_required": true
+            }}
+        ],
+        "special_monsters": [  // 任务专属怪物（至少1个）
+            {{
+                "floor": 2,
+                "name": "怪物名称",
+                "description": "怪物描述",
+                "is_boss": false,
+                "is_quest_target": true
+            }}
+        ]
     }},
     "map_transition": {{
         "should_transition": true,
@@ -831,6 +899,11 @@ class PromptManager:
         "message": "切换消息"
     }}
 }}
+
+**重要提示**：
+- 如果选择导向新任务（leads_to_new_quest为true），请务必填写完整的new_quest_data，包括所有字段！
+- map_themes应该根据任务类型和描述选择合适的主题（如investigation类型的城镇任务用["城镇", "街道", "民居"]）
+- special_events和special_monsters至少各提供1个，确保任务有足够的内容
             """.strip(),
             required_params=[
                 "choice_text", "choice_description", "completed_quest_data",
@@ -852,7 +925,12 @@ class PromptManager:
                             "type": {"type": "string"},
                             "experience_reward": {"type": "integer"},
                             "objectives": {"type": "array", "items": {"type": "string"}},
-                            "story_context": {"type": "string"}
+                            "story_context": {"type": "string"},
+                            # 【修复问题2】添加关键字段的Schema定义
+                            "map_themes": {"type": "array", "items": {"type": "string"}},
+                            "target_floors": {"type": "array", "items": {"type": "integer"}},
+                            "special_events": {"type": "array", "items": {"type": "object"}},
+                            "special_monsters": {"type": "array", "items": {"type": "object"}}
                         }
                     },
                     "map_transition": {

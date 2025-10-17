@@ -109,24 +109,32 @@ class MonsterSpawnManager:
         
         # 获取当前活跃任务
         active_quest = next((q for q in game_state.quests if q.is_active), None)
-        if not active_quest or not active_quest.special_monsters:
+        if not active_quest:
             return quest_monsters
-        
+
+        # 【修复】处理 active_quest 可能是字典或对象的情况
+        quest_title = active_quest.get('title') if isinstance(active_quest, dict) else active_quest.title
+        quest_description = active_quest.get('description') if isinstance(active_quest, dict) else active_quest.description
+        special_monsters = active_quest.get('special_monsters') if isinstance(active_quest, dict) else active_quest.special_monsters
+
+        if not special_monsters:
+            return quest_monsters
+
         current_depth = game_map.depth
-        
+
         # 筛选适合当前楼层的专属怪物
         suitable_monsters = [
-            monster_data for monster_data in active_quest.special_monsters
+            monster_data for monster_data in special_monsters
             if not monster_data.location_hint or str(current_depth) in monster_data.location_hint
         ]
-        
+
         for monster_data in suitable_monsters:
             try:
                 # 使用LLM生成具体的怪物实例
                 context = f"""
                 根据任务专属怪物模板生成具体怪物：
-                - 任务名称：{active_quest.title}
-                - 任务描述：{active_quest.description}
+                - 任务名称：{quest_title}
+                - 任务描述：{quest_description}
                 - 怪物名称：{monster_data.name}（必须保持中文名称）
                 - 怪物描述：{monster_data.description}
                 - 挑战等级：{monster_data.challenge_rating}
@@ -159,7 +167,7 @@ class MonsterSpawnManager:
                 logger.error(f"Failed to generate quest monster {monster_data.name}: {e}")
         
         # 记录生成历史
-        self._record_spawn(quest_monsters, "quest", active_quest.title if active_quest else "unknown")
+        self._record_spawn(quest_monsters, "quest", quest_title if active_quest else "unknown")
         
         return quest_monsters
     

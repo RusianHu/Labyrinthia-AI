@@ -110,12 +110,60 @@ class ContentGenerator:
         game_map.width = width
         game_map.height = height
         game_map.depth = depth
-        
+
+        # 【优化】智能推断地图主题（防御性编程）
+        inferred_theme = theme
+        if quest_context:
+            quest_type = quest_context.get('quest_type', 'exploration')
+            quest_desc = quest_context.get('description', '').lower()
+            map_themes = quest_context.get('map_themes', [])
+
+            # 如果任务没有提供map_themes，根据quest_type和description智能推断
+            if not map_themes:
+                logger.info(f"Quest has no map_themes, inferring from quest_type '{quest_type}' and description")
+
+                # 基于任务类型的默认主题
+                type_theme_map = {
+                    'investigation': 'town',
+                    'rescue': 'cave',
+                    'combat': 'combat',
+                    'exploration': 'normal',
+                    'mystery': 'abandoned',
+                    'story': 'normal'
+                }
+                inferred_theme = type_theme_map.get(quest_type, 'normal')
+
+                # 基于描述关键词进一步优化
+                if any(kw in quest_desc for kw in ['城镇', '村庄', '街道', '聚居', '疾病', '居民', '镇']):
+                    inferred_theme = 'town'
+                elif any(kw in quest_desc for kw in ['森林', '林间', '树木', '野外', '草原']):
+                    inferred_theme = 'grassland'
+                elif any(kw in quest_desc for kw in ['农场', '田野', '种植', '庄稼', '草药']):
+                    inferred_theme = 'farmland'
+                elif any(kw in quest_desc for kw in ['洞穴', '地下', '潮湿', '矿井', '矿道']):
+                    inferred_theme = 'cave'
+                elif any(kw in quest_desc for kw in ['废弃', '遗忘', '古老', '破败', '荒废']):
+                    inferred_theme = 'abandoned'
+                elif any(kw in quest_desc for kw in ['魔法', '神殿', '法师', '符文', '魔力']):
+                    inferred_theme = 'magic'
+                elif any(kw in quest_desc for kw in ['战斗', '竞技', '血腥', '屠杀', '战场']):
+                    inferred_theme = 'combat'
+                elif any(kw in quest_desc for kw in ['雪', '冰', '寒冷', '冬季', '冰霜']):
+                    inferred_theme = 'snowfield'
+                elif any(kw in quest_desc for kw in ['沙漠', '荒地', '干旱', '沙丘']):
+                    inferred_theme = 'desert'
+
+                logger.info(f"Inferred theme: '{inferred_theme}' for quest '{quest_context.get('title', 'Unknown')}'")
+
         # 构建任务相关的提示信息
         quest_info = ""
         if quest_context:
             special_events = quest_context.get('special_events', [])
             special_monsters = quest_context.get('special_monsters', [])
+            map_themes = quest_context.get('map_themes', [])
+
+            # 如果没有map_themes，使用推断的主题
+            theme_hint = map_themes if map_themes else [inferred_theme]
 
             quest_info = f"""
 
@@ -124,7 +172,7 @@ class ContentGenerator:
         - 任务标题：{quest_context.get('title', '未知任务')}
         - 任务描述：{quest_context.get('description', '探索地下城')}
         - 目标楼层：{quest_context.get('target_floors', [depth])}
-        - 建议主题：{quest_context.get('map_themes', [theme])}
+        - 建议主题：{theme_hint}（推断主题：{inferred_theme}）
         - 当前楼层：第{depth}层（共{config.game.max_quest_floors}层）
         - 专属事件：{len(special_events)}个
         - 专属怪物：{len(special_monsters)}个
@@ -136,6 +184,7 @@ class ContentGenerator:
         {'- 这是最终层，应该包含任务的高潮和结局' if depth == config.game.max_quest_floors else ''}
 
         请根据任务信息和楼层定位调整地图的名称和描述，使其与任务背景和当前进度相符。
+        **重要**：请根据任务类型、描述和建议主题选择最贴切的floor_theme！
         """
 
         # 使用PromptManager生成地图名称、描述和地板主题
@@ -145,7 +194,7 @@ class ContentGenerator:
                 width=width,
                 height=height,
                 depth=depth,
-                theme=theme,
+                theme=inferred_theme,  # 使用推断的主题
                 quest_info=quest_info
             )
 
@@ -160,13 +209,15 @@ class ContentGenerator:
                     game_map.floor_theme = floor_theme
                     logger.info(f"Map '{game_map.name}' (depth {depth}) floor_theme set to: {floor_theme}")
                 else:
-                    logger.warning(f"Invalid floor_theme '{floor_theme}', using 'normal'")
-                    game_map.floor_theme = "normal"
+                    logger.warning(f"Invalid floor_theme '{floor_theme}', using inferred theme '{inferred_theme}'")
+                    game_map.floor_theme = inferred_theme if inferred_theme in valid_themes else "normal"
         except Exception as e:
             logger.error(f"Failed to generate map info: {e}")
             game_map.name = f"地下城第{depth}层"
             game_map.description = "一个神秘的地下城层"
-            game_map.floor_theme = "normal"
+            # 【修复】使用推断的主题而不是总是使用"normal"
+            game_map.floor_theme = inferred_theme if inferred_theme in ["normal", "magic", "abandoned", "cave", "combat", "grassland", "desert", "farmland", "snowfield", "town"] else "normal"
+            logger.info(f"Using fallback floor_theme: {game_map.floor_theme}")
         
         # 生成基础地图结构
         await self._generate_map_layout(game_map, quest_context)

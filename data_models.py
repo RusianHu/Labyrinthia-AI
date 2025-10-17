@@ -462,8 +462,14 @@ class Quest:
             "quest_type": self.quest_type,
             "target_floors": self.target_floors,
             "map_themes": self.map_themes,
-            "special_events": [event.to_dict() for event in self.special_events],
-            "special_monsters": [monster.to_dict() for monster in self.special_monsters]
+            "special_events": [
+                event.to_dict() if hasattr(event, 'to_dict') else event
+                for event in self.special_events
+            ],
+            "special_monsters": [
+                monster.to_dict() if hasattr(monster, 'to_dict') else monster
+                for monster in self.special_monsters
+            ]
         }
 
 
