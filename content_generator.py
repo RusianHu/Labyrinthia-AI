@@ -1337,14 +1337,26 @@ class ContentGenerator:
 
         # 生成主线任务（开发阶段简化为单个任务）
         max_floors = config.game.max_quest_floors
+        # 计算地图切换进度（n层有n-1次切换）
+        map_transition_total = (max_floors - 1) * config.game.map_transition_progress
+        # 计算任务目标应该占用的进度（留20%给探索和其他活动）
+        objectives_progress_budget = 100.0 - map_transition_total - 20.0
+
         main_quest_prompt = f"""
         为等级{player_level}的玩家生成1个DnD风格的主线任务，适合在{max_floors}层地下城中完成。
+
+        【重要】进度分配规则：
+        - 地图切换进度：{max_floors}层地下城有{max_floors - 1}次切换，每次{config.game.map_transition_progress}%，共{map_transition_total}%
+        - 探索缓冲进度：预留20%给普通战斗、探索等活动
+        - **任务目标进度预算：{objectives_progress_budget:.1f}%**（special_events + special_monsters的progress_value总和必须在{objectives_progress_budget * 0.9:.1f}% - {objectives_progress_budget:.1f}%之间）
 
         任务设计要求：
         1. 任务目标明确，有清晰的故事线
         2. 每层都有相应的子目标和挑战
         3. 专属事件和怪物要与任务主题紧密相关
-        4. 进度分配合理，确保玩家能在{max_floors}层内完成任务
+        4. **严格控制进度值分配，确保总和不超过{objectives_progress_budget:.1f}%**
+        5. Boss怪物的progress_value应该在15-25%之间
+        6. 每个楼层至少有1个任务目标（事件或怪物）
 
         请返回JSON格式：
         {{
@@ -1366,7 +1378,7 @@ class ContentGenerator:
                             "name": "关键线索发现",
                             "description": "发现与任务目标相关的重要线索或古老文献",
                             "trigger_condition": "探索特定区域",
-                            "progress_value": 15.0,
+                            "progress_value": 8.0,
                             "is_mandatory": true,
                             "location_hint": "第1层"
                         }},
@@ -1376,19 +1388,9 @@ class ContentGenerator:
                             "name": "古老机关",
                             "description": "需要解开的古老机关或谜题，阻挡前进道路",
                             "trigger_condition": "接近关键区域",
-                            "progress_value": 20.0,
+                            "progress_value": 10.0,
                             "is_mandatory": true,
                             "location_hint": "第2层"
-                        }},
-                        {{
-                            "id": "event_3",
-                            "event_type": "combat",
-                            "name": "最终对决",
-                            "description": "与任务最终boss的决战",
-                            "trigger_condition": "到达任务目标位置",
-                            "progress_value": 35.0,
-                            "is_mandatory": true,
-                            "location_hint": "第{max_floors}层"
                         }}
                     ],
                     "special_monsters": [
@@ -1398,17 +1400,27 @@ class ContentGenerator:
                             "description": "保护入口的古老守护者",
                             "challenge_rating": {player_level * 0.8},
                             "is_boss": false,
-                            "progress_value": 10.0,
+                            "progress_value": 8.0,
                             "spawn_condition": "进入特定区域时",
                             "location_hint": "第1层的关键通道"
                         }},
                         {{
                             "id": "monster_2",
+                            "name": "中层守卫",
+                            "description": "守护重要区域的强大敌人",
+                            "challenge_rating": {player_level * 0.9},
+                            "is_boss": false,
+                            "progress_value": 6.0,
+                            "spawn_condition": "探索第2层时",
+                            "location_hint": "第2层的核心区域"
+                        }},
+                        {{
+                            "id": "monster_3",
                             "name": "任务终极Boss",
                             "description": "任务的最终敌人，拥有强大力量",
                             "challenge_rating": {player_level + 1.0},
                             "is_boss": true,
-                            "progress_value": 30.0,
+                            "progress_value": 20.0,
                             "spawn_condition": "玩家接近任务目标时",
                             "location_hint": "第{max_floors}层的核心区域"
                         }}
@@ -1417,14 +1429,23 @@ class ContentGenerator:
             ]
         }}
 
+        **进度值检查**：
+        - 示例中special_events总和：8.0 + 10.0 = 18.0%
+        - 示例中special_monsters总和：8.0 + 6.0 + 20.0 = 34.0%
+        - 示例总计：18.0 + 34.0 = 52.0%（符合{objectives_progress_budget:.1f}%预算）
+        - 加上地图切换{map_transition_total}%和探索20% = 52.0 + {map_transition_total} + 20.0 = {52.0 + map_transition_total + 20.0}%
+
         重要提示：
-        - 确保任务内容丰富但不过于复杂
-        - 专属事件和怪物的进度值总和应该合理分配
+        - **必须严格控制progress_value总和，不要超过{objectives_progress_budget:.1f}%**
         - 每个楼层都应该有相应的挑战和奖励
+        - Boss的progress_value应该是最高的，但不要超过25%
         - 任务描述要生动有趣，符合DnD风格
         """
-        
+
         try:
+            # 导入验证器
+            from quest_progress_validator import quest_progress_validator
+
             # 定义任务生成的JSON schema
             quest_schema = {
                 "type": "object",
@@ -1502,6 +1523,28 @@ class ContentGenerator:
                         monster.spawn_condition = monster_data.get("spawn_condition", "")
                         monster.location_hint = monster_data.get("location_hint", "")
                         quest.special_monsters.append(monster)
+
+                    # 【新增】验证和调整任务进度分配
+                    validation_result = quest_progress_validator.validate_quest(quest)
+
+                    if not validation_result.is_valid or len(validation_result.warnings) > 0:
+                        logger.warning(f"Quest '{quest.title}' progress validation issues:")
+                        for issue in validation_result.issues:
+                            logger.warning(f"  - ISSUE: {issue}")
+                        for warning in validation_result.warnings:
+                            logger.warning(f"  - WARNING: {warning}")
+
+                        logger.info(f"Progress breakdown: {validation_result.breakdown.to_dict()}")
+
+                        # 自动调整进度分配
+                        quest, adjusted_validation = quest_progress_validator.auto_adjust_quest(quest)
+                        logger.info(f"Quest '{quest.title}' progress adjusted:")
+                        logger.info(f"  - Guaranteed: {adjusted_validation.breakdown.total_guaranteed:.1f}%")
+                        logger.info(f"  - Possible: {adjusted_validation.breakdown.total_possible:.1f}%")
+                    else:
+                        logger.info(f"Quest '{quest.title}' progress allocation is valid:")
+                        logger.info(f"  - Guaranteed: {validation_result.breakdown.total_guaranteed:.1f}%")
+                        logger.info(f"  - Possible: {validation_result.breakdown.total_possible:.1f}%")
 
                     # 第一个任务设为激活状态
                     if i == 0:

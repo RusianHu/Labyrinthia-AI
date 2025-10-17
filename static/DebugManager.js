@@ -232,6 +232,76 @@ const DebugMethods = {
         }
     },
 
+    async debugShowQuestProgressAnalysis() {
+        if (!this.gameId || !this.gameState) {
+            this.addMessage('❌ 请先开始游戏');
+            return;
+        }
+
+        try {
+            const response = await fetch(`/api/game/${this.gameId}/debug/quest-progress-analysis`);
+            const result = await response.json();
+
+            if (result.success) {
+                // 创建详细的进度分析显示
+                const analysis = result;
+                let message = `📊 任务进度分析\n\n`;
+                message += `任务：${analysis.quest.title}\n`;
+                message += `当前进度：${analysis.quest.current_progress.toFixed(1)}%\n`;
+                message += `当前楼层：${analysis.quest.current_floor}/${analysis.quest.target_floors.length}\n\n`;
+
+                message += `=== 进度分解 ===\n`;
+                message += `事件进度：${analysis.validation.breakdown.events_progress.toFixed(1)}%\n`;
+                message += `怪物进度：${analysis.validation.breakdown.monsters_progress.toFixed(1)}%\n`;
+                message += `地图切换：${analysis.validation.breakdown.map_transitions_progress.toFixed(1)}%\n`;
+                message += `探索缓冲：${analysis.validation.breakdown.exploration_buffer.toFixed(1)}%\n`;
+                message += `保证进度：${analysis.validation.breakdown.total_guaranteed.toFixed(1)}%\n`;
+                message += `可能进度：${analysis.validation.breakdown.total_possible.toFixed(1)}%\n\n`;
+
+                message += `=== 已获得进度 ===\n`;
+                message += `已触发事件：${analysis.obtained_progress.events_triggered}个 (${analysis.obtained_progress.events_progress.toFixed(1)}%)\n`;
+                message += `已击败怪物：${analysis.obtained_progress.monsters_defeated}个 (${analysis.obtained_progress.monsters_progress.toFixed(1)}%)\n`;
+                message += `地图切换：${analysis.obtained_progress.map_transitions}次 (${analysis.obtained_progress.map_transitions_progress.toFixed(1)}%)\n\n`;
+
+                message += `=== 剩余进度 ===\n`;
+                message += `剩余事件：${analysis.remaining_progress.events_remaining}个 (${analysis.remaining_progress.events_progress.toFixed(1)}%)\n`;
+                message += `剩余怪物：${analysis.remaining_progress.monsters_remaining}个 (${analysis.remaining_progress.monsters_progress.toFixed(1)}%)\n`;
+                message += `剩余切换：${analysis.remaining_progress.map_transitions_remaining}次 (${analysis.remaining_progress.map_transitions_progress.toFixed(1)}%)\n\n`;
+
+                if (analysis.validation.issues.length > 0) {
+                    message += `⚠️ 问题：\n`;
+                    analysis.validation.issues.forEach(issue => {
+                        message += `  - ${issue}\n`;
+                    });
+                    message += `\n`;
+                }
+
+                if (analysis.validation.warnings.length > 0) {
+                    message += `⚠️ 警告：\n`;
+                    analysis.validation.warnings.forEach(warning => {
+                        message += `  - ${warning}\n`;
+                    });
+                    message += `\n`;
+                }
+
+                if (analysis.compensation.needs_compensation) {
+                    message += `💡 补偿建议：\n`;
+                    message += `  原因：${analysis.compensation.reason}\n`;
+                    message += `  补偿量：${analysis.compensation.compensation_amount.toFixed(1)}%\n`;
+                }
+
+                console.log(message);
+                alert(message);
+                this.addMessage('📊 任务进度分析已显示（查看控制台和弹窗）');
+            } else {
+                this.addMessage(`❌ 分析失败: ${result.message}`);
+            }
+        } catch (error) {
+            console.error('Debug quest progress analysis error:', error);
+            this.addMessage('❌ 分析任务进度时发生错误');
+        }
+    },
+
     async debugCompleteCurrentQuest() {
         if (!this.gameId || !this.gameState) {
             this.addMessage('❌ 请先开始游戏');
@@ -763,6 +833,78 @@ const DebugMethods = {
             console.error('Failed to clear LLM context:', error);
             this.addMessage('❌ 清空LLM上下文缓存时发生错误: ' + error.message, 'error');
         }
+    },
+
+    // ==================== Camera Follow 调试功能 ====================
+
+    /**
+     * 切换视角追踪功能
+     */
+    debugToggleCameraFollow() {
+        if (!this.cameraFollowManager) {
+            this.addMessage('❌ CameraFollowManager 未初始化', 'error');
+            return;
+        }
+
+        const newState = !this.cameraFollowManager.enabled;
+        this.cameraFollowManager.setEnabled(newState);
+        this.addMessage(`📷 视角追踪已${newState ? '启用' : '禁用'}`, 'system');
+    },
+
+    /**
+     * 切换视角追踪调试模式
+     */
+    debugToggleCameraDebug() {
+        if (!this.cameraFollowManager) {
+            this.addMessage('❌ CameraFollowManager 未初始化', 'error');
+            return;
+        }
+
+        const newState = !this.cameraFollowManager.debugMode;
+        this.cameraFollowManager.setDebugMode(newState);
+        this.addMessage(`🐛 视角追踪调试模式已${newState ? '启用' : '禁用'}`, 'system');
+    },
+
+    /**
+     * 强制居中到玩家位置
+     */
+    debugCenterOnPlayer() {
+        if (!this.cameraFollowManager) {
+            this.addMessage('❌ CameraFollowManager 未初始化', 'error');
+            return;
+        }
+
+        if (!this.gameState || !this.gameState.player) {
+            this.addMessage('❌ 游戏状态或玩家数据不可用', 'error');
+            return;
+        }
+
+        const [playerX, playerY] = this.gameState.player.position;
+        this.cameraFollowManager.centerOnPlayer(playerX, playerY, false, true);
+        this.addMessage(`📷 已居中到玩家位置 (${playerX}, ${playerY})`, 'system');
+    },
+
+    /**
+     * 显示视角追踪状态信息
+     */
+    debugShowCameraStatus() {
+        if (!this.cameraFollowManager) {
+            this.addMessage('❌ CameraFollowManager 未初始化', 'error');
+            return;
+        }
+
+        const status = {
+            enabled: this.cameraFollowManager.enabled,
+            debugMode: this.cameraFollowManager.debugMode,
+            smoothScroll: this.cameraFollowManager.smoothScroll,
+            scrollDuration: this.cameraFollowManager.scrollDuration,
+            edgeThreshold: this.cameraFollowManager.edgeThreshold,
+            isAnimating: this.cameraFollowManager.isAnimating,
+            currentScale: this.cameraFollowManager.getCurrentScale()
+        };
+
+        console.log('📷 Camera Follow Status:', status);
+        this.addMessage('📷 视角追踪状态已输出到控制台', 'system');
     }
 };
 

@@ -366,6 +366,9 @@
                     <button class="debug-btn" onclick="game.debugTriggerRandomEvent()" title="在当前位置强制触发一个随机的地图事件">
                         <i class="material-icons">event</i>触发随机事件
                     </button>
+                    <button class="debug-btn" onclick="game.debugShowQuestProgressAnalysis()" title="显示当前任务的详细进度分析，包括已获得和剩余的进度">
+                        <i class="material-icons">analytics</i>分析任务进度
+                    </button>
                     <button class="debug-btn" onclick="game.debugCompleteCurrentQuest()" title="将当前任务进度设置为100%并触发任务完成逻辑">
                         <i class="material-icons">task_alt</i>直接完成当前任务
                     </button>
@@ -430,6 +433,23 @@
                     </button>
                 </div>
 
+                <!-- 视角追踪调试 -->
+                <div class="debug-button-group">
+                    <h5>📷 视角追踪</h5>
+                    <button class="debug-btn" onclick="game.debugToggleCameraFollow()" title="启用/禁用视角自动追踪功能">
+                        <i class="material-icons">videocam</i>切换视角追踪
+                    </button>
+                    <button class="debug-btn" onclick="game.debugCenterOnPlayer()" title="强制将视角居中到玩家当前位置">
+                        <i class="material-icons">center_focus_strong</i>居中到玩家
+                    </button>
+                    <button class="debug-btn" onclick="game.debugToggleCameraDebug()" title="启用/禁用视角追踪的详细调试日志">
+                        <i class="material-icons">bug_report</i>切换调试日志
+                    </button>
+                    <button class="debug-btn" onclick="game.debugShowCameraStatus()" title="在控制台显示视角追踪系统的当前状态">
+                        <i class="material-icons">info</i>查看追踪状态
+                    </button>
+                </div>
+
                 <!-- LLM上下文管理 -->
                 <div class="debug-button-group">
                     <h5>LLM上下文</h5>
@@ -486,7 +506,7 @@
     <script src="/static/js/anime.min.js"></script>
 
     <!-- 4. 功能扩展模块 - 按依赖关系顺序加载 -->
-    <script src="/static/DebugManager.js?v=8"></script>
+    <script src="/static/DebugManager.js?v=9"></script>
     <script src="/static/OverlayManager.js?v=4"></script>
     <script src="/static/EffectsManager.js?v=4"></script>
     <script src="/static/EnhancedEffectsManager.js?v=2"></script>
@@ -494,6 +514,7 @@
     <script src="/static/UIManager.js?v=14"></script>
     <script src="/static/MapInteraction.js?v=5"></script>
     <script src="/static/MapZoomManager.js?v=7"></script>
+    <script src="/static/CameraFollowManager.js?v=1"></script>
     <script src="/static/GameActions.js?v=5"></script>
     <script src="/static/SaveManager.js?v=5"></script>
     <script src="/static/SaveImportExport.js?v=4"></script>

@@ -16,6 +16,7 @@ class LabyrinthiaGame {
         this.config = null;
         this.localEngine = null; // 本地游戏引擎
         this.mapZoomManager = null; // 地图缩放管理器
+        this.cameraFollowManager = null; // 视角追踪管理器
         this.enhancedEffects = null; // 增强版特效管理器
         this.mapVisualManager = null; // 地图视觉管理器
 
@@ -44,6 +45,12 @@ class LabyrinthiaGame {
         if (typeof MapVisualManager !== 'undefined') {
             this.mapVisualManager = new MapVisualManager(this);
             console.log('[GameCore] MapVisualManager initialized');
+        }
+
+        // 初始化视角追踪管理器
+        if (typeof CameraFollowManager !== 'undefined') {
+            this.cameraFollowManager = new CameraFollowManager('map-container', 'map-grid');
+            console.log('[GameCore] CameraFollowManager initialized');
         }
     }
 

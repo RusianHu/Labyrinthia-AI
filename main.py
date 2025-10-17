@@ -550,6 +550,38 @@ async def sync_game_state(request: SyncStateRequest, http_request: Request, resp
         # 后端状态：任务进度、经验值、等级、物品栏（后端生成）
         # 这些数据保持后端的值，不被前端覆盖
 
+        # 【新增】检查是否需要进度补偿（每次同步时检查）
+        from quest_progress_compensator import quest_progress_compensator
+        compensation_result = await quest_progress_compensator.check_and_compensate(backend_game_state)
+        if compensation_result["compensated"]:
+            logger.info(f"Progress compensated during sync: +{compensation_result['compensation_amount']:.1f}% ({compensation_result['reason']})")
+
+            # 【新增】如果补偿后任务完成，创建任务完成选择
+            if hasattr(backend_game_state, 'pending_quest_completion') and backend_game_state.pending_quest_completion:
+                completed_quest = backend_game_state.pending_quest_completion
+                logger.info(f"Quest completion detected after compensation: {completed_quest.title}")
+
+                try:
+                    # 创建任务完成选择上下文
+                    from event_choice_system import event_choice_system
+                    choice_context = await event_choice_system.create_quest_completion_choice(
+                        backend_game_state, completed_quest
+                    )
+
+                    # 将选择上下文存储到游戏状态中
+                    backend_game_state.pending_choice_context = choice_context
+                    event_choice_system.active_contexts[choice_context.id] = choice_context
+
+                    # 清理任务完成标志
+                    backend_game_state.pending_quest_completion = None
+
+                    logger.info(f"Created quest completion choice after compensation: {completed_quest.title}")
+
+                except Exception as e:
+                    logger.error(f"Error creating quest completion choice after compensation: {e}")
+                    # 清理标志，避免重复处理
+                    backend_game_state.pending_quest_completion = None
+
         # 更新内存中的游戏状态
         game_engine.active_games[game_key] = backend_game_state
 
@@ -2574,6 +2606,101 @@ if config.game.debug_mode:
             logger.error(f"Debug trigger event error: {e}")
             return {"success": False, "message": f"触发事件失败: {str(e)}"}
 
+    @app.get("/api/game/{game_id}/debug/quest-progress-analysis")
+    async def debug_quest_progress_analysis(game_id: str, request: Request, response: Response):
+        """调试：分析任务进度"""
+        try:
+            # 获取用户ID
+            user_id = user_session_manager.get_or_create_user_id(request, response)
+            game_key = (user_id, game_id)
+
+            if game_key not in game_engine.active_games:
+                raise HTTPException(status_code=404, detail="游戏未找到")
+
+            game_state = game_engine.active_games[game_key]
+
+            # 导入验证器和补偿器
+            from quest_progress_validator import quest_progress_validator
+            from quest_progress_compensator import quest_progress_compensator
+
+            # 找到当前活跃任务
+            active_quest = next((q for q in game_state.quests if q.is_active), None)
+            if not active_quest:
+                return {"success": False, "message": "没有活跃的任务"}
+
+            # 验证任务配置
+            validation_result = quest_progress_validator.validate_quest(active_quest)
+
+            # 分析补偿需求
+            compensation_info = quest_progress_compensator._analyze_compensation_need(game_state, active_quest)
+
+            # 统计已获得的进度
+            obtained_progress = {
+                "current_progress": active_quest.progress_percentage,
+                "events_triggered": 0,
+                "events_progress": 0.0,
+                "monsters_defeated": 0,
+                "monsters_progress": 0.0,
+                "map_transitions": game_state.current_map.depth - 1,
+                "map_transitions_progress": (game_state.current_map.depth - 1) * config.game.map_transition_progress
+            }
+
+            # 检查已触发的事件
+            for tile in game_state.current_map.tiles.values():
+                if tile.has_event and tile.event_triggered:
+                    event_data = tile.event_data or {}
+                    quest_event_id = event_data.get('quest_event_id')
+                    if quest_event_id:
+                        for event in active_quest.special_events:
+                            if event.id == quest_event_id:
+                                obtained_progress["events_triggered"] += 1
+                                obtained_progress["events_progress"] += event.progress_value
+
+            # 检查已击败的任务怪物
+            alive_quest_monster_ids = set()
+            for monster in game_state.monsters:
+                if hasattr(monster, 'quest_monster_id') and monster.quest_monster_id:
+                    alive_quest_monster_ids.add(monster.quest_monster_id)
+
+            for quest_monster in active_quest.special_monsters:
+                if quest_monster.id not in alive_quest_monster_ids:
+                    obtained_progress["monsters_defeated"] += 1
+                    obtained_progress["monsters_progress"] += quest_monster.progress_value
+
+            # 未获得的进度
+            remaining_progress = {
+                "events_remaining": len(active_quest.special_events) - obtained_progress["events_triggered"],
+                "events_progress": validation_result.breakdown.events_progress - obtained_progress["events_progress"],
+                "monsters_remaining": len(active_quest.special_monsters) - obtained_progress["monsters_defeated"],
+                "monsters_progress": validation_result.breakdown.monsters_progress - obtained_progress["monsters_progress"],
+                "map_transitions_remaining": len(active_quest.target_floors) - 1 - obtained_progress["map_transitions"],
+                "map_transitions_progress": validation_result.breakdown.map_transitions_progress - obtained_progress["map_transitions_progress"]
+            }
+
+            return {
+                "success": True,
+                "quest": {
+                    "id": active_quest.id,
+                    "title": active_quest.title,
+                    "current_progress": active_quest.progress_percentage,
+                    "target_floors": active_quest.target_floors,
+                    "current_floor": game_state.current_map.depth
+                },
+                "validation": validation_result.to_dict(),
+                "obtained_progress": obtained_progress,
+                "remaining_progress": remaining_progress,
+                "compensation": compensation_info,
+                "summary": {
+                    "can_complete": validation_result.breakdown.total_guaranteed >= 100.0,
+                    "progress_deficit": max(0, 100.0 - validation_result.breakdown.total_guaranteed),
+                    "needs_compensation": compensation_info["needs_compensation"]
+                }
+            }
+
+        except Exception as e:
+            logger.error(f"Debug quest progress analysis error: {e}")
+            return {"success": False, "message": f"分析任务进度失败: {str(e)}"}
+
     @app.post("/api/game/{game_id}/debug/complete-quest")
     async def debug_complete_current_quest(game_id: str, request: Request, response: Response):
         """调试：完成当前任务"""
@@ -3076,6 +3203,38 @@ if config.game.debug_mode:
                 progress_updated = result.get("success", False)
 
                 logger.info(f"Debug clear enemies: cleared {quest_monsters_cleared} quest monsters, total progress: {total_progress_value:.1f}%, updated: {progress_updated}")
+
+                # 【新增】检查是否需要进度补偿
+                from quest_progress_compensator import quest_progress_compensator
+                compensation_result = await quest_progress_compensator.check_and_compensate(game_state)
+                if compensation_result["compensated"]:
+                    logger.info(f"Progress compensated after clearing enemies: +{compensation_result['compensation_amount']:.1f}% ({compensation_result['reason']})")
+
+                    # 【新增】如果补偿后任务完成，创建任务完成选择
+                    if hasattr(game_state, 'pending_quest_completion') and game_state.pending_quest_completion:
+                        completed_quest = game_state.pending_quest_completion
+                        logger.info(f"Quest completion detected after clearing enemies: {completed_quest.title}")
+
+                        try:
+                            # 创建任务完成选择上下文
+                            from event_choice_system import event_choice_system
+                            choice_context = await event_choice_system.create_quest_completion_choice(
+                                game_state, completed_quest
+                            )
+
+                            # 将选择上下文存储到游戏状态中
+                            game_state.pending_choice_context = choice_context
+                            event_choice_system.active_contexts[choice_context.id] = choice_context
+
+                            # 清理任务完成标志
+                            game_state.pending_quest_completion = None
+
+                            logger.info(f"Created quest completion choice after clearing enemies: {completed_quest.title}")
+
+                        except Exception as e:
+                            logger.error(f"Error creating quest completion choice after clearing enemies: {e}")
+                            # 清理标志，避免重复处理
+                            game_state.pending_quest_completion = None
 
             return {
                 "success": True,

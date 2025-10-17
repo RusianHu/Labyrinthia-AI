@@ -90,23 +90,30 @@ class MonsterSpawnManager:
         
         return monsters
     
+    def _get_monster_attr(self, monster_data, attr_name, default=None):
+        """统一获取怪物数据属性（兼容字典和对象）"""
+        if isinstance(monster_data, dict):
+            return monster_data.get(attr_name, default)
+        else:
+            return getattr(monster_data, attr_name, default)
+
     async def generate_quest_monsters(
-        self, 
-        game_state: GameState, 
+        self,
+        game_state: GameState,
         game_map: GameMap
     ) -> List[Monster]:
         """
         生成任务专属怪物
-        
+
         Args:
             game_state: 游戏状态
             game_map: 当前地图
-        
+
         Returns:
             生成的任务专属怪物列表
         """
         quest_monsters = []
-        
+
         # 获取当前活跃任务
         active_quest = next((q for q in game_state.quests if q.is_active), None)
         if not active_quest:
@@ -122,53 +129,63 @@ class MonsterSpawnManager:
 
         current_depth = game_map.depth
 
-        # 筛选适合当前楼层的专属怪物
-        suitable_monsters = [
-            monster_data for monster_data in special_monsters
-            if not monster_data.location_hint or str(current_depth) in monster_data.location_hint
-        ]
+        # 【修复】筛选适合当前楼层的专属怪物（兼容字典和对象）
+        suitable_monsters = []
+        for monster_data in special_monsters:
+            location_hint = self._get_monster_attr(monster_data, 'location_hint', '')
+            if not location_hint or str(current_depth) in location_hint:
+                suitable_monsters.append(monster_data)
 
         for monster_data in suitable_monsters:
             try:
+                # 【修复】使用统一的属性访问方法
+                monster_name = self._get_monster_attr(monster_data, 'name', '未命名怪物')
+                monster_description = self._get_monster_attr(monster_data, 'description', '')
+                challenge_rating = self._get_monster_attr(monster_data, 'challenge_rating', 1.0)
+                is_boss = self._get_monster_attr(monster_data, 'is_boss', False)
+                spawn_condition = self._get_monster_attr(monster_data, 'spawn_condition', '')
+                location_hint = self._get_monster_attr(monster_data, 'location_hint', '')
+                monster_id = self._get_monster_attr(monster_data, 'id', None)
+
                 # 使用LLM生成具体的怪物实例
                 context = f"""
                 根据任务专属怪物模板生成具体怪物：
                 - 任务名称：{quest_title}
                 - 任务描述：{quest_description}
-                - 怪物名称：{monster_data.name}（必须保持中文名称）
-                - 怪物描述：{monster_data.description}
-                - 挑战等级：{monster_data.challenge_rating}
-                - 是否为Boss：{monster_data.is_boss}
-                - 生成条件：{monster_data.spawn_condition}
-                - 位置提示：{monster_data.location_hint}
+                - 怪物名称：{monster_name}（必须保持中文名称）
+                - 怪物描述：{monster_description}
+                - 挑战等级：{challenge_rating}
+                - 是否为Boss：{is_boss}
+                - 生成条件：{spawn_condition}
+                - 位置提示：{location_hint}
                 - 当前楼层：{current_depth}
-                
+
                 **重要**：请生成一个符合这些要求的怪物，确保：
                 1. 怪物名称必须是纯中文（如模板中指定的名称）
                 2. 所有描述性文本都使用中文
                 3. 能力与挑战等级相符
                 4. 符合任务背景和剧情
                 """
-                
+
                 monster = await llm_service.generate_monster(
-                    monster_data.challenge_rating, context
+                    challenge_rating, context
                 )
-                
+
                 if monster:
                     # 设置任务相关属性
-                    monster.name = monster_data.name  # 确保名称匹配
-                    monster.is_boss = monster_data.is_boss
-                    monster.quest_monster_id = monster_data.id if hasattr(monster_data, 'id') else None
+                    monster.name = monster_name  # 确保名称匹配
+                    monster.is_boss = is_boss
+                    monster.quest_monster_id = monster_id
                     quest_monsters.append(monster)
-                    
-                    logger.info(f"Generated quest monster: {monster.name} (CR: {monster_data.challenge_rating}, Boss: {monster.is_boss})")
-            
+
+                    logger.info(f"Generated quest monster: {monster.name} (CR: {challenge_rating}, Boss: {is_boss})")
+
             except Exception as e:
-                logger.error(f"Failed to generate quest monster {monster_data.name}: {e}")
-        
+                logger.error(f"Failed to generate quest monster {self._get_monster_attr(monster_data, 'name', 'unknown')}: {e}")
+
         # 记录生成历史
         self._record_spawn(quest_monsters, "quest", quest_title if active_quest else "unknown")
-        
+
         return quest_monsters
     
     async def generate_random_monster_nearby(

@@ -110,6 +110,82 @@
       "optional_params": {"quest_info": ""},
       "description": "生成战斗胜利后的叙述文本",
       "version": "1.0"
+    },
+    "quest_completion_choices": {
+      "name": "quest_completion_choices",
+      "category": "quest_system",
+      "template": "玩家{player_name}（等级{player_level}）刚刚完成了任务：{quest_title}\n\n任务描述：{quest_description}\n任务类型：{quest_type}\n经验奖励：{experience_reward}\n故事背景：{story_context}\n\n当前位置：{current_map}（第{map_depth}层）\n\n请为任务完成后的情况生成4个有意义的选项，每个选项应该：\n1. 有清晰的标题和详细描述\n2. 说明选择后的后果\n3. 至少有1-2个选项会引导创建新任务\n4. 至少有1个选项会触发地图切换\n5. 选项应该多样化，包括：继续冒险、休息整理、探索新区域、接受新委托等\n\n请返回JSON格式：\n{{\n    \"title\": \"任务完成标题（例如：光明重现！）\",\n    \"description\": \"任务完成后的场景描述（2-3句话，描述任务完成的成就感和周围环境）\",\n    \"choices\": [\n        {{\n            \"text\": \"选项标题\",\n            \"description\": \"选项详细描述\",\n            \"consequences\": \"选择后的后果说明\",\n            \"leads_to_new_quest\": true/false,\n            \"leads_to_map_transition\": true/false,\n            \"quest_theme\": \"新任务主题（如果leads_to_new_quest为true）\",\n            \"map_theme\": \"新地图主题（如果leads_to_map_transition为true）\",\n            \"requirements\": {{}}\n        }}\n    ]\n}}",
+      "required_params": ["quest_title", "quest_description", "quest_type", "player_name", "player_level", "experience_reward", "story_context", "current_map", "map_depth"],
+      "optional_params": {},
+      "schema": {
+        "type": "object",
+        "properties": {
+          "title": {"type": "string"},
+          "description": {"type": "string"},
+          "choices": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "text": {"type": "string"},
+                "description": {"type": "string"},
+                "consequences": {"type": "string"},
+                "leads_to_new_quest": {"type": "boolean"},
+                "leads_to_map_transition": {"type": "boolean"},
+                "quest_theme": {"type": "string"},
+                "map_theme": {"type": "string"},
+                "requirements": {"type": "object"}
+              },
+              "required": ["text", "description", "consequences"]
+            }
+          }
+        },
+        "required": ["title", "description", "choices"]
+      },
+      "description": "生成任务完成后的选项",
+      "version": "1.0"
+    },
+    "process_quest_completion_choice": {
+      "name": "process_quest_completion_choice",
+      "category": "quest_system",
+      "template": "玩家{player_name}（等级{player_level}）完成任务后选择了：{choice_text}\n\n选项描述：{choice_description}\n是否创建新任务：{leads_to_new_quest}\n是否切换地图：{leads_to_map_transition}\n新任务主题：{quest_theme}\n新地图主题：{map_theme}\n\n已完成的任务信息：{completed_quest_data}\n\n当前位置：{current_map}（第{map_depth}层）\n\n请处理这个选择并返回JSON格式：\n{{\n    \"message\": \"选择结果的叙述（2-3句话，描述玩家的行动和周围的变化）\",\n    \"events\": [\"事件1\", \"事件2\"],\n    \"quest_updates\": {{\n        \"已完成任务ID\": {{\n            \"is_active\": false,\n            \"is_completed\": true\n        }}\n    }},\n    \"player_updates\": {{\n        \"hp\": 变化值（可选）,\n        \"mana\": 变化值（可选）\n    }},\n    \"new_quest_data\": {{\n        \"title\": \"新任务标题\",\n        \"description\": \"新任务描述\",\n        \"quest_type\": \"main/side/daily\",\n        \"objectives\": [\"目标1\", \"目标2\", \"目标3\"],\n        \"experience_reward\": 经验奖励数值,\n        \"story_context\": \"故事背景\",\n        \"special_events\": [\n            {{\n                \"event_id\": \"事件ID\",\n                \"description\": \"事件描述\",\n                \"floor_number\": 楼层号,\n                \"progress_value\": 进度值（建议8-12）\n            }}\n        ],\n        \"special_monsters\": [\n            {{\n                \"monster_id\": \"怪物ID\",\n                \"name\": \"怪物名称\",\n                \"floor_number\": 楼层号,\n                \"is_boss\": true/false,\n                \"progress_value\": 进度值（普通怪物10-15，Boss 15-20）\n            }}\n        ]\n    }},\n    \"map_transition\": {{\n        \"should_transition\": true/false,\n        \"new_map_theme\": \"地图主题\",\n        \"new_map_name\": \"新地图名称\",\n        \"new_map_description\": \"新地图描述\",\n        \"target_depth\": 目标楼层（通常为1）\n    }}\n}}\n\n**重要说明**：\n1. 如果leads_to_new_quest为true，必须提供完整的new_quest_data\n2. 如果leads_to_map_transition为true，必须提供完整的map_transition数据\n3. 新任务的special_events和special_monsters的进度值总和应该在40-50%之间\n4. 确保新任务有明确的目标和合理的奖励",
+      "required_params": ["choice_text", "choice_description", "leads_to_new_quest", "leads_to_map_transition", "quest_theme", "map_theme", "completed_quest_data", "player_name", "player_level", "current_map", "map_depth"],
+      "optional_params": {},
+      "schema": {
+        "type": "object",
+        "properties": {
+          "message": {"type": "string"},
+          "events": {"type": "array", "items": {"type": "string"}},
+          "quest_updates": {"type": "object"},
+          "player_updates": {"type": "object"},
+          "new_quest_data": {
+            "type": "object",
+            "properties": {
+              "title": {"type": "string"},
+              "description": {"type": "string"},
+              "quest_type": {"type": "string"},
+              "objectives": {"type": "array", "items": {"type": "string"}},
+              "experience_reward": {"type": "integer"},
+              "story_context": {"type": "string"},
+              "special_events": {"type": "array"},
+              "special_monsters": {"type": "array"}
+            }
+          },
+          "map_transition": {
+            "type": "object",
+            "properties": {
+              "should_transition": {"type": "boolean"},
+              "new_map_theme": {"type": "string"},
+              "new_map_name": {"type": "string"},
+              "new_map_description": {"type": "string"},
+              "target_depth": {"type": "integer"}
+            }
+          }
+        },
+        "required": ["message", "events"]
+      },
+      "description": "处理任务完成后的选择并生成新任务",
+      "version": "1.0"
     }
   },
   "fallback_messages": {

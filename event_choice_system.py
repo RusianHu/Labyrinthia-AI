@@ -894,6 +894,70 @@ class EventChoiceSystem:
             return True
         return False
 
+    def _convert_events_to_objects(self, events_data: List[Dict[str, Any]]) -> List:
+        """将事件字典数组转换为 QuestEvent 对象数组
+
+        Args:
+            events_data: 事件字典数组
+
+        Returns:
+            QuestEvent 对象数组
+        """
+        from data_models import QuestEvent
+
+        events = []
+        for event_data in events_data:
+            # 如果已经是对象，直接使用
+            if hasattr(event_data, 'to_dict'):
+                events.append(event_data)
+                continue
+
+            # 从字典创建对象
+            event = QuestEvent()
+            event.id = event_data.get("id", event.id)
+            event.event_type = event_data.get("event_type", "")
+            event.name = event_data.get("name", "")
+            event.description = event_data.get("description", "")
+            event.trigger_condition = event_data.get("trigger_condition", "")
+            event.progress_value = event_data.get("progress_value", 0.0)
+            event.is_mandatory = event_data.get("is_mandatory", True)
+            event.location_hint = event_data.get("location_hint", "")
+            events.append(event)
+
+        return events
+
+    def _convert_monsters_to_objects(self, monsters_data: List[Dict[str, Any]]) -> List:
+        """将怪物字典数组转换为 QuestMonster 对象数组
+
+        Args:
+            monsters_data: 怪物字典数组
+
+        Returns:
+            QuestMonster 对象数组
+        """
+        from data_models import QuestMonster
+
+        monsters = []
+        for monster_data in monsters_data:
+            # 如果已经是对象，直接使用
+            if hasattr(monster_data, 'to_dict'):
+                monsters.append(monster_data)
+                continue
+
+            # 从字典创建对象
+            monster = QuestMonster()
+            monster.id = monster_data.get("id", monster.id)
+            monster.name = monster_data.get("name", "")
+            monster.description = monster_data.get("description", "")
+            monster.challenge_rating = monster_data.get("challenge_rating", 1.0)
+            monster.is_boss = monster_data.get("is_boss", False)
+            monster.progress_value = monster_data.get("progress_value", 0.0)
+            monster.spawn_condition = monster_data.get("spawn_condition", "")
+            monster.location_hint = monster_data.get("location_hint", "")
+            monsters.append(monster)
+
+        return monsters
+
     async def _create_new_quest_from_choice(self, game_state: GameState, quest_data: Dict[str, Any], choice: EventChoice):
         """基于玩家选择创建新任务"""
         try:
@@ -948,17 +1012,28 @@ class EventChoiceSystem:
                     new_quest.objectives = quest_data.get("objectives") or generated_quest.objectives
                     new_quest.completed_objectives = [False] * len(new_quest.objectives)
 
-                    # 【关键修复】确保这些字段总是被填充
-                    new_quest.special_events = quest_data.get("special_events") or generated_quest.special_events
-                    new_quest.special_monsters = quest_data.get("special_monsters") or generated_quest.special_monsters
+                    # 【关键修复】确保这些字段总是被填充，并转换字典为对象
+                    # 优先使用LLM数据（需要转换），否则使用生成器数据（已经是对象）
+                    llm_events = quest_data.get("special_events")
+                    new_quest.special_events = (
+                        self._convert_events_to_objects(llm_events) if llm_events
+                        else generated_quest.special_events
+                    )
+
+                    llm_monsters = quest_data.get("special_monsters")
+                    new_quest.special_monsters = (
+                        self._convert_monsters_to_objects(llm_monsters) if llm_monsters
+                        else generated_quest.special_monsters
+                    )
+
                     new_quest.target_floors = quest_data.get("target_floors") or generated_quest.target_floors
                     new_quest.map_themes = quest_data.get("map_themes") or generated_quest.map_themes
 
                     logger.info(f"Quest data supplemented from generator. map_themes: {new_quest.map_themes}")
             else:
-                # LLM提供了完整数据，直接使用
-                new_quest.special_events = quest_data.get("special_events", [])
-                new_quest.special_monsters = quest_data.get("special_monsters", [])
+                # LLM提供了完整数据，需要转换为对象
+                new_quest.special_events = self._convert_events_to_objects(quest_data.get("special_events", []))
+                new_quest.special_monsters = self._convert_monsters_to_objects(quest_data.get("special_monsters", []))
                 new_quest.target_floors = quest_data.get("target_floors", [1])
                 new_quest.map_themes = quest_data.get("map_themes", [])
 

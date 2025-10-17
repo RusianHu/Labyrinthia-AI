@@ -162,7 +162,29 @@ Object.assign(LabyrinthiaGame.prototype, {
             setTimeout(() => {
                 this._initializeMapZoomManager();
             }, 100);
+        } else {
+            // 【Camera Follow】增量更新时，平滑追踪玩家位置
+            // 使用 requestAnimationFrame 确保 DOM 已更新
+            requestAnimationFrame(() => {
+                this._followPlayerCamera(false); // false = 使用平滑动画
+            });
         }
+    },
+
+    /**
+     * 【Camera Follow】使视角跟随玩家
+     * @param {boolean} immediate - 是否立即跳转（不使用动画）
+     */
+    _followPlayerCamera(immediate = false) {
+        if (!this.cameraFollowManager || !this.gameState || !this.gameState.player) {
+            return;
+        }
+
+        const [playerX, playerY] = this.gameState.player.position;
+
+        // 调用 CameraFollowManager 的居中方法
+        // immediate=false 使用平滑动画，force=false 只在玩家靠近边缘时才居中
+        this.cameraFollowManager.centerOnPlayer(playerX, playerY, immediate, false);
     },
 
     /**
@@ -381,40 +403,35 @@ Object.assign(LabyrinthiaGame.prototype, {
 
                         let targetLeft, targetTop;
 
-                        // 【修复】如果是新地图(没有之前的滚动状态),居中到玩家位置
-                        if (!hadScrollState && this.gameState && this.gameState.player && this.gameState.player.position) {
-                            const [playerX, playerY] = this.gameState.player.position;
-                            const tileSize = 24; // 默认瓦片大小
-                            const containerWidth = scrollContainer.clientWidth;
-                            const containerHeight = scrollContainer.clientHeight;
-
-                            // 计算玩家在地图中的像素位置
-                            const playerPixelX = playerX * tileSize;
-                            const playerPixelY = playerY * tileSize;
-
-                            // 居中到玩家位置
-                            targetLeft = padding.left + playerPixelX - containerWidth / 2;
-                            targetTop = padding.top + playerPixelY - containerHeight / 2;
-                        } else {
-                            // 保持之前的滚动位置
-                            targetLeft = hadScrollState && currentScrollLeft !== null ?
-                                currentScrollLeft : padding.left;
-                            targetTop = hadScrollState && currentScrollTop !== null ?
-                                currentScrollTop : padding.top;
-                        }
-
                         // 恢复之前的缩放级别（先应用缩放，再设置滚动位置）
                         if (currentZoom !== 1) {
                             this.mapZoomManager.scale = currentZoom;
                             this.mapZoomManager.applyScale();
                         }
 
-                        // 【修复抖动】设置滚动位置
-                        if (typeof targetLeft === 'number') {
-                            scrollContainer.scrollLeft = targetLeft;
-                        }
-                        if (typeof targetTop === 'number') {
-                            scrollContainer.scrollTop = targetTop;
+                        // 【Camera Follow】使用 CameraFollowManager 处理视角居中
+                        if (!hadScrollState && this.gameState && this.gameState.player && this.gameState.player.position) {
+                            // 新地图：使用 CameraFollowManager 居中到玩家位置
+                            if (this.cameraFollowManager) {
+                                this.cameraFollowManager.reinitialize();
+                                const [playerX, playerY] = this.gameState.player.position;
+                                // 立即居中（不使用动画），强制居中（忽略边缘检查）
+                                this.cameraFollowManager.centerOnPlayer(playerX, playerY, true, true);
+                            }
+                        } else {
+                            // 保持之前的滚动位置
+                            targetLeft = hadScrollState && currentScrollLeft !== null ?
+                                currentScrollLeft : padding.left;
+                            targetTop = hadScrollState && currentScrollTop !== null ?
+                                currentScrollTop : padding.top;
+
+                            // 【修复抖动】设置滚动位置
+                            if (typeof targetLeft === 'number') {
+                                scrollContainer.scrollLeft = targetLeft;
+                            }
+                            if (typeof targetTop === 'number') {
+                                scrollContainer.scrollTop = targetTop;
+                            }
                         }
 
                         // 恢复过渡动画（在下一帧）
