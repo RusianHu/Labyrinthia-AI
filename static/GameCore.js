@@ -17,6 +17,7 @@ class LabyrinthiaGame {
         this.localEngine = null; // 本地游戏引擎
         this.mapZoomManager = null; // 地图缩放管理器
         this.enhancedEffects = null; // 增强版特效管理器
+        this.mapVisualManager = null; // 地图视觉管理器
 
         this.init();
         this.initializeDebugMode();
@@ -37,6 +38,12 @@ class LabyrinthiaGame {
         if (typeof EnhancedEffectsManager !== 'undefined') {
             this.enhancedEffects = new EnhancedEffectsManager(this);
             console.log('[GameCore] EnhancedEffectsManager initialized');
+        }
+
+        // 初始化地图视觉管理器
+        if (typeof MapVisualManager !== 'undefined') {
+            this.mapVisualManager = new MapVisualManager(this);
+            console.log('[GameCore] MapVisualManager initialized');
         }
     }
 
@@ -300,6 +307,11 @@ class LabyrinthiaGame {
         // 初始化增强版特效管理器（如果还没有）
         if (!this.enhancedEffects && typeof EnhancedEffectsManager !== 'undefined') {
             this.enhancedEffects = new EnhancedEffectsManager(this);
+
+            // 同时更新 MapVisualManager 的引用
+            if (this.mapVisualManager) {
+                this.mapVisualManager.updateManagerReferences();
+            }
         }
 
         switch (effect.type) {

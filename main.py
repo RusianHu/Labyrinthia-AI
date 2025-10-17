@@ -640,11 +640,33 @@ async def process_combat_result(game_id: str, request: Request, response: Respon
                     if progress_result.get("quest_completed"):
                         logger.info("Quest completed after monster defeat")
 
-            # 【新增】检查是否有任务完成需要处理选择
+            # 【修复】检查是否有任务完成需要处理选择，立即创建选择上下文
             has_pending_choice = False
             if hasattr(game_state, 'pending_quest_completion') and game_state.pending_quest_completion:
-                has_pending_choice = True
-                logger.info(f"Quest completion detected: {game_state.pending_quest_completion.title}")
+                completed_quest = game_state.pending_quest_completion
+                logger.info(f"Quest completion detected: {completed_quest.title}")
+
+                try:
+                    # 立即创建任务完成选择上下文
+                    from event_choice_system import event_choice_system
+                    choice_context = await event_choice_system.create_quest_completion_choice(
+                        game_state, completed_quest
+                    )
+
+                    # 将选择上下文存储到游戏状态中
+                    game_state.pending_choice_context = choice_context
+                    event_choice_system.active_contexts[choice_context.id] = choice_context
+
+                    # 清理任务完成标志
+                    game_state.pending_quest_completion = None
+
+                    has_pending_choice = True
+                    logger.info(f"Created quest completion choice after monster defeat: {completed_quest.title}")
+
+                except Exception as e:
+                    logger.error(f"Error creating quest completion choice: {e}")
+                    # 清理标志，避免重复处理
+                    game_state.pending_quest_completion = None
 
             # 构建响应
             result_dict = combat_result.to_dict()

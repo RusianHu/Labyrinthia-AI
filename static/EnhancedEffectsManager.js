@@ -274,10 +274,27 @@ class EnhancedEffectsManager {
             return;
         }
 
-        // 移除旧的粒子系统
-        const oldContainer = mapContainer.querySelector('.environment-particles');
-        if (oldContainer) {
-            oldContainer.remove();
+        // 【优化】检查是否已有相同主题的粒子系统
+        // 如果已存在且DOM元素仍然有效，则不需要重建
+        const existingSystem = this.particleSystems.get(floorTheme);
+        const existingContainer = mapContainer.querySelector('.environment-particles');
+
+        if (existingSystem && existingContainer && existingSystem.container === existingContainer) {
+            console.log('[EnhancedEffectsManager] Particle system already exists for theme:', floorTheme, '- skipping rebuild');
+            // 确保同步机制仍然有效
+            if (!this._boundSyncParticlePosition || !this._boundSyncParticleScale) {
+                console.log('[EnhancedEffectsManager] Re-initializing particle sync mechanisms');
+                this.destroyParticlePositionSync();
+                this.destroyParticleScaleSync();
+                this.initParticlePositionSync();
+                this.initParticleScaleSync();
+            }
+            return;
+        }
+
+        // 移除旧的粒子系统（如果存在且主题不同）
+        if (existingContainer) {
+            existingContainer.remove();
             console.log('[EnhancedEffectsManager] Removed old particle container');
         }
 

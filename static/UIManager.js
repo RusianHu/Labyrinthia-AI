@@ -141,17 +141,18 @@ Object.assign(LabyrinthiaGame.prototype, {
             // 完全重建地图
             await this._rebuildMap(mapContainer, gameMap, player, tileSize);
 
-            // 【修复】在地图重建完成后立即应用地板图层效果
+            // 【重构】使用 MapVisualManager 统一管理地图视觉效果
+            // 在地图重建完成后立即应用地板图层和粒子特效
             // 使用 requestAnimationFrame 确保 DOM 已完全渲染
             requestAnimationFrame(() => {
-                this.applyFloorTheme(gameMap.floor_theme || 'normal');
+                this._applyMapVisuals(gameMap.floor_theme || 'normal', true); // true = 完全重建
             });
         } else {
             // 增量更新：只更新变化的瓦片
             await this._updateMapTiles(mapContainer, gameMap, player);
 
-            // 增量更新时也应用地板图层效果
-            this.applyFloorTheme(gameMap.floor_theme || 'normal');
+            // 【重构】增量更新时应用地板图层效果，但不重建粒子特效
+            this._applyMapVisuals(gameMap.floor_theme || 'normal', false); // false = 增量更新
         }
 
         // 【修复抖动】只在完全重建时才重新初始化 MapZoomManager
@@ -433,10 +434,29 @@ Object.assign(LabyrinthiaGame.prototype, {
     },
 
     /**
-     * 应用地板主题
-     * @param {string} theme - 地板主题 (normal, magic, abandoned, cave, combat)
+     * 应用地图视觉效果（新接口）
+     * 使用 MapVisualManager 统一管理地板图层和粒子特效
+     * @param {string} theme - 地板主题
+     * @param {boolean} isFullRebuild - 是否完全重建
      */
-    applyFloorTheme(theme) {
+    _applyMapVisuals(theme, isFullRebuild = false) {
+        // 优先使用 MapVisualManager（新架构）
+        if (this.mapVisualManager) {
+            this.mapVisualManager.applyMapTheme(theme, isFullRebuild);
+        } else {
+            // 降级到旧方法（向后兼容）
+            console.warn('[UIManager] MapVisualManager not available, using legacy applyFloorTheme');
+            this.applyFloorTheme(theme, isFullRebuild);
+        }
+    },
+
+    /**
+     * 应用地板主题（旧接口，保留用于向后兼容）
+     * @deprecated 请使用 _applyMapVisuals 代替
+     * @param {string} theme - 地板主题 (normal, magic, abandoned, cave, combat)
+     * @param {boolean} forceRebuildParticles - 是否强制重建粒子特效（默认false）
+     */
+    applyFloorTheme(theme, forceRebuildParticles = false) {
         // 检查FloorLayerManager是否可用
         if (typeof floorLayerManager === 'undefined') {
             console.warn('FloorLayerManager not available, skipping floor theme application');
@@ -466,19 +486,35 @@ Object.assign(LabyrinthiaGame.prototype, {
 
             console.log(`Applied floor theme: ${floorTheme}`);
 
-            // 【新增】应用环境粒子特效
-            console.log('[UIManager] Checking enhancedEffects:', {
-                hasEnhancedEffects: !!this.enhancedEffects,
-                enhancedEffectsType: typeof this.enhancedEffects,
-                floorTheme: floorTheme
+            // 【优化】只在必要时重建粒子特效
+            // 检查是否需要重建粒子：
+            // 1. 强制重建标志为true（地图完全重建）
+            // 2. 地板主题发生变化
+            // 3. 粒子系统不存在
+            const currentParticleTheme = this._currentParticleTheme;
+            const themeChanged = currentParticleTheme !== floorTheme;
+            const particleSystemExists = this.enhancedEffects && this.enhancedEffects.particleSystems.has(floorTheme);
+
+            const shouldRebuildParticles = forceRebuildParticles || themeChanged || !particleSystemExists;
+
+            console.log('[UIManager] Particle rebuild check:', {
+                forceRebuild: forceRebuildParticles,
+                themeChanged: themeChanged,
+                currentTheme: currentParticleTheme,
+                newTheme: floorTheme,
+                particleSystemExists: particleSystemExists,
+                shouldRebuild: shouldRebuildParticles
             });
 
-            if (this.enhancedEffects) {
-                console.log('[UIManager] Calling createEnvironmentParticles...');
+            if (this.enhancedEffects && shouldRebuildParticles) {
+                console.log('[UIManager] Rebuilding environment particles...');
                 this.enhancedEffects.createEnvironmentParticles(mapGridContainer, floorTheme);
-                console.log('[UIManager] createEnvironmentParticles completed');
-            } else {
+                this._currentParticleTheme = floorTheme; // 记录当前粒子主题
+                console.log('[UIManager] Environment particles rebuilt');
+            } else if (!this.enhancedEffects) {
                 console.warn('[UIManager] enhancedEffects not available, skipping particle creation');
+            } else {
+                console.log('[UIManager] Keeping existing particle system (no rebuild needed)');
             }
         } catch (error) {
             console.error('Failed to apply floor theme:', error);
