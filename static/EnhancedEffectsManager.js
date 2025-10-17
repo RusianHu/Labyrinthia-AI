@@ -378,9 +378,6 @@ class EnhancedEffectsManager {
         } else {
             // 普通粒子系统 - 多层系统（背景、中景、前景）
             for (let i = 0; i < config.count; i++) {
-                const particle = document.createElement('div');
-                particle.className = `particle-${config.type}`;
-
                 // 随机层次（模拟远近）
                 const layer = Math.random();
                 let sizeMultiplier, opacityMultiplier, zIndex, blur;
@@ -407,37 +404,62 @@ class EnhancedEffectsManager {
 
                 const actualSize = config.size * sizeMultiplier;
                 const actualOpacity = config.opacity * opacityMultiplier;
+                const left = Math.random() * 100;
+                const top = Math.random() * 100;
 
-                // 基础样式
-                let styleText = `
-                    position: absolute;
-                    width: ${actualSize}px;
-                    height: ${actualSize}px;
-                    background: ${config.color};
-                    border-radius: ${config.shape === 'circle' ? '50%' : '0'};
-                    opacity: ${actualOpacity};
-                    left: ${Math.random() * 100}%;
-                    top: ${Math.random() * 100}%;
-                    z-index: ${zIndex};
-                    pointer-events: none;
-                `;
-
-                // 【优化】添加光晕效果
-                if (config.glow) {
-                    // 使用配置中的光晕参数
-                    const glowSize = config.glowSize || 3;
-                    const glowColor = config.glowColor || config.color;
-                    styleText += `
-                        box-shadow: 0 0 ${glowSize}px ${glowColor}, 0 0 ${glowSize * 1.5}px ${glowColor};
+                let particle;
+                if (config.useEmoji && config.emoji) {
+                    // 使用 Emoji 渲染
+                    particle = document.createElement('span');
+                    particle.className = `emoji-particle particle-${config.type}`;
+                    let styleText = `
+                        position: absolute;
+                        left: ${left}%;
+                        top: ${top}%;
+                        z-index: ${zIndex};
+                        opacity: ${actualOpacity};
+                        pointer-events: none;
+                        line-height: 1;
+                        font-size: ${Math.max(10, Math.round(actualSize * 2))}px;
                     `;
-                }
+                    if (blur > 0) {
+                        styleText += `filter: blur(${blur}px);`;
+                    }
+                    particle.style.cssText = styleText;
+                    particle.textContent = config.emoji;
+                } else {
+                    // 使用普通彩色粒子渲染
+                    particle = document.createElement('div');
+                    particle.className = `particle-${config.type}`;
 
-                // 添加模糊效果（如果需要）
-                if (blur > 0) {
-                    styleText += `filter: blur(${blur}px);`;
-                }
+                    let styleText = `
+                        position: absolute;
+                        width: ${actualSize}px;
+                        height: ${actualSize}px;
+                        background: ${config.color};
+                        border-radius: ${config.shape === 'circle' ? '50%' : '0'};
+                        opacity: ${actualOpacity};
+                        left: ${left}%;
+                        top: ${top}%;
+                        z-index: ${zIndex};
+                        pointer-events: none;
+                    `;
 
-                particle.style.cssText = styleText;
+                    // 【优化】添加光晕效果
+                    if (config.glow) {
+                        const glowSize = config.glowSize || 3;
+                        const glowColor = config.glowColor || config.color;
+                        styleText += `
+                            box-shadow: 0 0 ${glowSize}px ${glowColor}, 0 0 ${glowSize * 1.5}px ${glowColor};
+                        `;
+                    }
+
+                    if (blur > 0) {
+                        styleText += `filter: blur(${blur}px);`;
+                    }
+
+                    particle.style.cssText = styleText;
+                }
 
                 // 存储层次信息用于动画速度调整
                 particle.dataset.layer = layer < 0.3 ? 'back' : (layer < 0.7 ? 'mid' : 'front');
@@ -541,14 +563,17 @@ class EnhancedEffectsManager {
             'grassland': {
                 type: 'leaves',
                 count: 20,
-                size: 9,  // 增大尺寸：6 → 9
-                color: 'rgba(76, 175, 80, 0.95)',  // 提高不透明度：0.8 → 0.95
+                size: 9,
+                color: 'rgba(76, 175, 80, 0.95)',
                 shape: 'square',
                 opacity: 0.95,
                 speed: 'medium',
                 glow: true,
-                glowColor: 'rgba(76, 175, 80, 0.6)',  // 绿色光晕
-                glowSize: 3
+                glowColor: 'rgba(76, 175, 80, 0.6)',
+                glowSize: 3,
+                // Emoji 粒子默认启用：🍂
+                useEmoji: true,
+                emoji: '🍂'
             },
             'town': {
                 type: 'sunlight',
@@ -581,7 +606,10 @@ class EnhancedEffectsManager {
                 speed: 'medium',
                 glow: true,
                 glowColor: 'rgba(255, 255, 255, 0.9)',  // 白色光晕更强
-                glowSize: 5
+                glowSize: 5,
+                // Emoji 粒子默认启用：❄️
+                useEmoji: true,
+                emoji: '❄️'
             },
             'farmland': {
                 type: 'leaves',

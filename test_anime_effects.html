@@ -1,0 +1,1106 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Labyrinthia AI - Anime.js 特效测试页面</title>
+    <link rel="stylesheet" href="static/style.css">
+    <link rel="stylesheet" href="static/css/enhanced_effects.css">
+    <style>
+        body {
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            color: #fff;
+            font-family: 'Roboto', 'Noto Sans CJK SC', sans-serif;
+        }
+
+        .test-container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        .test-header {
+            text-align: center;
+            margin-bottom: 40px;
+            padding: 20px;
+            background: rgba(138, 43, 226, 0.1);
+            border-radius: 12px;
+            border: 2px solid rgba(138, 43, 226, 0.3);
+        }
+
+        .test-header h1 {
+            font-size: 2.5rem;
+            color: #9c27b0;
+            text-shadow: 0 0 20px rgba(138, 43, 226, 0.8);
+            margin-bottom: 10px;
+        }
+
+        .test-header p {
+            color: #aaa;
+            font-size: 1.1rem;
+        }
+
+        .effects-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+            gap: 20px;
+            margin-bottom: 40px;
+        }
+
+        .effect-card {
+            background: rgba(30, 30, 50, 0.8);
+            border: 2px solid rgba(138, 43, 226, 0.3);
+            border-radius: 12px;
+            padding: 20px;
+            backdrop-filter: blur(10px);
+            transition: all 0.3s ease;
+        }
+
+        .effect-card:hover {
+            border-color: rgba(138, 43, 226, 0.8);
+            box-shadow: 0 0 20px rgba(138, 43, 226, 0.3);
+        }
+
+        .effect-card h3 {
+            color: #9c27b0;
+            margin-bottom: 15px;
+            font-size: 1.3rem;
+        }
+
+        .effect-preview {
+            width: 100%;
+            height: 200px;
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 8px;
+            margin-bottom: 15px;
+            position: relative;
+            overflow: hidden;
+            border: 1px solid rgba(138, 43, 226, 0.2);
+        }
+
+        .effect-controls {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 15px;
+            flex-wrap: wrap;
+        }
+
+        .btn {
+            flex: 1;
+            min-width: 100px;
+            padding: 10px 15px;
+            background: linear-gradient(135deg, #9c27b0 0%, #7b1fa2 100%);
+            color: white;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: bold;
+            transition: all 0.3s ease;
+            font-size: 0.9rem;
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(156, 39, 176, 0.4);
+        }
+
+        .btn:active {
+            transform: translateY(0);
+        }
+
+        .effect-params {
+            background: rgba(0, 0, 0, 0.2);
+            padding: 12px;
+            border-radius: 6px;
+            font-size: 0.85rem;
+            color: #aaa;
+            line-height: 1.6;
+            max-height: 150px;
+            overflow-y: auto;
+        }
+
+        .param-item {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 5px;
+        }
+
+        .param-label {
+            color: #9c27b0;
+            font-weight: bold;
+        }
+
+        .param-value {
+            color: #4caf50;
+            font-family: 'Courier New', monospace;
+        }
+
+        /* 粒子效果样式 */
+        .particle {
+            position: absolute;
+            border-radius: 50%;
+        }
+
+        .light-ray {
+            position: absolute;
+            filter: blur(8px);
+        }
+
+        .monster-fragment {
+            position: absolute;
+            border-radius: 2px;
+        }
+
+        /* 环境粒子 */
+        .environment-particles {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            overflow: hidden;
+        }
+
+        .particle-dust {
+            filter: blur(1px);
+        }
+
+        .particle-leaves {
+            filter: blur(0.5px);
+        }
+
+        .particle-sand {
+            filter: blur(0.5px);
+        }
+
+        .particle-snow {
+            filter: blur(0.5px);
+        }
+
+        .particle-rain {
+            width: 2px !important;
+            height: 20px !important;
+            background: linear-gradient(to bottom, rgba(173, 216, 230, 0.8), transparent) !important;
+            border-radius: 1px;
+        }
+
+        /* 任务完成特效 */
+        .quest-completion-effect {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            z-index: 10000;
+            pointer-events: none;
+        }
+
+        .quest-completion-content {
+            background: linear-gradient(135deg, rgba(103, 58, 183, 0.95) 0%, rgba(156, 39, 176, 0.95) 100%);
+            padding: 40px 60px;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+            text-align: center;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .quest-completion-icon {
+            font-size: 80px;
+            margin-bottom: 20px;
+            filter: drop-shadow(0 0 20px rgba(255, 215, 0, 0.8));
+        }
+
+        .quest-completion-title {
+            font-size: 36px;
+            font-weight: bold;
+            color: #fff;
+            margin-bottom: 15px;
+            text-shadow: 0 2px 10px rgba(0, 0, 0, 0.5);
+        }
+
+        .quest-completion-quest-name {
+            font-size: 24px;
+            color: #ffd700;
+            margin-bottom: 10px;
+            text-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+        }
+
+        .quest-completion-reward {
+            font-size: 20px;
+            color: #4caf50;
+            font-weight: bold;
+            text-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+        }
+
+        .quest-completion-particles {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+        }
+
+        .quest-completion-particles .particle {
+            position: absolute;
+            width: 8px;
+            height: 8px;
+            background: radial-gradient(circle, #ffd700 0%, #ff6b6b 100%);
+            border-radius: 50%;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+        }
+
+        .info-box {
+            background: rgba(76, 175, 80, 0.1);
+            border-left: 4px solid #4caf50;
+            padding: 15px;
+            border-radius: 6px;
+            margin-top: 20px;
+            color: #aaa;
+            font-size: 0.9rem;
+        }
+
+        .info-box strong {
+            color: #4caf50;
+        }
+
+            /* Emoji 粒子通用样式（实验） */
+            .emoji-particle {
+                position: absolute;
+                pointer-events: none;
+                user-select: none;
+                line-height: 1;
+                transform-origin: center;
+                will-change: transform, opacity;
+                text-shadow: 0 1px 2px rgba(0,0,0,.35);
+                filter: drop-shadow(0 0 2px rgba(0,0,0,.25));
+            }
+
+    </style>
+</head>
+<body>
+    <div class="test-container">
+        <div class="test-header">
+            <h1>🎬 Anime.js 特效测试页面</h1>
+            <p>Labyrinthia AI 游戏特效完整展示与参数调试</p>
+            <div style="margin-top:10px; display:flex; gap:10px; flex-wrap:wrap;">
+                <button class="btn" onclick="scrollToEffect('leaves-emoji')">🔎 跳到 Emoji 实验区</button>
+            </div>
+
+        </div>
+
+        <div class="effects-grid" id="effectsGrid"></div>
+
+        <div class="info-box">
+            <strong>💡 使用说明：</strong><br>
+            • 点击各卡片中的按钮触发对应特效<br>
+            • 参数信息显示该特效的详细配置<br>
+            • 所有特效使用 anime.js 库实现<br>
+            • 支持重复播放以观察细节
+        </div>
+    </div>
+
+    <script src="static/js/anime.min.js"></script>
+    <script>
+        // 特效配置和测试逻辑
+        const effectsConfig = [
+            {
+                id: 'quest-completion',
+                name: '任务完成特效',
+                description: '任务完成时的华丽特效',
+                params: {
+                    'Icon Scale': '[0, 1.5, 1]',
+                    'Icon Rotate': '[0, 360]',
+                    'Icon Duration': '800ms',
+                    'Icon Easing': 'easeOutElastic(1, .6)',
+                    'Particles Count': '12',
+                    'Particles Duration': '2000ms',
+                    'Particles Easing': 'easeOutQuad',
+                    'Fade Out Duration': '1000ms'
+                },
+                trigger: triggerQuestCompletion
+            },
+            {
+                id: 'monster-defeat',
+                name: '怪物击败特效',
+                description: '怪物被击败时的粉碎效果',
+                params: {
+                    'Monster Icon': 'opacity [1, 0], scale [1, 0]',
+                    'Icon Duration': '300ms',
+                    'Icon Easing': 'easeInQuad',
+                    'Fragments Count': '8',
+                    'Fragment Duration': '800ms',
+                    'Fragment Easing': 'easeOutQuad',
+                    'Fragment Spread': '50-150px'
+                },
+                trigger: triggerMonsterDefeat
+            },
+            {
+                id: 'boss-defeat',
+                name: 'Boss击败冲击波',
+                description: 'Boss被击败时的冲击波效果',
+                params: {
+                    'Shockwave Start': '20px',
+                    'Shockwave End': '300px',
+                    'Duration': '1000ms',
+                    'Easing': 'easeOutQuad',
+                    'Opacity': '[1, 0]',
+                    'Border Color': '#ff4444',
+                    'Border Width': '3px'
+                },
+                trigger: triggerBossDefeat
+            },
+            {
+                id: 'dust-particles',
+                name: '落灰粒子效果',
+                description: '地牢主题的落灰效果',
+                params: {
+                    'Particle Count': '20',
+                    'Particle Size': '7px',
+                    'Color': 'rgba(200, 200, 200, 0.85)',
+                    'Duration': '8000ms',
+                    'Speed': 'slow',
+                    'Glow': 'yes',
+                    'Glow Size': '3px',
+                    'Animation': 'translateY + random translateX'
+                },
+                trigger: triggerDustParticles
+            },
+            {
+                id: 'leaves-particles',
+                name: '落叶粒子效果',
+                description: '草地主题的落叶摇摆效果',
+                params: {
+                    'Particle Count': '20',
+                    'Particle Size': '9px',
+                    'Color': 'rgba(76, 175, 80, 0.95)',
+                    'Duration': '5000ms',
+                    'Speed': 'medium',
+                    'Swing Amplitude': '30-60px',
+                    'Rotation': 'random -180 to 360',
+                    'Animation': 'swing + rotate'
+                },
+                trigger: triggerLeavesParticles
+            },
+            {
+                id: 'sunlight-rays',
+                name: '阳光光线效果',
+                description: '城镇主题的阳光光线',
+                params: {
+                    'Ray Count': '5',
+                    'Ray Width': '110px',
+                    'Ray Height': '300px',
+                    'Ray Angle': '-15 to 15 deg',
+                    'Duration': '12000ms',
+                    'Speed': 'very-slow',
+                    'Opacity': '[0.3, 0.8, 0.5, 0.3]',
+                    'Animation': 'rotate + opacity breathing'
+                },
+                trigger: triggerSunlightRays
+            },
+            {
+                id: 'sand-particles',
+                name: '沙尘粒子效果',
+                description: '沙漠主题的快速飘动沙尘',
+                params: {
+                    'Particle Count': '35',
+                    'Particle Size': '6px',
+                    'Color': 'rgba(244, 164, 96, 0.9)',
+                    'Duration': '2000ms',
+                    'Speed': 'fast',
+                    'Glow': 'yes',
+                    'Random Direction': '4 segments',
+                    'Animation': 'chaotic translateX + translateY'
+                },
+                trigger: triggerSandParticles
+            },
+            {
+                id: 'snow-particles',
+                name: '雪花粒子效果',
+                description: '雪地主题的轻盈飘摇',
+                params: {
+                    'Particle Count': '40',
+                    'Particle Size': '8px',
+                    'Color': 'rgba(255, 255, 255, 1.0)',
+                    'Duration': '5000ms',
+                    'Speed': 'medium',
+                    'Swing Amplitude': '20-40px',
+                    'Rotation': 'random -90 to 180',
+                    'Animation': 'gentle swing + rotate'
+                },
+                trigger: triggerSnowParticles
+            },
+            {
+                id: 'rain-particles',
+                name: '雨水粒子效果',
+                description: '雨天主题的快速斜向下落',
+
+
+
+                params: {
+                    'Particle Count': '50',
+                    'Particle Size': '2x20px',
+                    'Color': 'rgba(173, 216, 230, 0.6)',
+                    'Duration': '800ms',
+                    'Speed': 'fast',
+                    'Angle': '20-40px horizontal',
+                    'Opacity': '[0.6, 0.3]',
+                    'Animation': 'fast diagonal fall'
+                },
+                trigger: triggerRainParticles
+            }
+        ];
+
+            // === Emoji 粒子实验：在测试界面追加 Emoji 版特效卡片 ===
+            effectsConfig.push(
+                {
+                    id: 'leaves-emoji',
+                    name: '落叶粒子（Emoji版）',
+                    description: '使用 🍂 emoji 的落叶摇摆效果（对比普通版）',
+                    params: {
+                        'Particle Count': '20',
+                        'Emoji': '🍂',
+                        'Font Size': '18~22px',
+                        'Duration': '5000ms',
+                        'Animation': 'swing + rotate + fall (loop)'
+                    },
+                    trigger: triggerLeavesEmoji
+                },
+                {
+                    id: 'snow-emoji',
+                    name: '雪花粒子（Emoji版）',
+                    description: '使用 ❄️ emoji 的轻盈飘摇（对比普通版）',
+                    params: {
+                        'Particle Count': '40',
+                        'Emoji': '❄️',
+                        'Font Size': '16~22px',
+                        'Duration': '5000ms',
+                        'Animation': 'gentle swing + rotate + fall (loop)'
+                    },
+                    trigger: triggerSnowEmoji
+                },
+                {
+                    id: 'rain-emoji',
+                    name: '雨水粒子（Emoji版）',
+                    description: '使用 💧 emoji 的快速斜向下落（对比普通版）',
+                    params: {
+                        'Particle Count': '50',
+                        'Emoji': '💧',
+                        'Font Size': '18px',
+                        'Duration': '800ms',
+                        'Animation': 'fast diagonal fall (loop)'
+                    },
+                    trigger: triggerRainEmoji
+                },
+                {
+                    id: 'dust-emoji',
+                    name: '落灰粒子（Emoji版）',
+                    description: '使用 ·/• 符号模拟灰尘',
+                    params: {
+                        'Particle Count': '20',
+                        'Char': '· / •',
+                        'Font Size': '10~14px',
+                        'Duration': '8000ms',
+                        'Animation': 'slow fall + subtle drift (loop)'
+                    },
+                    trigger: triggerDustEmoji
+                },
+                {
+                    id: 'sand-emoji',
+                    name: '沙尘粒子（Emoji版）',
+                    description: '使用 • 符号模拟沙尘',
+                    params: {
+                        'Particle Count': '35',
+                        'Char': '•',
+                        'Font Size': '12~16px',
+                        'Duration': '2000ms',
+                        'Animation': 'chaotic drift (loop)'
+                    },
+                    trigger: triggerSandEmoji
+                }
+            );
+
+            function triggerLeavesEmoji() { createEmojiParticleEffect('leaves', 20, '🍂', 20, 5000); }
+            function triggerSnowEmoji() { createEmojiParticleEffect('snow', 40, '❄️', 20, 5000); }
+            function triggerRainEmoji() { createEmojiParticleEffect('rain', 50, '💧', 18, 800); }
+            function triggerDustEmoji() { createEmojiParticleEffect('dust', 20, '·', 12, 8000); }
+            function triggerSandEmoji() { createEmojiParticleEffect('sand', 35, '•', 14, 2000); }
+
+            function createEmojiParticleEffect(type, count, emoji, fontSize, duration) {
+                const preview = event.target.closest('.effect-card').querySelector('.effect-preview');
+                const container = document.createElement('div');
+                container.style.cssText = `
+                    position: absolute;
+                    width: 100%;
+                    height: 100%;
+                    pointer-events: none;
+                    overflow: hidden;
+                `;
+                preview.appendChild(container);
+
+                const particles = [];
+                for (let i = 0; i < count; i++) {
+                    const el = document.createElement('span');
+                    el.className = 'emoji-particle';
+                    el.textContent = emoji;
+                    const sizeJitter = anime.random(-3, 3);
+                    el.style.cssText = `
+                        left: ${Math.random() * 100}%;
+                        top: ${Math.random() * 100}%;
+                        font-size: ${Math.max(10, fontSize + sizeJitter)}px;
+                    `;
+                    container.appendChild(el);
+                    particles.push(el);
+                }
+
+                particles.forEach((p, index) => {
+                    const randomDuration = duration + anime.random(-1000, 1000);
+                    const randomDelay = index * (duration / count);
+
+                    if (type === 'dust') {
+                        anime({
+                            targets: p,
+                            translateY: ['-20%', '120%'],
+                            translateX: [
+                                { value: () => anime.random(-12, 12), duration: randomDuration * 0.3 },
+                                { value: () => anime.random(-12, 12), duration: randomDuration * 0.4 },
+                                { value: () => anime.random(-12, 12), duration: randomDuration * 0.3 }
+                            ],
+                            opacity: [0.5, 0.85, 0.3],
+                            rotate: () => anime.random(-15, 15),
+                            duration: randomDuration,
+                            delay: randomDelay,
+                            easing: 'linear',
+                            loop: true
+                        });
+                    } else if (type === 'leaves') {
+                        const swing = anime.random(30, 60);
+                        anime({
+                            targets: p,
+                            translateY: ['-20%', '120%'],
+                            translateX: [
+                                { value: -swing, duration: randomDuration * 0.25, easing: 'easeInOutSine' },
+                                { value: swing, duration: randomDuration * 0.25, easing: 'easeInOutSine' },
+                                { value: -swing, duration: randomDuration * 0.25, easing: 'easeInOutSine' },
+                                { value: 0, duration: randomDuration * 0.25, easing: 'easeInOutSine' }
+                            ],
+                            rotate: [
+                                { value: () => anime.random(-180, 180), duration: randomDuration * 0.5 },
+                                { value: () => anime.random(-360, 360), duration: randomDuration * 0.5 }
+                            ],
+                            duration: randomDuration,
+                            delay: randomDelay,
+                            easing: 'linear',
+                            loop: true
+                        });
+                    } else if (type === 'sand') {
+                        anime({
+                            targets: p,
+                            translateY: ['-20%', '120%'],
+                            translateX: [
+                                { value: () => anime.random(-45, 45), duration: randomDuration * 0.25 },
+                                { value: () => anime.random(-45, 45), duration: randomDuration * 0.25 },
+                                { value: () => anime.random(-45, 45), duration: randomDuration * 0.25 },
+                                { value: () => anime.random(-45, 45), duration: randomDuration * 0.25 }
+                            ],
+                            opacity: [0.45, 0.9, 0.3],
+                            rotate: () => anime.random(-90, 90),
+                            duration: randomDuration,
+                            delay: randomDelay,
+                            easing: 'linear',
+                            loop: true
+                        });
+                    } else if (type === 'snow') {
+                        const swing = anime.random(20, 40);
+                        anime({
+                            targets: p,
+                            translateY: ['-20%', '120%'],
+                            translateX: [
+                                { value: -swing, duration: randomDuration * 0.33, easing: 'easeInOutSine' },
+                                { value: swing, duration: randomDuration * 0.34, easing: 'easeInOutSine' },
+                                { value: 0, duration: randomDuration * 0.33, easing: 'easeInOutSine' }
+                            ],
+                            rotate: [
+                                { value: () => anime.random(-90, 90), duration: randomDuration * 0.5 },
+                                { value: () => anime.random(-180, 180), duration: randomDuration * 0.5 }
+                            ],
+                            opacity: [1.0, 1.0, 0.5],
+                            duration: randomDuration,
+                            delay: randomDelay,
+                            easing: 'linear',
+                            loop: true
+                        });
+                    } else if (type === 'rain') {
+                        anime({
+                            targets: p,
+                            translateY: ['-10%', '110%'],
+                            translateX: [0, anime.random(20, 40)],
+                            opacity: [0.7, 0.35],
+                            duration: randomDuration * 0.4,
+                            delay: randomDelay,
+                            easing: 'linear',
+                            loop: true
+                        });
+                    }
+                });
+            }
+
+
+        // 触发函数实现
+        function triggerQuestCompletion() {
+            const effectContainer = document.createElement('div');
+            effectContainer.className = 'quest-completion-effect';
+            effectContainer.innerHTML = `
+                <div class="quest-completion-content">
+                    <div class="quest-completion-icon">🎉</div>
+                    <div class="quest-completion-title">任务完成！</div>
+                    <div class="quest-completion-quest-name">测试任务</div>
+                    <div class="quest-completion-reward">获得 1000 经验值</div>
+                    <div class="quest-completion-particles">
+                        ${Array(12).fill(0).map(() => '<div class="particle"></div>').join('')}
+                    </div>
+                </div>
+            `;
+            document.body.appendChild(effectContainer);
+
+            const timeline = anime.timeline({
+                easing: 'easeOutExpo',
+                complete: () => {
+                    if (effectContainer.parentNode) {
+                        effectContainer.parentNode.removeChild(effectContainer);
+                    }
+                }
+            });
+
+            timeline.add({
+                targets: effectContainer.querySelector('.quest-completion-icon'),
+                scale: [0, 1.5, 1],
+                rotate: [0, 360],
+                duration: 800,
+                easing: 'easeOutElastic(1, .6)'
+            }).add({
+                targets: effectContainer.querySelector('.quest-completion-title'),
+                opacity: [0, 1],
+                translateY: [-20, 0],
+                duration: 500
+            }, '-=400').add({
+                targets: effectContainer.querySelector('.quest-completion-quest-name'),
+                opacity: [0, 1],
+                translateY: [-20, 0],
+                duration: 500
+            }, '-=300').add({
+                targets: effectContainer.querySelector('.quest-completion-reward'),
+                opacity: [0, 1],
+                scale: [0.8, 1],
+                duration: 500
+            }, '-=300');
+
+            const particles = effectContainer.querySelectorAll('.particle');
+            timeline.add({
+                targets: particles,
+                translateX: () => anime.random(-200, 200),
+                translateY: () => anime.random(-200, 200),
+                scale: [0, anime.random(0.5, 1.5)],
+                opacity: [1, 0],
+                duration: 2000,
+                delay: anime.stagger(50),
+                easing: 'easeOutQuad'
+            }, '-=500');
+
+            timeline.add({
+                targets: effectContainer,
+                opacity: [1, 0],
+                duration: 1000,
+                delay: 2000
+            });
+        }
+
+        function triggerMonsterDefeat() {
+            const preview = event.target.closest('.effect-card').querySelector('.effect-preview');
+            const rect = preview.getBoundingClientRect();
+
+            const fragmentCount = 8;
+            const fragments = [];
+
+            for (let i = 0; i < fragmentCount; i++) {
+                const fragment = document.createElement('div');
+                fragment.className = 'monster-fragment';
+                fragment.style.cssText = `
+                    position: fixed;
+                    left: ${rect.left + rect.width / 2}px;
+                    top: ${rect.top + rect.height / 2}px;
+                    width: 10px;
+                    height: 10px;
+                    background: #666;
+                    border-radius: 2px;
+                    pointer-events: none;
+                    z-index: 9999;
+                `;
+                document.body.appendChild(fragment);
+                fragments.push(fragment);
+            }
+
+            const timeline = anime.timeline({
+                complete: () => {
+                    fragments.forEach(f => {
+                        if (f.parentNode) f.parentNode.removeChild(f);
+                    });
+                }
+            });
+
+            timeline.add({
+                targets: fragments,
+                translateX: (el, i) => {
+                    const angle = (i / fragmentCount) * Math.PI * 2;
+                    return Math.cos(angle) * anime.random(50, 150);
+                },
+                translateY: (el, i) => {
+                    const angle = (i / fragmentCount) * Math.PI * 2;
+                    return Math.sin(angle) * anime.random(50, 150);
+                },
+                rotate: () => anime.random(-720, 720),
+                opacity: [1, 0],
+                scale: [1, 0],
+                duration: 800,
+                easing: 'easeOutQuad'
+            });
+        }
+
+        function triggerBossDefeat() {
+            const preview = event.target.closest('.effect-card').querySelector('.effect-preview');
+            const rect = preview.getBoundingClientRect();
+
+            const shockwave = document.createElement('div');
+            shockwave.style.cssText = `
+                position: fixed;
+                left: ${rect.left + rect.width / 2}px;
+                top: ${rect.top + rect.height / 2}px;
+                width: 20px;
+                height: 20px;
+                border: 3px solid #ff4444;
+                border-radius: 50%;
+                pointer-events: none;
+                z-index: 9998;
+                transform: translate(-50%, -50%);
+            `;
+            document.body.appendChild(shockwave);
+
+            anime({
+                targets: shockwave,
+                width: 300,
+                height: 300,
+                opacity: [1, 0],
+                duration: 1000,
+                easing: 'easeOutQuad',
+                complete: () => {
+                    if (shockwave.parentNode) {
+                        shockwave.parentNode.removeChild(shockwave);
+                    }
+                }
+            });
+        }
+
+        function triggerDustParticles() {
+            createParticleEffect('dust', 20, 'rgba(200, 200, 200, 0.85)', 7, 8000);
+        }
+
+        function triggerLeavesParticles() {
+            createParticleEffect('leaves', 20, 'rgba(76, 175, 80, 0.95)', 9, 5000);
+        }
+
+        function triggerSunlightRays() {
+            createSunlightRays();
+        }
+
+        function triggerSandParticles() {
+            createParticleEffect('sand', 35, 'rgba(244, 164, 96, 0.9)', 6, 2000);
+        }
+
+        function triggerSnowParticles() {
+            createParticleEffect('snow', 40, 'rgba(255, 255, 255, 1.0)', 8, 5000);
+        }
+
+        function triggerRainParticles() {
+            createParticleEffect('rain', 50, 'rgba(173, 216, 230, 0.6)', 2, 800);
+        }
+
+        function createParticleEffect(type, count, color, size, duration) {
+            const preview = event.target.closest('.effect-card').querySelector('.effect-preview');
+            const container = document.createElement('div');
+            container.style.cssText = `
+                position: absolute;
+                width: 100%;
+                height: 100%;
+                pointer-events: none;
+                overflow: hidden;
+            `;
+            preview.appendChild(container);
+
+            const particles = [];
+            for (let i = 0; i < count; i++) {
+                const particle = document.createElement('div');
+                particle.className = `particle-${type}`;
+                particle.style.cssText = `
+                    position: absolute;
+                    width: ${size}px;
+                    height: ${size}px;
+                    background: ${color};
+                    border-radius: 50%;
+                    left: ${Math.random() * 100}%;
+                    top: ${Math.random() * 100}%;
+                    pointer-events: none;
+                `;
+                container.appendChild(particle);
+                particles.push(particle);
+            }
+
+            particles.forEach((particle, index) => {
+                const randomDuration = duration + anime.random(-1000, 1000);
+                const randomDelay = index * (duration / count);
+
+                if (type === 'dust') {
+                    anime({
+                        targets: particle,
+                        translateY: ['-20%', '120%'],
+                        translateX: [
+                            { value: () => anime.random(-15, 15), duration: randomDuration * 0.3 },
+                            { value: () => anime.random(-15, 15), duration: randomDuration * 0.4 },
+                            { value: () => anime.random(-15, 15), duration: randomDuration * 0.3 }
+                        ],
+                        opacity: [0.6, 0.85, 0.3],
+                        rotate: () => anime.random(-30, 30),
+                        duration: randomDuration,
+                        delay: randomDelay,
+                        easing: 'linear',
+                        loop: true
+                    });
+                } else if (type === 'leaves') {
+                    const swingAmplitude = anime.random(30, 60);
+                    anime({
+                        targets: particle,
+                        translateY: ['-20%', '120%'],
+                        translateX: [
+                            { value: -swingAmplitude, duration: randomDuration * 0.25, easing: 'easeInOutSine' },
+                            { value: swingAmplitude, duration: randomDuration * 0.25, easing: 'easeInOutSine' },
+                            { value: -swingAmplitude, duration: randomDuration * 0.25, easing: 'easeInOutSine' },
+                            { value: 0, duration: randomDuration * 0.25, easing: 'easeInOutSine' }
+                        ],
+                        rotate: [
+                            { value: () => anime.random(-180, 180), duration: randomDuration * 0.5 },
+                            { value: () => anime.random(-360, 360), duration: randomDuration * 0.5 }
+                        ],
+                        duration: randomDuration,
+                        delay: randomDelay,
+                        easing: 'linear',
+                        loop: true
+                    });
+                } else if (type === 'sand') {
+                    anime({
+                        targets: particle,
+                        translateY: ['-20%', '120%'],
+                        translateX: [
+                            { value: () => anime.random(-50, 50), duration: randomDuration * 0.25 },
+                            { value: () => anime.random(-50, 50), duration: randomDuration * 0.25 },
+                            { value: () => anime.random(-50, 50), duration: randomDuration * 0.25 },
+                            { value: () => anime.random(-50, 50), duration: randomDuration * 0.25 }
+                        ],
+                        opacity: [0.45, 0.9, 0.3],
+                        rotate: () => anime.random(-180, 180),
+                        duration: randomDuration,
+                        delay: randomDelay,
+                        easing: 'linear',
+                        loop: true
+                    });
+                } else if (type === 'snow') {
+                    const swingAmplitude = anime.random(20, 40);
+                    anime({
+                        targets: particle,
+                        translateY: ['-20%', '120%'],
+                        translateX: [
+                            { value: -swingAmplitude, duration: randomDuration * 0.33, easing: 'easeInOutSine' },
+                            { value: swingAmplitude, duration: randomDuration * 0.34, easing: 'easeInOutSine' },
+                            { value: 0, duration: randomDuration * 0.33, easing: 'easeInOutSine' }
+                        ],
+                        rotate: [
+                            { value: () => anime.random(-90, 90), duration: randomDuration * 0.5 },
+                            { value: () => anime.random(-180, 180), duration: randomDuration * 0.5 }
+                        ],
+                        opacity: [1.0, 1.0, 0.5],
+                        duration: randomDuration,
+                        delay: randomDelay,
+                        easing: 'linear',
+                        loop: true
+                    });
+                } else if (type === 'rain') {
+                    anime({
+                        targets: particle,
+                        translateY: ['-10%', '110%'],
+                        translateX: [0, anime.random(20, 40)],
+                        opacity: [0.6, 0.3],
+                        duration: randomDuration * 0.4,
+                        delay: randomDelay,
+                        easing: 'linear',
+                        loop: true
+                    });
+                }
+            });
+        }
+
+        function createSunlightRays() {
+            const preview = event.target.closest('.effect-card').querySelector('.effect-preview');
+            const container = document.createElement('div');
+            container.style.cssText = `
+                position: absolute;
+                width: 100%;
+                height: 100%;
+                pointer-events: none;
+                overflow: hidden;
+            `;
+            preview.appendChild(container);
+
+            const rayCount = 5;
+            const rays = [];
+
+            for (let i = 0; i < rayCount; i++) {
+                const ray = document.createElement('div');
+                ray.className = 'light-ray';
+
+                const rayWidth = 110 + anime.random(-20, 20);
+                const rayHeight = 300;
+                const rayAngle = anime.random(-15, 15);
+                const rayLeft = anime.random(0, 100);
+
+                ray.style.cssText = `
+                    position: absolute;
+                    width: ${rayWidth}px;
+                    height: ${rayHeight}px;
+                    left: ${rayLeft}%;
+                    top: -50px;
+                    transform: rotate(${rayAngle}deg);
+                    background: linear-gradient(to bottom,
+                        rgba(255, 245, 200, 0) 0%,
+                        rgba(255, 235, 150, 0.24) 20%,
+                        rgba(255, 235, 100, 0.3) 50%,
+                        rgba(255, 235, 150, 0.24) 80%,
+                        rgba(255, 245, 200, 0) 100%
+                    );
+                    filter: blur(8px);
+                    pointer-events: none;
+                    z-index: 1;
+                    opacity: 0;
+                `;
+
+                ray.dataset.rayAngle = rayAngle;
+                ray.dataset.rayLeft = rayLeft;
+
+                container.appendChild(ray);
+                rays.push(ray);
+            }
+
+            rays.forEach((ray, index) => {
+                const baseAngle = parseFloat(ray.dataset.rayAngle);
+                const baseLeft = parseFloat(ray.dataset.rayLeft);
+                const randomDelay = index * 2400;
+
+                anime({
+                    targets: ray,
+                    rotate: [
+                        { value: baseAngle - 3, duration: 6000, easing: 'easeInOutSine' },
+                        { value: baseAngle + 3, duration: 6000, easing: 'easeInOutSine' }
+                    ],
+                    left: [
+                        { value: `${baseLeft - 2}%`, duration: 6000, easing: 'easeInOutSine' },
+                        { value: `${baseLeft + 2}%`, duration: 6000, easing: 'easeInOutSine' }
+                    ],
+                    opacity: [
+                        { value: 0.3, duration: 1500, easing: 'easeInOutQuad' },
+                        { value: 0.8, duration: 1500, easing: 'easeInOutQuad' },
+                        { value: 0.5, duration: 1500, easing: 'easeInOutQuad' },
+                        { value: 0.3, duration: 1500, easing: 'easeInOutQuad' }
+                    ],
+                    duration: 12000,
+                    delay: randomDelay,
+                    loop: true
+                });
+            });
+        }
+
+        // 初始化页面
+        function initPage() {
+            const grid = document.getElementById('effectsGrid');
+
+            effectsConfig.forEach(effect => {
+                const card = document.createElement('div');
+                card.className = 'effect-card';
+
+                let paramsHTML = '';
+                Object.entries(effect.params).forEach(([key, value]) => {
+                    paramsHTML += `
+                        <div class="param-item">
+                            <span class="param-label">${key}:</span>
+                            <span class="param-value">${value}</span>
+                        </div>
+                    `;
+                });
+
+                card.innerHTML = `
+                    <h3>${effect.name}</h3>
+                    <p style="color: #aaa; margin-bottom: 15px; font-size: 0.9rem;">${effect.description}</p>
+                    <div class="effect-preview"></div>
+                    <div class="effect-controls">
+                        <button class="btn" onclick="triggerEffect('${effect.id}')">▶ 播放特效</button>
+                        <button class="btn" onclick="resetPreview(this)">🔄 重置</button>
+                    </div>
+                    <div class="effect-params">${paramsHTML}</div>
+                `;
+
+                grid.appendChild(card);
+            });
+        }
+
+        function triggerEffect(effectId) {
+            const effect = effectsConfig.find(e => e.id === effectId);
+            if (effect && effect.trigger) {
+                effect.trigger();
+            }
+        }
+
+        function resetPreview(btn) {
+
+	        function scrollToEffect(effectId) {
+	            const grid = document.getElementById('effectsGrid');
+	            const cards = Array.from(grid.children);
+	            const target = cards.find(card => card.querySelector('h3') && card.querySelector('h3').textContent.includes('Emoji') && card.innerHTML.includes(effectId))
+	                || cards.find(card => card.querySelector("button.btn[onclick*='" + effectId + "']"));
+	            if (target) {
+	                target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+	                target.style.outline = '2px solid #7e57c2';
+	                setTimeout(() => target.style.outline = 'none', 1600);
+	            }
+	        }
+
+            const preview = btn.closest('.effect-card').querySelector('.effect-preview');
+            preview.innerHTML = '';
+        }
+
+        // 页面加载完成后初始化
+        document.addEventListener('DOMContentLoaded', initPage);
+
+        // 顶部快捷跳转到 Emoji 实验区
+        function scrollToEffect(effectId) {
+            const grid = document.getElementById('effectsGrid');
+            const cards = Array.from(grid.children);
+            const target = cards.find(card => card.querySelector("button.btn[onclick*='" + effectId + "']"))
+                || cards.find(card => card.querySelector('h3') && card.querySelector('h3').textContent.includes('Emoji'));
+            if (target) {
+                target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                target.style.outline = '2px solid #7e57c2';
+                setTimeout(() => target.style.outline = 'none', 1600);
+            }
+        }
+
+    </script>
+</body>
+</html>
+
