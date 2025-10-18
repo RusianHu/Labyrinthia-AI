@@ -87,7 +87,12 @@ class FloorLayerManager {
             return null;
         }
 
-        // 默认配置
+        // 默认配置（支持 base 别名传入）
+        const normalized = { ...options };
+        if (!('baseFloor' in normalized) && ('base' in normalized)) {
+            normalized.baseFloor = normalized.base;
+        }
+
         const config = {
             baseFloor: 'floor-stone-basic',
             overlay: null,
@@ -97,7 +102,7 @@ class FloorLayerManager {
             overlayTileSize: 128,
             zIndexBase: 0,
             zIndexOverlay: 1,
-            ...options
+            ...normalized
         };
 
         // 确保容器有正确的定位
@@ -150,7 +155,22 @@ class FloorLayerManager {
             return null;
         }
 
-        return this.addFloorLayers(container, preset);
+        // 兼容旧预设键名（base -> baseFloor），仅在存在时映射，避免用 undefined 覆盖默认值
+        const mappedOptions = {};
+        if (Object.prototype.hasOwnProperty.call(preset, 'baseFloor') || Object.prototype.hasOwnProperty.call(preset, 'base')) {
+            mappedOptions.baseFloor = preset.baseFloor || preset.base;
+        }
+        if (Object.prototype.hasOwnProperty.call(preset, 'overlay')) {
+            mappedOptions.overlay = preset.overlay;
+        }
+        if (Object.prototype.hasOwnProperty.call(preset, 'baseOpacity')) {
+            mappedOptions.baseOpacity = preset.baseOpacity;
+        }
+        if (Object.prototype.hasOwnProperty.call(preset, 'overlayOpacity')) {
+            mappedOptions.overlayOpacity = preset.overlayOpacity;
+        }
+
+        return this.addFloorLayers(container, mappedOptions);
     }
 
     /**
