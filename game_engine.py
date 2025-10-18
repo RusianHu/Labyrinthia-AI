@@ -983,7 +983,7 @@ class GameEngine:
 
         return {
             "success": True,
-            "message": "休息了一会儿",
+            "message": "祈祷了一会儿",
             "events": events
         }
 

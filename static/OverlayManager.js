@@ -136,7 +136,7 @@ Object.assign(LabyrinthiaGame.prototype, {
             'move': '分析地形和潜在威胁...',
             'attack': '计算最佳攻击策略...',
             'interact': '分析您的选择并生成结果...',
-            'rest': '评估休息的安全性...',
+            'rest': '评估祈祷的安全性...',
             'choice': '分析您的选择并更新游戏状态...',
             'default': '处理您的请求...'
         };

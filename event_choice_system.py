@@ -468,8 +468,8 @@ class EventChoiceSystem:
                 consequences="可能发现有价值的物品或线索"
             ),
             EventChoice(
-                text="休息整理",
-                description="休息并整理装备",
+                text="祈祷整理",
+                description="祈祷并整理装备",
                 consequences="恢复状态，准备下一步行动"
             ),
             EventChoice(

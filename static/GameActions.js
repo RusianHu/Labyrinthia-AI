@@ -1,5 +1,5 @@
 // Labyrinthia AI - 游戏动作模块
-// 包含玩家移动、攻击、休息等游戏动作相关逻辑
+// 包含玩家移动、攻击、祈祷等游戏动作相关逻辑
 
 // 扩展核心游戏类，添加游戏动作功能
 Object.assign(LabyrinthiaGame.prototype, {
@@ -19,7 +19,7 @@ Object.assign(LabyrinthiaGame.prototype, {
     async performAction(action, parameters = {}) {
         if (this.isLoading || !this.gameId) return;
 
-        // 休息前强制同步状态到后端，避免怪物"复活"问题
+        // 祈祷前强制同步状态到后端，避免怪物"复活"问题
         if (action === 'rest' && this.localEngine) {
             await this.localEngine.syncToBackend();
         }
@@ -186,7 +186,7 @@ Object.assign(LabyrinthiaGame.prototype, {
         // 1. 移动到特殊地形（但不包括楼梯，楼梯只是提示）
         // 2. 交互行动
         // 3. 攻击行动
-        // 4. 休息时可能触发事件
+        // 4. 祈祷时可能触发事件
 
         if (action === 'interact') {
             return true;
@@ -231,7 +231,7 @@ Object.assign(LabyrinthiaGame.prototype, {
         }
 
         if (action === 'rest') {
-            // 休息时可能触发随机事件
+            // 祈祷时可能触发随机事件
             return Math.random() < 0.3; // 30%概率显示遮罩
         }
 
