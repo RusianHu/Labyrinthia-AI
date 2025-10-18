@@ -74,7 +74,7 @@ class GameEngine:
             width=config.game.default_map_size[0],
             height=config.game.default_map_size[1],
             depth=1,
-            theme="新手地下城",
+            theme="起始区域",
             quest_context=quest_context
         )
 
@@ -1289,7 +1289,7 @@ class GameEngine:
         # 检查是否超过最大楼层限制
         max_floors = config.game.max_quest_floors
         if new_depth > max_floors:
-            return f"你已经到达了地下城的最深处（第{max_floors}层）！"
+            return f"你已经到达了本次冒险的最深阶段（第{max_floors}层）！"
 
         # 清除旧地图上的角色标记（在生成新地图前）
         old_tile = game_state.current_map.get_tile(*game_state.player.position)
@@ -1312,7 +1312,7 @@ class GameEngine:
             width=game_state.current_map.width,
             height=game_state.current_map.height,
             depth=new_depth,
-            theme=f"地下城第{new_depth}层",
+            theme=f"冒险区域（第{new_depth}阶段/层级）",
             quest_context=quest_context
         )
 
@@ -1401,7 +1401,7 @@ class GameEngine:
             width=game_state.current_map.width,
             height=game_state.current_map.height,
             depth=new_depth,
-            theme=f"地下城第{new_depth}层",
+            theme=f"冒险区域（第{new_depth}阶段/层级）",
             quest_context=quest_context
         )
 
@@ -1556,7 +1556,7 @@ class GameEngine:
                 width=config.game.default_map_size[0],
                 height=config.game.default_map_size[1],
                 depth=new_depth,
-                theme=f"地下城第{new_depth}层 - {new_quest.title}",
+                theme=f"冒险区域（第{new_depth}阶段/层级） - {new_quest.title}",
                 quest_context=quest_context
             )
 

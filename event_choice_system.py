@@ -684,8 +684,8 @@ class EventChoiceSystem:
 
                 # 根据来源设置默认主题
                 default_theme = (
-                    f"地下城第{target_depth}层" if source == "quest_completion"
-                    else f"神秘区域（第{target_depth}层）"
+                    f"冒险区域（第{target_depth}阶段/层级）" if source == "quest_completion"
+                    else f"神秘区域（第{target_depth}阶段/层级）"
                 )
 
                 # 生成新地图

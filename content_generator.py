@@ -170,13 +170,13 @@ class ContentGenerator:
         当前任务信息：
         - 任务类型：{quest_context.get('quest_type', 'exploration')}
         - 任务标题：{quest_context.get('title', '未知任务')}
-        - 任务描述：{quest_context.get('description', '探索地下城')}
+        - 任务描述：{quest_context.get('description', '探索区域')}
         - 目标楼层：{quest_context.get('target_floors', [depth])}
         - 建议主题：{theme_hint}（推断主题：{inferred_theme}）
         - 当前楼层：第{depth}层（共{config.game.max_quest_floors}层）
         - 专属事件：{len(special_events)}个
         - 专属怪物：{len(special_monsters)}个
-        - 故事背景：{quest_context.get('story_context', '神秘的地下城探索')}
+        - 故事背景：{quest_context.get('story_context', '神秘的探索之旅')}
 
         楼层定位：
         {'- 这是起始层，应该相对安全，适合新手探索' if depth == 1 else ''}
@@ -200,8 +200,8 @@ class ContentGenerator:
 
             map_info = await llm_service._async_generate_json(map_prompt)
             if map_info:
-                game_map.name = map_info.get("name", f"地下城第{depth}层")
-                game_map.description = map_info.get("description", "一个神秘的地下城层")
+                game_map.name = map_info.get("name", f"冒险区域（第{depth}阶段/层级）")
+                game_map.description = map_info.get("description", "一个神秘的冒险区域")
                 # 获取地板主题，验证是否为有效值
                 floor_theme = map_info.get("floor_theme", "normal")
                 valid_themes = ["normal", "magic", "abandoned", "cave", "combat", "grassland", "desert", "farmland", "snowfield", "town"]
@@ -213,8 +213,8 @@ class ContentGenerator:
                     game_map.floor_theme = inferred_theme if inferred_theme in valid_themes else "normal"
         except Exception as e:
             logger.error(f"Failed to generate map info: {e}")
-            game_map.name = f"地下城第{depth}层"
-            game_map.description = "一个神秘的地下城层"
+            game_map.name = f"冒险区域（第{depth}阶段/层级）"
+            game_map.description = "一个神秘的冒险区域"
             # 【修复】使用推断的主题而不是总是使用"normal"
             game_map.floor_theme = inferred_theme if inferred_theme in ["normal", "magic", "abandoned", "cave", "combat", "grassland", "desert", "farmland", "snowfield", "town"] else "normal"
             logger.info(f"Using fallback floor_theme: {game_map.floor_theme}")
@@ -1343,10 +1343,10 @@ class ContentGenerator:
         objectives_progress_budget = 100.0 - map_transition_total - 20.0
 
         main_quest_prompt = f"""
-        为等级{player_level}的玩家生成1个DnD风格的主线任务，适合在{max_floors}层地下城中完成。
+        为等级{player_level}的玩家生成1个DnD风格的主线任务，分为{max_floors}个阶段/层级（可地上或地下），每个阶段可在不同场景中推进（如城镇/森林/遗迹/洞穴/雪地/沙漠/农田等）。
 
         【重要】进度分配规则：
-        - 地图切换进度：{max_floors}层地下城有{max_floors - 1}次切换，每次{config.game.map_transition_progress}%，共{map_transition_total}%
+        - 地图切换进度：共{max_floors - 1}次切换，每次{config.game.map_transition_progress}%，共{map_transition_total}%
         - 探索缓冲进度：预留20%给普通战斗、探索等活动
         - **任务目标进度预算：{objectives_progress_budget:.1f}%**（special_events + special_monsters的progress_value总和必须在{objectives_progress_budget * 0.9:.1f}% - {objectives_progress_budget:.1f}%之间）
 
@@ -1363,14 +1363,14 @@ class ContentGenerator:
             "quests": [
                 {{
                     "title": "任务标题（中文，简洁有力）",
-                    "description": "任务描述（详细说明任务背景和目标，适合{max_floors}层地下城）",
+                    "description": "任务描述（详细说明任务背景和目标，适合分阶段推进）",
                     "objectives": ["第1层：初步探索和准备", "第2层：深入调查", "第{max_floors}层：完成最终目标"],
                     "experience_reward": {500 + player_level * 50},
                     "story_context": "详细的故事背景，包括任务起因、目标和意义",
                     "progress_percentage": 0,
                     "quest_type": "exploration",
                     "target_floors": {list(range(1, max_floors + 1))},
-                    "map_themes": ["地下城", "古老遗迹", "神秘洞穴"],
+                    "map_themes": ["城镇", "森林", "古老遗迹"],
                     "special_events": [
                         {{
                             "id": "event_1",
@@ -1496,7 +1496,7 @@ class ContentGenerator:
                     # 新增：任务专属内容
                     quest.quest_type = quest_data.get("quest_type", "exploration")
                     quest.target_floors = quest_data.get("target_floors", [1, 2])
-                    quest.map_themes = quest_data.get("map_themes", ["地下城"])
+                    quest.map_themes = quest_data.get("map_themes", ["城镇", "森林", "遗迹", "洞穴", "雪地", "沙漠", "农田"])
 
                     # 处理专属事件
                     from data_models import QuestEvent

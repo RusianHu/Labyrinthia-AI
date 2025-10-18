@@ -123,7 +123,7 @@ class PromptManager:
             name="map_info_generation",
             category=PromptCategory.MAP_GENERATION,
             template="""
-为一个{width}x{height}的地下城第{depth}层生成名称和描述。
+为一个{width}x{height}的冒险区域（第{depth}阶段/层级）生成名称和描述。
 基础主题：{theme}{quest_info}
 
 请返回JSON格式：
@@ -135,14 +135,14 @@ class PromptManager:
 
 **地板主题选项说明**：
 
-【地下城系列】
+【地下/室内系列】
 - "normal": 普通地牢（石质地板+裂纹效果）- 适合常规地牢、走廊、普通房间
 - "magic": 魔法房间（大理石+魔法符文）- 适合魔法区域、神殿、法师塔、魔法阵
 - "abandoned": 废弃房间（木质地板+苔藓）- 适合废弃建筑、老旧房间、被遗忘的区域
 - "cave": 洞穴（泥土地面+水渍）- 适合天然洞穴、地下通道、潮湿区域
 - "combat": 战斗区域（石质地板+血迹）- 适合竞技场、战场、屠宰场、血腥场景
 
-【地上自然系列】
+【地上/自然系列】
 - "grassland": 草地（绿色草地+野花）- 适合草原、森林边缘、野外营地、自然场景
 - "desert": 沙漠（黄沙+脚印）- 适合沙漠、荒地、干旱区域、沙丘
 - "farmland": 农田（耕地+作物）- 适合农场、田野、村庄周边、种植区
@@ -174,7 +174,7 @@ class PromptManager:
             name="map_description",
             category=PromptCategory.MAP_GENERATION,
             template="""
-请为这个地下城地图生成一个生动的描述。
+请为当前地图/场景/区域生成一个生动的描述。
 
 地图信息：
 - 名称：{map_name}

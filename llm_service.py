@@ -621,7 +621,7 @@ class LLMService:
         当前地图：{game_state.current_map.name}
         地图描述：{game_state.current_map.description}
 
-        请生成一段引人入胜的开场叙述（100-200字），描述玩家刚刚踏入这个地下城的情景，
+        请生成一段引人入胜的开场叙述（100-200字），描述玩家刚刚抵达当前场景/地图的情景，
         包括环境描述、氛围营造和对即将到来的冒险的暗示。
         """
 

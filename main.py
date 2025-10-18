@@ -1806,7 +1806,7 @@ if config.game.debug_mode:
             width = request_data.get("width", 10)
             height = request_data.get("height", 10)
             depth = request_data.get("depth", 1)
-            theme = request_data.get("theme", "测试地下城")
+            theme = request_data.get("theme", "测试区域")
 
             from content_generator import content_generator
 
@@ -2259,7 +2259,7 @@ if config.game.debug_mode:
             test_game_state.player.position = (5, 5)
 
             test_map = GameMap()
-            test_map.name = "测试地下城"
+            test_map.name = "测试区域"
             test_map.depth = request_data.get("map_depth", 1)
             test_map.width = 10
             test_map.height = 10
@@ -2277,8 +2277,8 @@ if config.game.debug_mode:
                 test_quest.quest_type = "exploration"
                 test_quest.is_active = True
                 test_quest.progress_percentage = 50.0
-                test_quest.objectives = ["探索地下城", "寻找宝藏"]
-                test_quest.story_context = "在古老的地下城中寻找失落的宝藏"
+                test_quest.objectives = ["探索区域", "寻找宝藏"]
+                test_quest.story_context = "在古老的遗迹或自然区域中寻找失落的宝藏"
                 test_game_state.quests.append(test_quest)
 
             # 生成故事事件
@@ -2322,7 +2322,7 @@ if config.game.debug_mode:
             test_game_state.player.stats.level = request_data.get("player_level", 1)
 
             test_map = GameMap()
-            test_map.name = "测试地下城"
+            test_map.name = "测试区域"
             test_map.depth = 1
             test_game_state.current_map = test_map
 
@@ -2487,7 +2487,7 @@ if config.game.debug_mode:
             test_game_state.player.position = (10, 15)
 
             test_map = GameMap()
-            test_map.name = "深层地下城"
+            test_map.name = "深层区域"
             test_map.depth = 3
             test_map.width = 20
             test_map.height = 20
@@ -2972,7 +2972,7 @@ if config.game.debug_mode:
                 width=config.game.default_map_size[0],
                 height=config.game.default_map_size[1],
                 depth=target_floor,
-                theme=f"地下城第{target_floor}层",
+                theme=f"冒险区域（第{target_floor}阶段/层级）",
                 quest_context=quest_context
             )
 
@@ -3286,7 +3286,7 @@ if config.game.debug_mode:
                 width=config.game.default_map_size[0],
                 height=config.game.default_map_size[1],
                 depth=current_depth,
-                theme=f"地下城第{current_depth}层",
+                theme=f"冒险区域（第{current_depth}阶段/层级）",
                 quest_context=quest_context
             )
 

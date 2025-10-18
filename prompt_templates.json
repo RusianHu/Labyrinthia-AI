@@ -3,11 +3,11 @@
     "map_info_generation": {
       "name": "map_info_generation",
       "category": "map_generation",
-      "template": "为一个{width}x{height}的地下城第{depth}层生成名称和描述。\n基础主题：{theme}{quest_info}\n\n请返回JSON格式：\n{{\n    \"name\": \"地图名称（中文，体现主题和任务特色）\",\n    \"description\": \"地图描述（详细描述环境、氛围和可能的挑战）\",\n    \"floor_theme\": \"地板主题类型（必须从以下选项中选择一个）\"\n}}\n\n**地板主题选项说明**：\n- \"normal\": 普通地牢（石质地板+裂纹效果）- 适合常规地牢、走廊、普通房间\n- \"magic\": 魔法房间（大理石+魔法符文）- 适合魔法区域、神殿、法师塔、魔法阵\n- \"abandoned\": 废弃房间（木质地板+苔藓）- 适合废弃建筑、老旧房间、被遗忘的区域\n- \"cave\": 洞穴（泥土地面+水渍）- 适合天然洞穴、地下通道、潮湿区域\n- \"combat\": 战斗区域（石质地板+血迹）- 适合竞技场、战场、屠宰场、血腥场景\n\n**重要**：\n1. 请根据地图的主题、任务内容、环境氛围和**楼层深度**，选择最合适的地板主题\n2. **不同楼层应该使用不同的地板主题**，以体现探索的深入和环境的变化\n3. 建议：第1层使用normal，第2层使用cave或abandoned，第3层使用magic或combat等\n4. 地板主题应该与地图名称和描述相呼应，营造统一的氛围",
+      "template": "为一个{width}x{height}的冒险区域（第{depth}阶段/层级）生成名称和描述。\n基础场景风格：{theme}{quest_info}\n\n请返回JSON格式：\n{{\n    \"name\": \"地图名称（中文，体现主题与任务特色）\",\n    \"description\": \"地图描述（详细描述环境、氛围与潜在挑战，包含室内/室外、天气/光照等信息）\",\n    \"floor_theme\": \"场景主题类型（必须从以下选项中选择一个）\"\n}}\n\n**场景主题选项说明（并列展示）**：\n【地下/室内系列】\n- \"normal\": 普通地牢（石质地板+裂纹效果）\n- \"magic\": 魔法房间（大理石+魔法符文）\n- \"abandoned\": 废弃房间（木质地板+苔藓）\n- \"cave\": 洞穴（泥土地面+水渍）\n- \"combat\": 战斗区域（石质地板+血迹）\n\n【地上/自然系列】\n- \"grassland\": 草地（绿色草地+野花）\n- \"desert\": 沙漠（黄沙+脚印）\n- \"farmland\": 农田（耕地+作物）\n- \"snowfield\": 雪地（白雪+冰晶）\n- \"town\": 城镇街道（石板路/木栅/集市）\n\n**选择指南（不使用负面约束）**：\n- 出现“城镇/村庄/街道/集市/旅店/教堂”等关键词 → 选择 \"town\"\n- 出现“草原/森林/野外/自然/林地/田园/绿地”等 → 选择 \"grassland\"\n- 出现“雪/冰/暴雪/寒冷/冻土/冬季”等 → 选择 \"snowfield\"\n- 出现“沙漠/荒地/沙丘/炙热/干旱”等 → 选择 \"desert\"\n- 出现“农场/田地/庄稼/收获/灌溉”等 → 选择 \"farmland\"\n- 出现“洞穴/矿井/地下/岩洞/潮湿”等 → 选择 \"cave\"\n- 出现“废弃/破败/尘封/被遗忘”等 → 选择 \"abandoned\"\n- 出现“魔法/法阵/仪式/奥术/神殿”等 → 选择 \"magic\"\n- 出现“战斗/竞技/血迹/祭坛/冲突”等 → 选择 \"combat\"\n- 普通室内或无明显特征 → 选择 \"normal\"\n\n**重要**：\n1. 请依据任务内容与环境氛围自然选择主题，不强调“越深越像地牢”\n2. 各阶段可根据剧情需要选择同类或不同主题，以突出叙事节奏与变化\n3. 主题需与名称和描述相呼应，营造统一而清晰的场景感",
       "required_params": ["width", "height", "depth", "theme"],
       "optional_params": {"quest_info": ""},
       "description": "生成地图基本信息（名称、描述和地板主题）",
-      "version": "1.2"
+      "version": "1.3"
     },
     "item_pickup_generation": {
       "name": "item_pickup_generation", 
@@ -96,11 +96,11 @@
     "map_description": {
       "name": "map_description",
       "category": "map_generation",
-      "template": "请为这个地下城地图生成一个生动的描述。\n\n地图信息：\n- 名称：{map_name}\n- 大小：{width}x{height}\n- 层数：{depth}\n\n上下文信息：{context}\n\n请生成一个富有想象力的地图描述，包括环境、氛围、可能的危险等。",
+      "template": "请为当前地图/场景/区域生成一个生动的描述。\n\n地图信息：\n- 名称：{map_name}\n- 大小：{width}x{height}\n- 层数：{depth}\n\n上下文信息：{context}\n\n请生成一个富有想象力的地图描述，包括环境、氛围、可能的危险等。",
       "required_params": ["map_name", "width", "height", "depth"],
       "optional_params": {"context": ""},
       "description": "生成详细的地图环境描述",
-      "version": "1.0"
+      "version": "1.1"
     },
     "combat_victory_narrative": {
       "name": "combat_victory_narrative",
