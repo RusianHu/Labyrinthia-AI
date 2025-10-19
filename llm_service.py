@@ -18,6 +18,8 @@ from encoding_utils import encoding_converter
 from prompt_manager import prompt_manager
 from async_task_manager import async_task_manager, async_performance_monitor, TaskType
 
+from llm_context_manager import llm_context_manager
+
 
 logger = logging.getLogger(__name__)
 
@@ -217,6 +219,19 @@ class LLMService:
                     # 使用原始提示词
                     processed_prompt = prompt
 
+                    # 注入统一上下文到提示词（可通过配置开关控制）
+                    try:
+                        if getattr(config.llm, "inject_context_to_prompt", True):
+                            context_block = llm_context_manager.build_context_string(
+                                max_entries=getattr(config.llm, "context_max_entries", 12),
+                                max_tokens=getattr(config.llm, "max_history_tokens", 10240),
+                                include_metadata=getattr(config.llm, "context_include_metadata", False)
+                            )
+                            if context_block:
+                                processed_prompt = f"{context_block}\n\n{processed_prompt}"
+                    except Exception as _e:
+                        logger.warning(f"Failed to inject LLM context: {_e}")
+
                     generation_config = {}
 
                     # 只有在启用生成参数时才添加temperature和top_p
@@ -269,7 +284,7 @@ class LLMService:
                             generation_config["max_tokens"] = generation_config.pop("max_output_tokens")
 
                         return self.client.chat_once(
-                            prompt=prompt,
+                            prompt=processed_prompt,
                             model=config.llm.model_name,
                             **generation_config
                         )
@@ -280,7 +295,7 @@ class LLMService:
                             generation_config["max_tokens"] = generation_config.pop("max_output_tokens")
 
                         return self.client.single_chat(
-                            message=prompt,
+                            message=processed_prompt,
                             model=config.llm.model_name,
                             **generation_config
                         )
@@ -305,7 +320,7 @@ class LLMService:
             except asyncio.TimeoutError:
                 logger.error(f"LLM request timed out after {timeout}s")
                 return ""
-    
+
     async def _async_generate_json(self, prompt: str, schema: Optional[Dict] = None, timeout: Optional[float] = None, **kwargs) -> Dict[str, Any]:
         """
         异步生成JSON格式内容（带并发控制和超时）
@@ -327,6 +342,20 @@ class LLMService:
                 try:
                     # 使用原始提示词
                     processed_prompt = prompt
+
+
+                    # 注入统一上下文到提示词（可通过配置开关控制）
+                    try:
+                        if getattr(config.llm, "inject_context_to_prompt", True):
+                            context_block = llm_context_manager.build_context_string(
+                                max_entries=getattr(config.llm, "context_max_entries", 12),
+                                max_tokens=getattr(config.llm, "max_history_tokens", 10240),
+                                include_metadata=getattr(config.llm, "context_include_metadata", False)
+                            )
+                            if context_block:
+                                processed_prompt = f"{context_block}\n\n{processed_prompt}"
+                    except Exception as _e:
+                        logger.warning(f"Failed to inject LLM context: {_e}")
 
                     generation_config = {}
 
@@ -371,7 +400,7 @@ class LLMService:
                             generation_config["max_tokens"] = generation_config.pop("max_output_tokens")
 
                         return self.client.chat_json_once(
-                            prompt=prompt,
+                            prompt=processed_prompt,
                             model=config.llm.model_name,
                             schema=schema,
                             **generation_config
@@ -388,7 +417,7 @@ class LLMService:
                             response_format["schema"] = schema
 
                         # 在提示词中明确要求JSON格式
-                        json_prompt = f"{prompt}\n\n请以JSON格式返回结果。"
+                        json_prompt = f"{processed_prompt}\n\n请以JSON格式返回结果。"
 
                         response_text = self.client.single_chat(
                             message=json_prompt,
@@ -420,25 +449,25 @@ class LLMService:
             except asyncio.TimeoutError:
                 logger.error(f"LLM JSON request timed out after {timeout}s")
                 return {}
-    
+
     @async_performance_monitor
     async def generate_character(self, character_type: str = "npc", context: str = "") -> Optional[Character]:
         """生成角色"""
         prompt = f"""
         请生成一个DnD风格的{character_type}角色。
-        
+
         上下文信息：{context}
-        
+
         请返回JSON格式的角色数据，包含以下字段：
         - name: 角色名称
         - description: 角色描述
         - character_class: 职业（fighter, wizard, rogue, cleric, ranger, barbarian, bard, paladin, sorcerer, warlock）
         - abilities: 能力值对象（strength, dexterity, constitution, intelligence, wisdom, charisma，每个值10-18）
         - stats: 属性对象（hp, max_hp, mp, max_mp, ac, speed, level, experience）
-        
+
         确保角色符合DnD设定，有趣且平衡。
         """
-        
+
         schema = {
             "type": "object",
             "properties": {
@@ -472,7 +501,7 @@ class LLMService:
             },
             "required": ["name", "description", "character_class", "abilities", "stats"]
         }
-        
+
         try:
             result = await self._async_generate_json(prompt, schema)
             if result:
@@ -480,32 +509,32 @@ class LLMService:
                 character = Character()
                 character.name = result.get("name", "")
                 character.description = result.get("description", "")
-                
+
                 # 设置职业
                 from data_models import CharacterClass
                 try:
                     character.character_class = CharacterClass(result.get("character_class", "fighter"))
                 except ValueError:
                     character.character_class = CharacterClass.FIGHTER
-                
+
                 # 设置能力值
                 if abilities := result.get("abilities"):
                     for attr, value in abilities.items():
                         if hasattr(character.abilities, attr):
                             setattr(character.abilities, attr, value)
-                
+
                 # 设置属性
                 if stats := result.get("stats"):
                     for attr, value in stats.items():
                         if hasattr(character.stats, attr):
                             setattr(character.stats, attr, value)
-                
+
                 return character
         except Exception as e:
             logger.error(f"Failed to generate character: {e}")
-        
+
         return None
-    
+
     @async_performance_monitor
     async def generate_monster(self, challenge_rating: float = 1.0, context: str = "") -> Optional[Monster]:
         """生成怪物"""
@@ -549,7 +578,7 @@ class LLMService:
             return monster
 
         return None
-    
+
     @async_performance_monitor
     async def generate_map_description(self, map_data: GameMap, context: str = "") -> str:
         """生成地图描述"""
@@ -559,7 +588,7 @@ class LLMService:
 
         prompt = prompt_manager.format_prompt("map_description", **map_context)
         return await self._async_generate(prompt)
-    
+
     @async_performance_monitor
     async def generate_quest(self, player_level: int = 1, context: str = "") -> Optional[Quest]:
         """生成任务"""
@@ -587,25 +616,25 @@ class LLMService:
             logger.error(f"Failed to generate quest: {e}")
 
         return None
-    
+
     async def generate_narrative(self, game_state: GameState, action: str) -> str:
         """生成叙述文本"""
         prompt = f"""
         基于当前游戏状态，为玩家的行动生成叙述文本。
-        
+
         玩家信息：
         - 名称：{game_state.player.name}
         - 等级：{game_state.player.stats.level}
         - 位置：{game_state.player.position}
-        
+
         当前地图：{game_state.current_map.name}
         回合数：{game_state.turn_count}
-        
+
         玩家行动：{action}
-        
+
         请生成一段生动的叙述文本，描述行动的结果和环境变化。
         """
-        
+
         return await self._async_generate(prompt)
 
     async def generate_opening_narrative(self, game_state: GameState) -> str:

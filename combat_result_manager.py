@@ -137,18 +137,37 @@ class CombatResultManager:
         combat_result.narrative = await self._generate_combat_narrative(
             game_state, combat_result
         )
-        
+
+        # 写入 LLM 上下文（玩家进攻与叙述）
+        try:
+            from llm_context_manager import llm_context_manager
+            if getattr(config.llm, "record_combat_to_context", True):
+                attacker = getattr(game_state.player, "name", "玩家")
+                target = combat_result.defeated_monster.name if combat_result.defeated_monster else "怪物"
+                damage_val = combat_result.damage_dealt
+                llm_context_manager.add_combat(
+                    is_attack=True,
+                    attacker=attacker,
+                    target=target,
+                    damage=damage_val,
+                    result="击败"
+                )
+                if combat_result.narrative:
+                    llm_context_manager.add_narrative(combat_result.narrative, context_type="combat")
+        except Exception as _e:
+            logger.warning(f"Failed to log combat context: {_e}")
+
         # 更新统计
         self.total_monsters_defeated += 1
         if monster.is_boss:
             self.total_bosses_defeated += 1
-        
+
         # 记录到历史
         self.combat_history.append(combat_result)
         self._cleanup_history()
-        
+
         logger.info(f"Combat result processed: {result_type.value}, exp: {combat_result.experience_gained}")
-        
+
         return combat_result
     
     def _determine_result_type(self, monster: Monster) -> CombatResultType:

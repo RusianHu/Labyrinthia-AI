@@ -497,6 +497,21 @@ async def handle_llm_event(request: LLMEventRequest, http_request: Request, resp
             # 使用LLM生成陷阱触发的描述性文本
             narrative = await game_engine._generate_trap_narrative(game_state, trap_result)
 
+            # 写入 LLM 上下文：陷阱事件与叙述（可由配置开关控制）
+            try:
+                from llm_context_manager import llm_context_manager
+                if getattr(config.llm, "record_trap_to_context", True):
+                    trap_type = trap_result.get('type', 'unknown') if isinstance(trap_result, dict) else 'unknown'
+                    llm_context_manager.add_event(
+                        event_type="trap",
+                        description=f"触发陷阱：{trap_type}",
+                        data=trap_result if isinstance(trap_result, dict) else {"raw": str(trap_result)}
+                    )
+                    if narrative:
+                        llm_context_manager.add_narrative(narrative, context_type="trap")
+            except Exception as _e:
+                logger.warning(f"Failed to log trap context: {_e}")
+
             return {
                 "success": True,
                 "narrative": narrative,

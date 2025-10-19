@@ -94,6 +94,14 @@ class LLMConfig:
     max_history_tokens: int = 10240  # 历史记录最大token数量
     min_context_entries: int = 5  # 最小保留的上下文条目数
     context_cleanup_threshold: float = 0.8  # 上下文清理触发阈值
+    # ---- LLM 上下文记录开关（可通过环境变量覆盖） ----
+    record_combat_to_context: bool = True   # 是否记录战斗事件到上下文
+    record_trap_to_context: bool = True     # 是否记录陷阱事件到上下文
+    # ---- LLM 上下文注入控制（可通过环境变量覆盖） ----
+    inject_context_to_prompt: bool = True      # 是否将最近游戏上下文注入到提示词
+    context_max_entries: int = 12              # 注入的上下文最大条目数
+    context_include_metadata: bool = False     # 是否在上下文块中包含元数据
+
     # 动态填充的特定于提供商的URL
     gemini_endpoint: str = ""
     gemini_api_version: str = ""
@@ -249,11 +257,11 @@ class DataConfig:
     saves_dir: str = "saves"
     cache_dir: str = "cache"
     logs_dir: str = "logs"
-    
+
     # 数据文件格式
     data_format: str = "json"  # json, yaml, pickle
     compression: bool = False
-    
+
     # 备份设置
     enable_backup: bool = True
     backup_interval: int = 86400  # 秒（24小时）
@@ -262,7 +270,7 @@ class DataConfig:
 
 class Config:
     """主配置类"""
-    
+
     def __init__(self):
         self.llm = LLMConfig()
         self.game = GameConfig()
@@ -281,7 +289,7 @@ class Config:
 
         # 验证关键配置
         self._validate_critical_config()
-    
+
     def _load_from_env(self):
         """从环境变量加载配置"""
         # ------------------- Load LLM Configuration -------------------
@@ -323,13 +331,13 @@ class Config:
             LLMProvider.OPENAI: self.llm.openai,
             LLMProvider.LMSTUDIO: self.llm.lmstudio,
         }
-        
+
         active_provider_config = provider_config_map.get(self.llm.provider)
-        
+
         if active_provider_config:
             self.llm.api_key = getattr(active_provider_config, 'api_key', '')
             self.llm.model_name = getattr(active_provider_config, 'model_name', '')
-            
+
             # 填充特定于提供商的URL
             self.llm.gemini_endpoint = self.llm.gemini.endpoint
             self.llm.gemini_api_version = self.llm.gemini.api_version
@@ -439,6 +447,12 @@ class Config:
             except ValueError:
                 pass
 
+        # LLM 上下文记录开关（环境变量覆盖）
+        if record_combat := os.getenv("LLM_RECORD_COMBAT_TO_CONTEXT"):
+            self.llm.record_combat_to_context = record_combat.lower() in ("true", "1", "yes")
+        if record_trap := os.getenv("LLM_RECORD_TRAP_TO_CONTEXT"):
+            self.llm.record_trap_to_context = record_trap.lower() in ("true", "1", "yes")
+
         # ------------------- Load Game Session Configuration -------------------
         if auto_save_interval := os.getenv("AUTO_SAVE_INTERVAL"):
             try:
@@ -476,7 +490,7 @@ class Config:
                 self.game.request_retry_delay = float(retry_delay)
             except ValueError:
                 pass
-    
+
     def _check_env_file(self):
         """检查 .env 文件并提示用户"""
         env_path = Path(".env")
@@ -538,7 +552,7 @@ class Config:
                 logger.error(f"❌ 创建目录失败: {directory}")
                 logger.error(f"   错误信息: {e}")
                 raise
-    
+
     def update_config(self, section: str, **kwargs):
         """更新配置"""
         if hasattr(self, section):
@@ -546,7 +560,7 @@ class Config:
             for key, value in kwargs.items():
                 if hasattr(config_section, key):
                     setattr(config_section, key, value)
-    
+
     def to_dict(self) -> Dict[str, Any]:
         """转换为字典格式"""
         return {

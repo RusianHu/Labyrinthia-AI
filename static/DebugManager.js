@@ -786,6 +786,40 @@ const DebugMethods = {
                 if (debugPanel && !debugPanel.classList.contains('show')) {
                     debugPanel.classList.add('show');
                 }
+
+                // 提升可见性：自动滚动到日志区域并高亮
+                try {
+                    if (logElement) {
+                        logElement.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                        const oldBg = logElement.style.backgroundColor;
+                        logElement.style.backgroundColor = 'rgba(102, 126, 234, 0.2)';
+                        setTimeout(() => { logElement.style.backgroundColor = oldBg || ''; }, 1200);
+                    }
+                } catch (_) {}
+
+                // 兜底：如果没有调试面板DOM（例如在某些测试页），弹出对话框展示内容
+                if (!debugPanel) {
+                    const formatted = (entriesData.entries || []).map(entry => {
+                        const time = new Date(entry.timestamp).toLocaleTimeString('zh-CN');
+                        return `[${time}] [${entry.entry_type}] ${entry.content}\n  Token估算: ${entry.token_estimate}`;
+                    }).join('\n\n') || '暂无上下文记录';
+
+                    const overlay = document.createElement('div');
+                    overlay.className = 'dialog-overlay';
+                    const dialog = document.createElement('div');
+                    dialog.className = 'dialog';
+                    dialog.innerHTML = `
+                        <h3>LLM 上下文日志（最近20条）</h3>
+                        <pre style="max-height:50vh; overflow:auto; white-space:pre-wrap;">${formatted.replace(/[&<>"]/g, s => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[s]))}</pre>
+                        <div style="text-align:right; margin-top:12px;">
+                            <button class="debug-btn" id="close-context-dialog"><i class="material-icons">close</i>关闭</button>
+                        </div>`;
+                    overlay.appendChild(dialog);
+                    document.body.appendChild(overlay);
+                    const closeBtn = dialog.querySelector('#close-context-dialog');
+                    closeBtn?.addEventListener('click', () => document.body.removeChild(overlay));
+                    overlay.addEventListener('click', (e) => { if (e.target === overlay) document.body.removeChild(overlay); });
+                }
             } else {
                 this.addMessage('❌ 加载LLM上下文日志失败', 'error');
             }
