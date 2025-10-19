@@ -102,6 +102,9 @@ class LLMConfig:
     context_max_entries: int = 12              # 注入的上下文最大条目数
     context_include_metadata: bool = False     # 是否在上下文块中包含元数据
 
+    # ---- LLM 上下文持久化控制 ----
+    save_context_entries: int = 20             # 存档中保存的上下文条目数上限
+
     # 动态填充的特定于提供商的URL
     gemini_endpoint: str = ""
     gemini_api_version: str = ""
@@ -446,6 +449,15 @@ class Config:
                 self.llm.context_cleanup_threshold = float(cleanup_threshold)
             except ValueError:
                 pass
+
+        #
+        #
+        if save_ctx_entries := os.getenv("LLM_SAVE_CONTEXT_ENTRIES"):
+            try:
+                self.llm.save_context_entries = int(save_ctx_entries)
+            except ValueError:
+                pass
+
 
         # LLM 上下文记录开关（环境变量覆盖）
         if record_combat := os.getenv("LLM_RECORD_COMBAT_TO_CONTEXT"):

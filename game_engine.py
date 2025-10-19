@@ -1759,6 +1759,16 @@ class GameEngine:
                 async with game_state_lock_manager.lock_game_state(user_id, game_state.id, "auto_save"):
                     # 转换为字典格式（在锁内进行，确保数据一致性）
                     game_data = game_state.to_dict()
+                    # 保存最近N条LLM上下文到存档
+                    try:
+                        from llm_context_manager import llm_context_manager
+                        game_data["llm_context_logs"] = [
+                            e.to_dict() for e in llm_context_manager.get_recent_context(
+                                max_entries=getattr(config.llm, "save_context_entries", 20)
+                            )
+                        ]
+                    except Exception as _e:
+                        logger.warning(f"[auto_save] Failed to attach LLM context logs: {_e}")
 
                 # 使用统一的IO线程池，保存到用户目录（在锁外进行，避免阻塞）
                 await loop.run_in_executor(

@@ -249,6 +249,14 @@ async def load_game(save_id: str, request: Request, response: Response):
 
         # 使用data_manager重建GameState对象
         game_state = data_manager._dict_to_game_state(save_data)
+        # 恢复LLM上下文（兼容旧存档无该字段的情况）
+        try:
+            from llm_context_manager import llm_context_manager
+            logs = save_data.get("llm_context_logs", [])
+            llm_context_manager.restore_context(logs, append=False, max_entries=getattr(config.llm, "save_context_entries", 20))
+        except Exception as _e:
+            logger.warning(f"Failed to restore LLM context on load: {_e}")
+
 
         # 添加到活跃游戏列表（使用 (user_id, game_id) 作为键）
         game_key = (user_id, game_state.id)
@@ -287,6 +295,7 @@ async def get_game_state(game_id: str, request: Request, response: Response):
 
     # 如果游戏不在内存中，尝试从磁盘加载
     if game_key not in game_engine.active_games:
+
         logger.info(f"Game {game_id} not in memory for user {user_id}, attempting to load from disk...")
 
         # 尝试从用户存档加载
@@ -295,6 +304,14 @@ async def get_game_state(game_id: str, request: Request, response: Response):
         if save_data:
             # 重建游戏状态并加载到内存
             game_state = data_manager._dict_to_game_state(save_data)
+            # 恢复LLM上下文（在懒加载路径）
+            try:
+                from llm_context_manager import llm_context_manager
+                logs = save_data.get("llm_context_logs", [])
+                llm_context_manager.restore_context(logs, append=False, max_entries=getattr(config.llm, "save_context_entries", 20))
+            except Exception as _e:
+                logger.warning(f"[lazy load] Failed to restore LLM context: {_e}")
+
             game_engine.active_games[game_key] = game_state
             game_engine._start_auto_save(user_id, game_state.id)
             logger.info(f"Game {game_id} loaded from disk for user {user_id}")
@@ -954,6 +971,16 @@ async def save_game(game_id: str, request: Request, response: Response):
 
             # 使用用户会话管理器保存游戏
             game_data = game_state.to_dict()
+            # 保存最近N条LLM上下文到存档
+            try:
+                from llm_context_manager import llm_context_manager
+                game_data["llm_context_logs"] = [
+                    e.to_dict() for e in llm_context_manager.get_recent_context(
+                        max_entries=getattr(config.llm, "save_context_entries", 20)
+                    )
+                ]
+            except Exception as _e:
+                logger.warning(f"Failed to attach LLM context logs to save: {_e}")
 
         # 在锁外执行文件IO操作
         success = user_session_manager.save_game_for_user(user_id, game_data)

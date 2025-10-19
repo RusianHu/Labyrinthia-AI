@@ -37,19 +37,19 @@ class ContextEntry:
     timestamp: datetime = field(default_factory=datetime.now)
     metadata: Dict[str, Any] = field(default_factory=dict)
     token_estimate: int = 0
-    
+
     def __post_init__(self):
         """自动估算token数量"""
         if self.token_estimate == 0:
             self.token_estimate = self._estimate_tokens()
-    
+
     def _estimate_tokens(self) -> int:
         """估算token数量（中文约2.5字符=1token）"""
         total_chars = len(self.content)
         # 添加metadata的字符数
         total_chars += len(str(self.metadata))
         return int(total_chars / 2.5)
-    
+
     def to_dict(self) -> Dict[str, Any]:
         """转换为字典"""
         return {
@@ -64,14 +64,14 @@ class ContextEntry:
 class LLMContextManager:
     """
     统一的 LLM 上下文日志管理器
-    
+
     功能：
     1. 集中管理所有 LLM 交互的上下文
     2. 智能清理和长度控制
     3. 可配置的上下文策略
     4. 调试和监控支持
     """
-    
+
     def __init__(self):
         # 主上下文存储
         self.context_entries: List[ContextEntry] = []
@@ -93,7 +93,7 @@ class LLMContextManager:
 
         logger.info(f"LLMContextManager initialized with max_tokens={self.max_context_tokens}, "
                    f"min_entries={self.min_context_entries}, threshold={self.cleanup_threshold}")
-    
+
     def add_entry(
         self,
         entry_type: ContextEntryType,
@@ -102,12 +102,12 @@ class LLMContextManager:
     ) -> ContextEntry:
         """
         添加上下文条目
-        
+
         Args:
             entry_type: 条目类型
             content: 内容文本
             metadata: 元数据
-            
+
         Returns:
             创建的上下文条目
         """
@@ -116,37 +116,37 @@ class LLMContextManager:
             content=content,
             metadata=metadata or {},
         )
-        
+
         # 添加到主列表
         self.context_entries.append(entry)
-        
+
         # 添加到分类列表
         self.entries_by_type[entry_type].append(entry)
-        
+
         # 更新统计
         self.total_entries_added += 1
         self.current_token_count += entry.token_estimate
-        
+
         # 检查是否需要清理
         if self._should_cleanup():
             self._cleanup_context()
-        
+
         logger.debug(f"Added context entry: {entry_type.value}, tokens={entry.token_estimate}")
-        
+
         return entry
-    
+
     def add_movement(self, position: Tuple[int, int], events: List[str]) -> ContextEntry:
         """添加移动上下文"""
         content = f"移动到位置 ({position[0]}, {position[1]})"
         if events:
             content += f": {', '.join(events)}"
-        
+
         return self.add_entry(
             ContextEntryType.MOVEMENT,
             content,
             {"position": position, "events": events}
         )
-    
+
     def add_combat(
         self,
         is_attack: bool,
@@ -158,7 +158,7 @@ class LLMContextManager:
         """添加战斗上下文"""
         entry_type = ContextEntryType.COMBAT_ATTACK if is_attack else ContextEntryType.COMBAT_DEFENSE
         content = f"{attacker} 攻击 {target}，造成 {damage} 点伤害。{result}"
-        
+
         return self.add_entry(
             entry_type,
             content,
@@ -169,7 +169,7 @@ class LLMContextManager:
                 "result": result
             }
         )
-    
+
     def add_event(self, event_type: str, description: str, data: Optional[Dict] = None) -> ContextEntry:
         """添加事件上下文"""
         return self.add_entry(
@@ -177,7 +177,7 @@ class LLMContextManager:
             description,
             {"event_type": event_type, "data": data or {}}
         )
-    
+
     def add_choice(
         self,
         choice_type: str,
@@ -186,13 +186,13 @@ class LLMContextManager:
     ) -> ContextEntry:
         """添加选择事件上下文"""
         content = f"选择: {choice_text} -> {result}"
-        
+
         return self.add_entry(
             ContextEntryType.CHOICE_EVENT,
             content,
             {"choice_type": choice_type, "choice_text": choice_text, "result": result}
         )
-    
+
     def add_narrative(self, narrative: str, context_type: str = "general") -> ContextEntry:
         """添加叙述文本"""
         return self.add_entry(
@@ -200,7 +200,7 @@ class LLMContextManager:
             narrative,
             {"context_type": context_type}
         )
-    
+
     def get_recent_context(
         self,
         max_entries: Optional[int] = None,
@@ -209,12 +209,12 @@ class LLMContextManager:
     ) -> List[ContextEntry]:
         """
         获取最近的上下文
-        
+
         Args:
             max_entries: 最大条目数
             max_tokens: 最大token数
             entry_types: 筛选的条目类型
-            
+
         Returns:
             上下文条目列表
         """
@@ -223,14 +223,14 @@ class LLMContextManager:
             entries = [e for e in self.context_entries if e.entry_type in entry_types]
         else:
             entries = self.context_entries.copy()
-        
+
         # 按时间倒序
         entries.reverse()
-        
+
         # 限制数量
         if max_entries:
             entries = entries[:max_entries]
-        
+
         # 限制token数
         if max_tokens:
             selected = []
@@ -242,12 +242,12 @@ class LLMContextManager:
                 else:
                     break
             entries = selected
-        
+
         # 恢复时间顺序
         entries.reverse()
-        
+
         return entries
-    
+
     def build_context_string(
         self,
         max_entries: Optional[int] = None,
@@ -257,62 +257,62 @@ class LLMContextManager:
     ) -> str:
         """
         构建上下文字符串（用于传递给LLM）
-        
+
         Args:
             max_entries: 最大条目数
             max_tokens: 最大token数
             entry_types: 筛选的条目类型
             include_metadata: 是否包含元数据
-            
+
         Returns:
             格式化的上下文字符串
         """
         entries = self.get_recent_context(max_entries, max_tokens, entry_types)
-        
+
         if not entries:
             return ""
-        
+
         lines = ["=== 最近的游戏上下文 ==="]
         for entry in entries:
             timestamp_str = entry.timestamp.strftime("%H:%M:%S")
             line = f"[{timestamp_str}] [{entry.entry_type.value}] {entry.content}"
-            
+
             if include_metadata and entry.metadata:
                 line += f" (元数据: {entry.metadata})"
-            
+
             lines.append(line)
-        
+
         lines.append("=" * 30)
-        
+
         return "\n".join(lines)
-    
+
     def _should_cleanup(self) -> bool:
         """检查是否应该清理上下文"""
         threshold_tokens = int(self.max_context_tokens * self.cleanup_threshold)
         return self.current_token_count > threshold_tokens
-    
+
     def _cleanup_context(self):
         """清理上下文（保留最近的重要条目）"""
         if len(self.context_entries) <= self.min_context_entries:
             return
-        
+
         target_tokens = int(self.max_context_tokens * 0.6)  # 清理到60%
-        
+
         # 从最旧的条目开始删除
         while self.current_token_count > target_tokens and len(self.context_entries) > self.min_context_entries:
             removed_entry = self.context_entries.pop(0)
-            
+
             # 从分类列表中删除
             if removed_entry in self.entries_by_type[removed_entry.entry_type]:
                 self.entries_by_type[removed_entry.entry_type].remove(removed_entry)
-            
+
             # 更新统计
             self.current_token_count -= removed_entry.token_estimate
             self.total_entries_cleaned += 1
-        
+
         logger.info(f"Context cleaned: removed {self.total_entries_cleaned} entries, "
                    f"current tokens={self.current_token_count}")
-    
+
     def get_statistics(self) -> Dict[str, Any]:
         """获取统计信息"""
         return {
@@ -327,7 +327,7 @@ class LLMContextManager:
                 for entry_type, entries in self.entries_by_type.items()
             }
         }
-    
+
     def clear_all(self):
         """清空所有上下文"""
         self.context_entries.clear()
@@ -335,6 +335,75 @@ class LLMContextManager:
             entry_list.clear()
         self.current_token_count = 0
         logger.info("All context cleared")
+
+    def serialize_recent_context(self, max_entries: Optional[int] = None) -> List[Dict[str, Any]]:
+        """序列化最近的上下文条目为字典列表"""
+        entries = self.get_recent_context(max_entries=max_entries)
+        return [e.to_dict() for e in entries]
+
+    def restore_context(
+        self,
+        entries: List[Dict[str, Any]],
+        append: bool = False,
+        max_entries: Optional[int] = None
+    ) -> int:
+        """从字典列表恢复上下文
+
+        Args:
+            entries: 上下文字典项列表
+            append: 是否追加（False时将清空现有上下文）
+            max_entries: 最大恢复条目数（None表示不限制）
+        Returns:
+            实际恢复的条目数
+        """
+        try:
+            if not append:
+                self.clear_all()
+
+            items = entries[-max_entries:] if (max_entries and len(entries) > max_entries) else entries
+
+            restored = 0
+            for d in items:
+                try:
+                    et_str = d.get("entry_type", ContextEntryType.SYSTEM.value)
+                    try:
+                        et = ContextEntryType(et_str)
+                    except Exception:
+                        et = ContextEntryType.SYSTEM
+
+                    ts = None
+                    ts_str = d.get("timestamp")
+                    if ts_str:
+                        try:
+                            ts = datetime.fromisoformat(ts_str)
+                        except Exception:
+                            ts = datetime.now()
+
+                    token_est = d.get("token_estimate", 0)
+                    if not isinstance(token_est, int):
+                        token_est = 0
+
+                    entry = ContextEntry(
+                        entry_type=et,
+                        content=str(d.get("content", "")),
+                        timestamp=ts or datetime.now(),
+                        metadata=d.get("metadata", {}),
+                        token_estimate=token_est,
+                    )
+
+                    # 直接放入容器并更新统计
+                    self.context_entries.append(entry)
+                    self.entries_by_type[et].append(entry)
+                    self.current_token_count += entry.token_estimate
+                    restored += 1
+                except Exception as inner_ex:
+                    logger.warning(f"Skip invalid context entry during restore: {inner_ex}")
+
+            logger.info(f"Restored {restored} LLM context entries (append={append})")
+            return restored
+        except Exception as e:
+            logger.warning(f"Failed to restore LLM context: {e}")
+            return 0
 
 
 # 全局单例
