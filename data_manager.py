@@ -301,6 +301,10 @@ class DataManager:
         # 物品相关字段
         tile.items_collected = data.get("items_collected", [])
 
+        # 【P0修复】陷阱专属字段（确保状态在序列化/反序列化中不丢失）
+        tile.trap_detected = data.get("trap_detected", False)
+        tile.trap_disarmed = data.get("trap_disarmed", False)
+
         # 地形类型
         if terrain := data.get("terrain"):
             try:

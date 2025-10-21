@@ -31,6 +31,8 @@ from user_session_manager import user_session_manager
 from async_task_manager import async_task_manager
 from input_validator import input_validator
 from game_state_lock_manager import game_state_lock_manager
+from entity_manager import entity_manager
+from trap_manager import initialize_trap_manager
 
 
 # 配置日志
@@ -84,6 +86,10 @@ async def lifespan(app: FastAPI):
         # 初始化异步任务管理器
         async_task_manager.initialize()
         logger.info("AsyncTaskManager initialized")
+
+        # 初始化陷阱管理器
+        initialize_trap_manager(entity_manager)
+        logger.info("TrapManager initialized")
 
         # 启动游戏会话清理任务
         game_engine._start_cleanup_task()
@@ -249,6 +255,27 @@ async def load_game(save_id: str, request: Request, response: Response):
 
         # 使用data_manager重建GameState对象
         game_state = data_manager._dict_to_game_state(save_data)
+
+        # 【修复】清除所有瓦片的character_id（防止存档中有错误数据）
+        for tile in game_state.current_map.tiles.values():
+            tile.character_id = None
+        logger.info(f"[/api/load] Cleared all character_id from {len(game_state.current_map.tiles)} tiles")
+
+        # 【修复】重新设置玩家位置的character_id
+        player_tile = game_state.current_map.get_tile(*game_state.player.position)
+        if player_tile:
+            player_tile.character_id = game_state.player.id
+            player_tile.is_explored = True
+            player_tile.is_visible = True
+            logger.info(f"[/api/load] Player position restored: {game_state.player.position}")
+
+        # 【修复】重新设置怪物位置的character_id
+        for monster in game_state.monsters:
+            monster_tile = game_state.current_map.get_tile(*monster.position)
+            if monster_tile:
+                monster_tile.character_id = monster.id
+                logger.info(f"[/api/load] Monster {monster.name} position restored: {monster.position}")
+
         # 恢复LLM上下文（兼容旧存档无该字段的情况）
         try:
             from llm_context_manager import llm_context_manager
@@ -304,6 +331,27 @@ async def get_game_state(game_id: str, request: Request, response: Response):
         if save_data:
             # 重建游戏状态并加载到内存
             game_state = data_manager._dict_to_game_state(save_data)
+
+            # 【修复】清除所有瓦片的character_id（防止存档中有错误数据）
+            for tile in game_state.current_map.tiles.values():
+                tile.character_id = None
+            logger.info(f"[lazy load] Cleared all character_id from {len(game_state.current_map.tiles)} tiles")
+
+            # 【修复】重新设置玩家位置的character_id
+            player_tile = game_state.current_map.get_tile(*game_state.player.position)
+            if player_tile:
+                player_tile.character_id = game_state.player.id
+                player_tile.is_explored = True
+                player_tile.is_visible = True
+                logger.info(f"[lazy load] Player position restored: {game_state.player.position}")
+
+            # 【修复】重新设置怪物位置的character_id
+            for monster in game_state.monsters:
+                monster_tile = game_state.current_map.get_tile(*monster.position)
+                if monster_tile:
+                    monster_tile.character_id = monster.id
+                    logger.info(f"[lazy load] Monster {monster.name} position restored: {monster.position}")
+
             # 恢复LLM上下文（在懒加载路径）
             try:
                 from llm_context_manager import llm_context_manager
@@ -544,6 +592,153 @@ async def handle_llm_event(request: LLMEventRequest, http_request: Request, resp
     except Exception as e:
         logger.error(f"Failed to process LLM event: {e}")
         raise HTTPException(status_code=500, detail=f"处理LLM事件失败: {str(e)}")
+
+
+@app.post("/api/trap-choice/register")
+async def register_trap_choice_context(request: Request, response: Response):
+    """注册陷阱选择上下文
+
+    前端发现陷阱后调用，注册选择上下文到EventChoiceSystem
+    """
+    try:
+        data = await request.json()
+        game_id = data.get("game_id")
+        context_id = data.get("context_id")
+        trap_name = data.get("trap_name", "未知陷阱")
+        trap_description = data.get("trap_description", "你发现了一个陷阱！")
+        trap_data = data.get("trap_data", {})
+        position = data.get("position", [0, 0])
+        choices_data = data.get("choices", [])
+
+        # 获取用户ID
+        user_id = user_session_manager.get_or_create_user_id(request, response)
+        game_key = (user_id, game_id)
+
+        # 获取游戏状态
+        game_state = game_engine.active_games.get(game_key)
+        if not game_state:
+            raise HTTPException(status_code=404, detail="游戏未找到")
+
+        # 创建EventChoiceContext
+        from data_models import EventChoiceContext, EventChoice
+
+        context = EventChoiceContext(
+            id=context_id,
+            event_type="trap_event",
+            title=f"⚠️ 发现陷阱：{trap_name}",
+            description=trap_description,
+            context_data={
+                "trap_data": trap_data,
+                "position": position
+            }
+        )
+
+        # 创建选项
+        for choice_data in choices_data:
+            choice = EventChoice(
+                text=choice_data.get("text", ""),
+                description=choice_data.get("description", ""),
+                consequences=choice_data.get("consequences", ""),
+                requirements=choice_data.get("requirements", ""),
+                is_available=True
+            )
+            # 设置choice_id为前端传来的id
+            choice.id = choice_data.get("id", choice.id)
+            context.choices.append(choice)
+
+        # 注册到EventChoiceSystem
+        event_choice_system.active_contexts[context_id] = context
+        game_state.pending_choice_context = context
+
+        logger.info(f"Registered trap choice context: {context_id} for game {game_id}")
+
+        return {
+            "success": True,
+            "context_id": context_id,
+            "message": "陷阱选择上下文已注册"
+        }
+
+    except Exception as e:
+        logger.error(f"Failed to register trap choice context: {e}")
+        raise HTTPException(status_code=500, detail=f"注册陷阱选择上下文失败: {str(e)}")
+
+
+@app.post("/api/check-trap")
+async def check_trap_detection(request: Request, response: Response):
+    """检查陷阱侦测（被动感知）
+
+    前端玩家移动到瓦片时调用，检查是否被动侦测到陷阱
+    """
+    try:
+        data = await request.json()
+        game_id = data.get("game_id")
+        position = data.get("position", [0, 0])
+
+        # 获取用户ID
+        user_id = user_session_manager.get_or_create_user_id(request, response)
+        game_key = (user_id, game_id)
+
+        # 获取游戏状态
+        game_state = game_engine.active_games.get(game_key)
+        if not game_state:
+            raise HTTPException(status_code=404, detail="游戏未找到")
+
+        # 获取目标瓦片
+        tile = game_state.current_map.get_tile(position[0], position[1])
+        if not tile or not tile.is_trap():
+            return {
+                "trap_detected": False,
+                "message": "没有陷阱"
+            }
+
+        # 如果陷阱已经被发现或已触发，直接返回
+        if tile.trap_detected or tile.event_triggered:
+            return {
+                "trap_detected": tile.trap_detected,
+                "already_known": True,
+                "message": "陷阱已被发现" if tile.trap_detected else "陷阱已触发"
+            }
+
+        # 获取陷阱数据
+        trap_data = tile.get_trap_data()
+        detect_dc = trap_data.get("detect_dc", 15)
+
+        # 进行被动侦测
+        from trap_manager import get_trap_manager
+        trap_manager = get_trap_manager()
+
+        detected = trap_manager.passive_detect_trap(game_state.player, detect_dc)
+
+        if detected:
+            # 标记陷阱已被发现
+            tile.trap_detected = True
+            if tile.has_event and tile.event_type == 'trap':
+                tile.event_data["is_detected"] = True
+
+            logger.info(f"Trap detected at ({position[0]}, {position[1]}) by passive perception")
+
+            return {
+                "trap_detected": True,
+                "trap_data": trap_data,
+                "position": position,
+                "passive_perception": game_state.player.get_passive_perception(),
+                "detect_dc": detect_dc,
+                "message": f"你的敏锐感知发现了陷阱！（被动感知 {game_state.player.get_passive_perception()} vs DC {detect_dc}）"
+            }
+        else:
+            logger.info(f"Trap not detected at ({position[0]}, {position[1]}) - PP too low")
+
+            return {
+                "trap_detected": False,
+                "will_trigger": True,
+                "passive_perception": game_state.player.get_passive_perception(),
+                "detect_dc": detect_dc,
+                "message": "未能发现陷阱"
+            }
+
+    except Exception as e:
+        logger.error(f"Failed to check trap detection: {e}")
+        raise HTTPException(status_code=500, detail=f"检查陷阱侦测失败: {str(e)}")
 
 
 @app.post("/api/sync-state")

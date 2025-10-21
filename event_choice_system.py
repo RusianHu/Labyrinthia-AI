@@ -18,6 +18,7 @@ from config import config
 from async_task_manager import async_task_manager, TaskType
 from game_state_modifier import game_state_modifier
 from llm_context_manager import llm_context_manager, ContextEntryType
+from trap_schema import trap_validator
 
 
 logger = logging.getLogger(__name__)
@@ -823,12 +824,162 @@ class EventChoiceSystem:
         )
 
     async def _handle_trap_choice(self, game_state: GameState, context: EventChoiceContext, choice: EventChoice) -> ChoiceResult:
-        """处理陷阱选择"""
-        return ChoiceResult(
-            success=True,
-            message=f"你选择了：{choice.text}",
-            events=[choice.consequences or "你的选择决定了陷阱的结果..."]
-        )
+        """处理陷阱选择
+
+        支持的选项：
+        - disarm: 解除陷阱
+        - avoid: 规避陷阱
+        - trigger: 故意触发陷阱
+        - retreat: 后退
+        """
+        from trap_manager import get_trap_manager
+
+        # 【P0修复】获取并验证陷阱数据
+        raw_trap_data = context.event_data.get('trap_data', {})
+        trap_data = trap_validator.validate_and_normalize(raw_trap_data)
+
+        position = context.event_data.get('position', [0, 0])
+        tile = game_state.current_map.get_tile(position[0], position[1])
+
+        if not tile:
+            return ChoiceResult(
+                success=False,
+                message="无效的位置",
+                events=["陷阱位置无效"]
+            )
+
+        trap_manager = get_trap_manager()
+
+        # 处理不同的选择
+        if choice.choice_id == "disarm":
+            # 尝试解除陷阱
+            disarm_dc = trap_data.get('disarm_dc', 18)
+            result = trap_manager.attempt_disarm(game_state.player, disarm_dc)
+
+            if result['success']:
+                # 解除成功
+                tile.trap_disarmed = True
+                if tile.has_event and tile.event_type == 'trap':
+                    tile.event_data['is_disarmed'] = True
+
+                # 陷阱消失，变为普通地板
+                from data_models import TerrainType
+                if tile.terrain == TerrainType.TRAP:
+                    tile.terrain = TerrainType.FLOOR
+
+                message = f"✅ 你成功解除了陷阱！🎲 1d20={result['roll']} + 调整值{result['modifier']:+d} = {result['total']} vs DC {disarm_dc}"
+                events = ["陷阱已被安全解除"]
+
+                # 给予经验奖励
+                exp_reward = disarm_dc * 10
+                game_state.player.stats.experience += exp_reward
+                events.append(f"获得 {exp_reward} 点经验值")
+
+                return ChoiceResult(
+                    success=True,
+                    message=message,
+                    events=events,
+                    state_updates={
+                        "map_updates": {
+                            f"{position[0]},{position[1]}": {
+                                "terrain": "floor",
+                                "trap_disarmed": True,
+                                "event_data": tile.event_data if tile.has_event else {}
+                            }
+                        },
+                        "player_updates": {
+                            "experience": game_state.player.stats.experience
+                        }
+                    }
+                )
+            else:
+                # 解除失败，触发陷阱
+                trigger_result = trap_manager.trigger_trap(game_state, tile)
+
+                message = f"❌ 解除失败！陷阱被触发了！🎲 1d20={result['roll']} + 调整值{result['modifier']:+d} = {result['total']} vs DC {disarm_dc}"
+                events = [trigger_result['description']]
+
+                return ChoiceResult(
+                    success=False,
+                    message=message,
+                    events=events,
+                    state_updates={
+                        "player_updates": {
+                            "hp": game_state.player.stats.hp
+                        },
+                        "game_over": trigger_result.get('player_died', False)
+                    }
+                )
+
+        elif choice.choice_id == "avoid":
+            # 尝试规避陷阱
+            save_dc = trap_data.get('save_dc', 14)
+            result = trap_manager.attempt_avoid(game_state.player, save_dc)
+
+            if result['success']:
+                # 规避成功，安全通过
+                message = f"✅ 你灵巧地避开了陷阱！🎲 1d20={result['roll']} + DEX{result['modifier']:+d} = {result['total']} vs DC {save_dc}"
+                events = ["成功规避陷阱"]
+
+                return ChoiceResult(
+                    success=True,
+                    message=message,
+                    events=events
+                )
+            else:
+                # 规避失败，触发陷阱（可能减半伤害）
+                trigger_result = trap_manager.trigger_trap(game_state, tile, save_result=result)
+
+                message = f"❌ 规避失败！陷阱被触发了！🎲 1d20={result['roll']} + DEX{result['modifier']:+d} = {result['total']} vs DC {save_dc}"
+                events = [trigger_result['description']]
+
+                return ChoiceResult(
+                    success=False,
+                    message=message,
+                    events=events,
+                    state_updates={
+                        "player_updates": {
+                            "hp": game_state.player.stats.hp
+                        },
+                        "game_over": trigger_result.get('player_died', False)
+                    }
+                )
+
+        elif choice.choice_id == "trigger":
+            # 故意触发陷阱
+            trigger_result = trap_manager.trigger_trap(game_state, tile)
+
+            message = "你故意触发了陷阱..."
+            events = [trigger_result['description']]
+
+            return ChoiceResult(
+                success=True,
+                message=message,
+                events=events,
+                state_updates={
+                    "player_updates": {
+                        "hp": game_state.player.stats.hp
+                    },
+                    "game_over": trigger_result.get('player_died', False)
+                }
+            )
+
+        elif choice.choice_id == "retreat":
+            # 后退，返回上一个位置
+            # 这个逻辑由前端处理
+            return ChoiceResult(
+                success=True,
+                message="你小心地后退了",
+                events=["返回到安全位置"]
+            )
+
+        else:
+            # 未知选项
+            return ChoiceResult(
+                success=False,
+                message=f"未知的选项：{choice.choice_id}",
+                events=["无效的选择"]
+            )
 
     async def _handle_map_transition_choice(self, game_state: GameState, context: EventChoiceContext, choice: EventChoice) -> ChoiceResult:
         """处理地图切换选择"""

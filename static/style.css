@@ -262,10 +262,60 @@ body {
     background-size: 80%;
     position: relative;
 }
+/* 陷阱样式 - 根据状态显示不同效果 */
 .terrain-trap {
-    background: #e74c3c url('/static/assets/terrain/trap_icon.png') center center no-repeat;
-    background-size: 80%;
+    background: #e74c3c url('/static/assets/terrain/trap_icon.png') center center no-repeat !important;
+    background-size: 80% !important;
     position: relative;
+}
+
+/* 【P0修复】未发现的陷阱（完全隐藏，透明显示地板图层） */
+.terrain-trap.trap-hidden {
+    background: transparent !important;
+    background-image: none !important;
+    animation: none !important;
+    box-shadow: none !important;
+    opacity: 1 !important;
+    /* 确保地板图层可见 */
+    z-index: auto;
+}
+
+/* 已发现的陷阱（高亮警告，脉冲动画） */
+.terrain-trap.trap-detected {
+    background: #e74c3c url('/static/assets/terrain/trap_icon.png') center center no-repeat !important;
+    background-size: 80% !important;
+    animation: trap-pulse 1.5s infinite;
+    box-shadow: 0 0 15px rgba(231, 76, 60, 0.8);
+}
+
+/* 已触发的陷阱（显示图标但不脉冲，表示已经触发过） */
+.terrain-trap.trap-triggered {
+    background: #c0392b url('/static/assets/terrain/trap_icon.png') center center no-repeat !important;
+    background-size: 80% !important;
+    animation: none;
+    box-shadow: none;
+    opacity: 0.7;
+}
+
+/* 已解除的陷阱（灰色，半透明） */
+.terrain-trap.trap-disarmed {
+    background: #95a5a6 !important;
+    background-image: none !important;
+    opacity: 0.5;
+    animation: none;
+    box-shadow: none;
+}
+
+/* 陷阱脉冲动画 */
+@keyframes trap-pulse {
+    0%, 100% {
+        box-shadow: 0 0 10px rgba(231, 76, 60, 0.6);
+        transform: scale(1);
+    }
+    50% {
+        box-shadow: 0 0 20px rgba(231, 76, 60, 1);
+        transform: scale(1.05);
+    }
 }
 .terrain-treasure {
     background: #f1c40f url('/static/assets/terrain/treasure_chest.png') center center no-repeat;

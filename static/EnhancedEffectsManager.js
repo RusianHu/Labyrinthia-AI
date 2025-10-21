@@ -249,6 +249,144 @@ class EnhancedEffectsManager {
     }
 
     /**
+     * 陷阱发现特效
+     * @param {number} x - 瓦片X坐标
+     * @param {number} y - 瓦片Y坐标
+     */
+    playTrapDetectedEffect(x, y) {
+        console.log('[EnhancedEffectsManager] playTrapDetectedEffect called:', { x, y });
+
+        if (typeof anime === 'undefined') {
+            console.warn('[EnhancedEffectsManager] anime.js not available');
+            return;
+        }
+
+        // 获取瓦片元素
+        const tileElement = document.querySelector(`.map-tile[data-x="${x}"][data-y="${y}"]`);
+        if (!tileElement) {
+            console.warn('[EnhancedEffectsManager] Tile element not found:', { x, y });
+            return;
+        }
+
+        const tileRect = tileElement.getBoundingClientRect();
+
+        // 创建警告图标
+        const warningIcon = document.createElement('div');
+        warningIcon.className = 'trap-warning-icon';
+        warningIcon.innerHTML = '⚠️';
+        warningIcon.style.cssText = `
+            position: fixed;
+            left: ${tileRect.left + tileRect.width / 2}px;
+            top: ${tileRect.top + tileRect.height / 2}px;
+            font-size: 32px;
+            pointer-events: none;
+            z-index: 9999;
+            transform: translate(-50%, -50%);
+        `;
+        document.body.appendChild(warningIcon);
+
+        // 创建警告波纹
+        const ripples = [];
+        for (let i = 0; i < 3; i++) {
+            const ripple = document.createElement('div');
+            ripple.style.cssText = `
+                position: fixed;
+                left: ${tileRect.left + tileRect.width / 2}px;
+                top: ${tileRect.top + tileRect.height / 2}px;
+                width: 20px;
+                height: 20px;
+                border: 2px solid #e74c3c;
+                border-radius: 50%;
+                pointer-events: none;
+                z-index: 9998;
+                transform: translate(-50%, -50%);
+                opacity: 0.8;
+            `;
+            document.body.appendChild(ripple);
+            ripples.push(ripple);
+        }
+
+        // 创建动画时间线
+        const timeline = anime.timeline({
+            complete: () => {
+                // 清理元素
+                if (warningIcon.parentNode) {
+                    warningIcon.parentNode.removeChild(warningIcon);
+                }
+                ripples.forEach(ripple => {
+                    if (ripple.parentNode) {
+                        ripple.parentNode.removeChild(ripple);
+                    }
+                });
+            }
+        });
+
+        // 警告图标动画
+        timeline.add({
+            targets: warningIcon,
+            scale: [0, 1.5, 1],
+            rotate: [0, 10, -10, 0],
+            duration: 600,
+            easing: 'easeOutElastic(1, .6)'
+        });
+
+        // 波纹扩散动画
+        timeline.add({
+            targets: ripples,
+            width: [20, 100],
+            height: [20, 100],
+            opacity: [0.8, 0],
+            duration: 1000,
+            delay: anime.stagger(200),
+            easing: 'easeOutQuad'
+        }, '-=400');
+
+        // 警告图标淡出
+        timeline.add({
+            targets: warningIcon,
+            opacity: [1, 0],
+            translateY: -30,
+            duration: 500,
+            easing: 'easeInQuad'
+        }, '-=300');
+
+        // 播放警告音效
+        this.playTrapDetectedSound();
+
+        // 存储动画引用
+        this.activeAnimations.set(`trap-detected-${x}-${y}`, timeline);
+    }
+
+    /**
+     * 播放陷阱发现音效
+     */
+    playTrapDetectedSound() {
+        try {
+            if (typeof AudioContext !== 'undefined') {
+                const audioContext = new AudioContext();
+                const oscillator = audioContext.createOscillator();
+                const gainNode = audioContext.createGain();
+
+                oscillator.connect(gainNode);
+                gainNode.connect(audioContext.destination);
+
+                // 警告音：低音到高音
+                oscillator.frequency.setValueAtTime(200, audioContext.currentTime);
+                oscillator.frequency.setValueAtTime(400, audioContext.currentTime + 0.1);
+                oscillator.frequency.setValueAtTime(600, audioContext.currentTime + 0.2);
+
+                gainNode.gain.setValueAtTime(0.2, audioContext.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.3);
+
+                oscillator.start(audioContext.currentTime);
+                oscillator.stop(audioContext.currentTime + 0.3);
+            }
+        } catch (error) {
+            console.warn('[EnhancedEffectsManager] Failed to play trap detected sound:', error);
+        }
+    }
+
+    /**
      * 创建环境粒子系统
      * @param {HTMLElement} mapElement - 地图元素（map-grid），用于获取尺寸
      * @param {string} floorTheme - 地板主题

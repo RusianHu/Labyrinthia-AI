@@ -247,7 +247,52 @@ class Character:
     inventory: List[Item] = field(default_factory=list)
     spells: List[Spell] = field(default_factory=list)
     position: tuple = (0, 0)
-    
+    # DND技能系统
+    proficiency_bonus: int = 2  # 熟练加值（基于等级，2-6）
+    skill_proficiencies: List[str] = field(default_factory=list)  # 熟练技能列表（如["perception", "stealth"]）
+    tool_proficiencies: List[str] = field(default_factory=list)  # 熟练工具列表（如["thieves_tools"]）
+
+    def get_passive_perception(self) -> int:
+        """计算被动感知值 (Passive Perception)
+
+        公式: 10 + 感知调整值 + 熟练加值(如有)
+
+        Returns:
+            被动感知值（通常在8-20之间）
+        """
+        wis_modifier = self.abilities.get_modifier("wisdom")
+        proficiency = self.proficiency_bonus if "perception" in self.skill_proficiencies else 0
+        return 10 + wis_modifier + proficiency
+
+    def get_proficiency_bonus_by_level(self) -> int:
+        """根据等级计算熟练加值
+
+        DND 5E规则：
+        - 等级1-4: +2
+        - 等级5-8: +3
+        - 等级9-12: +4
+        - 等级13-16: +5
+        - 等级17-20: +6
+
+        Returns:
+            熟练加值
+        """
+        level = self.stats.level
+        if level <= 4:
+            return 2
+        elif level <= 8:
+            return 3
+        elif level <= 12:
+            return 4
+        elif level <= 16:
+            return 5
+        else:
+            return 6
+
+    def update_proficiency_bonus(self):
+        """根据当前等级更新熟练加值"""
+        self.proficiency_bonus = self.get_proficiency_bonus_by_level()
+
     def to_dict(self) -> Dict[str, Any]:
         return {
             "id": self.id,
@@ -259,7 +304,11 @@ class Character:
             "stats": self.stats.__dict__,
             "inventory": [item.to_dict() for item in self.inventory],
             "spells": [spell.to_dict() for spell in self.spells],
-            "position": self.position
+            "position": self.position,
+            "proficiency_bonus": self.proficiency_bonus,
+            "skill_proficiencies": self.skill_proficiencies,
+            "tool_proficiencies": self.tool_proficiencies,
+            "passive_perception": self.get_passive_perception()
         }
 
 
@@ -308,7 +357,41 @@ class MapTile:
     event_triggered: bool = False  # 事件是否已触发
     # 物品相关字段
     items_collected: List[str] = field(default_factory=list)  # 已收集的物品ID列表
-    
+    # 陷阱专属字段（用于地形型陷阱和事件型陷阱）
+    trap_detected: bool = False  # 陷阱是否已被发现
+    trap_disarmed: bool = False  # 陷阱是否已被解除
+
+    def is_trap(self) -> bool:
+        """判断此瓦片是否为陷阱
+
+        Returns:
+            True如果是地形型陷阱或事件型陷阱
+        """
+        return self.terrain == TerrainType.TRAP or \
+               (self.has_event and self.event_type == 'trap')
+
+    def get_trap_data(self) -> Dict[str, Any]:
+        """获取陷阱数据
+
+        Returns:
+            陷阱数据字典，如果不是陷阱则返回空字典
+        """
+        if not self.is_trap():
+            return {}
+
+        # 如果是事件型陷阱，返回event_data
+        if self.has_event and self.event_type == 'trap':
+            return self.event_data
+
+        # 如果是地形型陷阱，返回默认数据
+        return {
+            "trap_type": "damage",
+            "damage": 15,
+            "detect_dc": 15,
+            "disarm_dc": 18,
+            "save_dc": 14
+        }
+
     def to_dict(self) -> Dict[str, Any]:
         return {
             "x": self.x,
@@ -325,7 +408,9 @@ class MapTile:
             "event_data": self.event_data,
             "is_event_hidden": self.is_event_hidden,
             "event_triggered": self.event_triggered,
-            "items_collected": self.items_collected
+            "items_collected": self.items_collected,
+            "trap_detected": self.trap_detected,
+            "trap_disarmed": self.trap_disarmed
         }
 
 

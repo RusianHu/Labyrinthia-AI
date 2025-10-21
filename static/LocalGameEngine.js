@@ -266,7 +266,195 @@ class LocalGameEngine {
     }
 
     /**
+     * 检查陷阱侦测（被动感知）
+     */
+    async checkTrapDetection(tile, position) {
+        const gameState = this.getGameState();
+
+        // 如果陷阱已经被发现，直接显示选项框
+        if (tile.trap_detected) {
+            console.log('[LocalGameEngine] Trap already detected, showing choices');
+            await this.showTrapChoices(tile, position);
+            return;
+        }
+
+        // 如果陷阱已经触发，不再处理
+        if (tile.event_triggered) {
+            console.log('[LocalGameEngine] Trap already triggered');
+            return;
+        }
+
+        // 调用后端检查被动侦测
+        try {
+            const response = await fetch('/api/check-trap', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    game_id: gameState.id,
+                    position: [position.x, position.y]
+                })
+            });
+
+            const result = await response.json();
+
+            if (result.trap_detected) {
+                // 被动侦测成功！
+                console.log('[LocalGameEngine] Trap detected by passive perception');
+
+                // 更新瓦片状态
+                tile.trap_detected = true;
+                if (tile.has_event && tile.event_type === 'trap') {
+                    tile.event_data.is_detected = true;
+                }
+
+                // 显示发现陷阱的消息
+                this.addMessage(result.message, 'warning');
+
+                // 播放发现陷阱特效
+                this.showTrapDetectedEffect([position.x, position.y]);
+
+                // 显示选项框
+                await this.showTrapChoices(tile, position);
+            } else {
+                // 未能发现陷阱，直接触发
+                console.log('[LocalGameEngine] Trap not detected, triggering...');
+
+                // 【新增】显示判定失败信息（如果后端提供了数据）
+                if (result.passive_perception !== undefined && result.detect_dc !== undefined) {
+                    this.addMessage(
+                        `你踩到了什么东西... 🎲 被动感知 ${result.passive_perception} vs DC ${result.detect_dc} - 失败`,
+                        'warning'
+                    );
+                } else {
+                    this.addMessage('你踩到了什么东西...', 'warning');
+                }
+
+                await this.handleTrap(tile);
+            }
+        } catch (error) {
+            console.error('[LocalGameEngine] Failed to check trap detection:', error);
+            // 出错时直接触发陷阱
+            await this.handleTrap(tile);
+        }
+    }
+
+    /**
+     * 显示陷阱选项框
+     */
+    async showTrapChoices(tile, position) {
+        const gameState = this.getGameState();
+        const trapData = tile.event_data || {};
+        const player = gameState.player;
+
+        // 构建选项列表
+        const choices = [];
+
+        // 选项1：解除陷阱
+        const hasTools = player.tool_proficiencies && player.tool_proficiencies.includes('thieves_tools');
+        const disarmDC = trapData.disarm_dc || 18;
+        choices.push({
+            id: "disarm",
+            text: "🔧 解除陷阱",
+            description: `使用${hasTools ? '盗贼工具' : '徒手'}尝试解除陷阱`,
+            requirements: hasTools ? "✓ 有盗贼工具" : "✗ 无工具（劣势）",
+            consequences: `成功则陷阱消失并获得经验，失败则触发陷阱（DC ${disarmDC}）`
+        });
+
+        // 选项2：小心规避
+        const saveDC = trapData.save_dc || 14;
+        const dexMod = player.abilities?.dexterity ? Math.floor((player.abilities.dexterity - 10) / 2) : 0;
+        choices.push({
+            id: "avoid",
+            text: "🏃 小心规避",
+            description: `尝试避开陷阱触发机制`,
+            requirements: `敏捷调整值 ${dexMod >= 0 ? '+' : ''}${dexMod}`,
+            consequences: `成功则安全通过，失败则触发陷阱（敏捷豁免 DC ${saveDC}）`
+        });
+
+        // 选项3：故意触发
+        choices.push({
+            id: "trigger",
+            text: "💥 故意触发",
+            description: "从当前位置触发陷阱，清除威胁",
+            requirements: "无",
+            consequences: "陷阱将被触发"
+        });
+
+        // 选项4：后退
+        choices.push({
+            id: "retreat",
+            text: "↩️ 后退",
+            description: "返回上一个位置",
+            requirements: "无",
+            consequences: "陷阱仍然存在"
+        });
+
+        // 创建陷阱事件上下文
+        const trapName = trapData.trap_name || "未知陷阱";
+        const trapDesc = trapData.trap_description || "你发现了一个陷阱！";
+
+        const contextId = `trap_${Date.now()}`;
+
+        // 先调用后端注册context
+        try {
+            const response = await fetch('/api/trap-choice/register', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    game_id: gameState.id,
+                    context_id: contextId,
+                    trap_name: trapName,
+                    trap_description: trapDesc,
+                    trap_data: trapData,
+                    position: [position.x, position.y],
+                    choices: choices
+                })
+            });
+
+            const result = await response.json();
+
+            if (result.success) {
+                // 显示选项对话框
+                if (this.game && this.game.showEventChoiceDialog) {
+                    this.game.showEventChoiceDialog({
+                        success: true,
+                        context_id: contextId,
+                        title: `⚠️ 发现陷阱：${trapName}`,
+                        description: trapDesc,
+                        choices: choices
+                    });
+                } else {
+                    console.error('[LocalGameEngine] showEventChoiceDialog not available');
+                    this.addMessage('无法显示选项对话框', 'error');
+                }
+            } else {
+                console.error('[LocalGameEngine] Failed to register trap context:', result);
+                this.addMessage('无法注册陷阱事件', 'error');
+            }
+        } catch (error) {
+            console.error('[LocalGameEngine] Failed to register trap context:', error);
+            this.addMessage('陷阱事件注册失败', 'error');
+        }
+    }
+
+    /**
+     * 显示陷阱发现特效
+     */
+    showTrapDetectedEffect(position) {
+        // 调用游戏核心的特效管理器
+        if (this.game && this.game.enhancedEffects) {
+            this.game.enhancedEffects.playTrapDetectedEffect(position[0], position[1]);
+        }
+
+        // 更新UI以显示陷阱高亮
+        if (this.game && this.game.updateUI) {
+            this.game.updateUI();
+        }
+    }
+
+    /**
      * 处理陷阱（前端计算效果，后端生成描述）
+     * 注意：此方法现在仅用于未被发现的陷阱直接触发
      */
     async handleTrap(tile) {
         const gameState = this.getGameState();
@@ -274,6 +462,14 @@ class LocalGameEngine {
         const eventData = tile.event_data || {};
         const trapType = eventData.trap_type || 'damage';
         const damage = eventData.damage || 15;
+
+        // 【修复】触发陷阱后，陷阱位置暴露
+        tile.event_triggered = true;
+        tile.trap_detected = true;  // 触发后玩家知道这里有陷阱
+        if (tile.has_event && tile.event_type === 'trap') {
+            if (!tile.event_data) tile.event_data = {};
+            tile.event_data.is_detected = true;
+        }
 
         // 前端先计算陷阱效果
         let trapResult = {
@@ -539,11 +735,10 @@ class LocalGameEngine {
         }
 
         // 检查特殊地形（前端本地处理）
-        if (targetTile.terrain === 'trap') {
-            // 陷阱由前端本地处理
-            await this.handleTrap(targetTile);
-            // handleTrap内部调用triggerBackendEvent，已经更新了UI
-            // 不需要继续处理
+        if (targetTile.terrain === 'trap' || (targetTile.has_event && targetTile.event_type === 'trap')) {
+            // 检查陷阱侦测
+            await this.checkTrapDetection(targetTile, newPos);
+            // checkTrapDetection会处理后续逻辑（显示选项框或直接触发）
             return;
         } else if (targetTile.terrain === 'treasure') {
             // 宝藏需要LLM生成物品

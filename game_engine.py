@@ -223,6 +223,26 @@ class GameEngine:
         # 重建游戏状态
         game_state = data_manager._dict_to_game_state(save_data)
 
+        # 【修复】清除所有瓦片的character_id（防止存档中有错误数据）
+        for tile in game_state.current_map.tiles.values():
+            tile.character_id = None
+        logger.info(f"Cleared all character_id from {len(game_state.current_map.tiles)} tiles")
+
+        # 【修复】重新设置玩家位置的character_id
+        player_tile = game_state.current_map.get_tile(*game_state.player.position)
+        if player_tile:
+            player_tile.character_id = game_state.player.id
+            player_tile.is_explored = True
+            player_tile.is_visible = True
+            logger.info(f"Player position restored: {game_state.player.position}")
+
+        # 【修复】重新设置怪物位置的character_id
+        for monster in game_state.monsters:
+            monster_tile = game_state.current_map.get_tile(*monster.position)
+            if monster_tile:
+                monster_tile.character_id = monster.id
+                logger.info(f"Monster {monster.name} position restored: {monster.position}")
+
         # 使用 (user_id, game_id) 作为键
         game_key = (user_id, game_state.id)
         self.active_games[game_key] = game_state

@@ -280,6 +280,23 @@ Object.assign(LabyrinthiaGame.prototype, {
             // 设置地形样式
             tile.classList.add(`terrain-${tileData.terrain}`);
 
+            // 陷阱状态样式
+            if (tileData.terrain === 'trap' || (tileData.has_event && tileData.event_type === 'trap')) {
+                if (tileData.trap_disarmed) {
+                    // 已解除的陷阱（灰色，半透明）
+                    tile.classList.add('trap-disarmed');
+                } else if (tileData.event_triggered) {
+                    // 已触发的陷阱（显示图标但不脉冲，暗红色）
+                    tile.classList.add('trap-triggered');
+                } else if (tileData.trap_detected) {
+                    // 已发现但未触发的陷阱（高亮警告，脉冲动画）
+                    tile.classList.add('trap-detected');
+                } else {
+                    // 未发现且未触发的陷阱（隐藏）
+                    tile.classList.add('trap-hidden');
+                }
+            }
+
             // 设置房间类型样式
             if (tileData.room_type) {
                 tile.classList.add(`room-${tileData.room_type}`);

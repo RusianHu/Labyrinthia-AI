@@ -1683,10 +1683,19 @@ class ContentGenerator:
                         "story_type": random.choice(["discovery", "memory", "vision", "encounter"])
                     }
                 elif event_type == "trap":
-                    tile.event_data = {
-                        "trap_type": random.choice(["damage", "debuff", "teleport"]),
-                        "damage": random.randint(10, 30)
+                    # 【P0修复】使用 trap_schema 创建规范的陷阱数据
+                    from trap_schema import trap_validator
+                    trap_type = random.choice(["damage", "debuff", "teleport"])
+                    base_trap_data = {
+                        "trap_type": trap_type,
+                        "trap_name": f"{trap_type.capitalize()} Trap",
+                        "trap_description": "你发现了一个陷阱！",
+                        "detect_dc": random.randint(12, 18),
+                        "disarm_dc": random.randint(15, 20),
+                        "save_dc": random.randint(12, 16),
+                        "damage": random.randint(10, 30) if trap_type == "damage" else 0
                     }
+                    tile.event_data = trap_validator.validate_and_normalize(base_trap_data)
                 elif event_type == "mystery":
                     tile.event_data = {
                         "mystery_type": random.choice(["puzzle", "riddle", "choice"])
