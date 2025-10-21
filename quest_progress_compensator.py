@@ -176,10 +176,11 @@ class QuestProgressCompensator:
     
     def _check_all_mandatory_events_triggered(self, game_state: GameState, quest: Quest) -> bool:
         """检查所有必须事件是否都已触发"""
-        mandatory_events = [e for e in quest.special_events if e.is_mandatory]
+        # 兼容字典/对象：使用统一取值以避免类型不一致导致的异常
+        mandatory_events = [e for e in quest.special_events if self._get_attr(e, 'is_mandatory', False)]
         if not mandatory_events:
             return False
-        
+
         # 检查地图上的事件状态
         triggered_event_ids = set()
         for tile in game_state.current_map.tiles.values():
@@ -188,12 +189,13 @@ class QuestProgressCompensator:
                 quest_event_id = event_data.get('quest_event_id')
                 if quest_event_id:
                     triggered_event_ids.add(quest_event_id)
-        
+
         # 检查是否所有必须事件都已触发
         for event in mandatory_events:
-            if event.id not in triggered_event_ids:
+            ev_id = self._get_attr(event, 'id')
+            if ev_id not in triggered_event_ids:
                 return False
-        
+
         return True
     
     def _get_active_quest(self, game_state: GameState) -> Optional[Quest]:

@@ -40,7 +40,7 @@ class GameEngine:
         self.auto_save_tasks: Dict[Tuple[str, str], asyncio.Task] = {}
         self.last_access_time: Dict[Tuple[str, str], float] = {}  # 记录最后访问时间
         self.cleanup_task_started = False  # 标记清理任务是否已启动
-    
+
     async def create_new_game(self, user_id: str, player_name: str, character_class: str = "fighter") -> GameState:
         """创建新游戏
 
@@ -135,18 +135,18 @@ class GameEngine:
 
         logger.info(f"New game created for user {user_id}: {game_state.id}")
         return game_state
-    
+
     async def _create_player_character(self, name: str, character_class: str) -> Character:
         """创建玩家角色"""
         player = Character()
         player.name = name
-        
+
         # 设置职业
         try:
             player.character_class = CharacterClass(character_class.lower())
         except ValueError:
             player.character_class = CharacterClass.FIGHTER
-        
+
         # 根据职业设置初始属性
         class_configs = {
             CharacterClass.FIGHTER: {
@@ -166,9 +166,9 @@ class GameEngine:
                 "hp": 110, "mp": 80
             }
         }
-        
+
         class_config = class_configs.get(player.character_class, class_configs[CharacterClass.FIGHTER])
-        
+
         # 设置六维属性
         for ability, value in class_config["abilities"].items():
             setattr(player.abilities, ability, value)
@@ -201,7 +201,7 @@ class GameEngine:
             player.description = f"一个勇敢的{character_class}，准备踏上冒险之旅。"
 
         return player
-    
+
     async def load_game(self, user_id: str, save_id: str) -> Optional[GameState]:
         """加载游戏
 
@@ -520,20 +520,20 @@ class GameEngine:
             "events": [],
             "new_position": (new_x, new_y)
         }
-    
+
     def _update_visibility(self, game_state: GameState, center_x: int, center_y: int, radius: int = 2):
         """更新可见性"""
         for dx in range(-radius, radius + 1):
             for dy in range(-radius, radius + 1):
                 x, y = center_x + dx, center_y + dy
-                if (0 <= x < game_state.current_map.width and 
+                if (0 <= x < game_state.current_map.width and
                     0 <= y < game_state.current_map.height):
                     tile = game_state.current_map.get_tile(x, y)
                     if tile:
                         tile.is_visible = True
                         if abs(dx) + abs(dy) <= 1:  # 相邻瓦片标记为已探索
                             tile.is_explored = True
-    
+
     async def _handle_attack(self, game_state: GameState, parameters: Dict[str, Any]) -> Dict[str, Any]:
         """处理攻击行动 - 后端仅处理生成型逻辑
 
@@ -621,20 +621,20 @@ class GameEngine:
             "events": events,
             "damage": damage
         }
-    
+
     def _calculate_damage(self, attacker: Character, defender: Character) -> int:
         """计算伤害"""
         base_damage = 10 + attacker.abilities.get_modifier("strength")
-        
+
         # 添加随机性
         damage = random.randint(max(1, base_damage - 3), base_damage + 3)
-        
+
         # 护甲减免
         armor_reduction = max(0, defender.stats.ac - 10)
         damage = max(1, damage - armor_reduction)
-        
+
         return damage
-    
+
     def _check_level_up(self, character: Character) -> bool:
         """检查是否升级"""
         required_exp = character.stats.level * 1000
@@ -679,7 +679,7 @@ class GameEngine:
                 y += y_inc
 
         return True
-    
+
     async def _handle_use_item(self, game_state: GameState, parameters: Dict[str, Any]) -> Dict[str, Any]:
         """处理使用物品行动"""
         item_id = parameters.get("item_id", "")
@@ -1512,6 +1512,11 @@ class GameEngine:
                 new_quest = new_quests[0]
                 game_state.quests.append(new_quest)
 
+
+                # 方案A兜底：保证仅新任务处于激活状态
+                for q in game_state.quests:
+                    q.is_active = (q.id == new_quest.id)
+
                 # 添加新任务通知
                 quest_message = f"新任务：{new_quest.title}"
                 game_state.pending_events.append(quest_message)
@@ -1618,6 +1623,8 @@ class GameEngine:
             default_quest.completed_objectives = [False, False]
             default_quest.is_active = True
             default_quest.is_completed = False
+
+
             default_quest.progress_percentage = 0.0
             default_quest.story_context = "虽然上一个任务已经完成，但这个区域仍有许多未知的秘密等待发现。"
 
@@ -1625,6 +1632,13 @@ class GameEngine:
             game_state.pending_events.append(f"新任务：{default_quest.title}")
 
             logger.info("Created default exploration quest")
+
+            # 方案A兜底：保证仅默认任务处于激活状态（在成功追加后再统一去激活其他）
+            for q in game_state.quests:
+                if q.id != default_quest.id:
+                    q.is_active = False
+            default_quest.is_active = True
+
 
         except Exception as e:
             logger.error(f"Error creating default quest: {e}")
@@ -1711,31 +1725,31 @@ class GameEngine:
 
         # 返回是否有怪物事件发生（主要是攻击事件）
         return len(combat_events) > 0
-    
+
     async def _move_monster_towards_player(self, game_state: GameState, monster: Monster):
         """移动怪物靠近玩家"""
         player_x, player_y = game_state.player.position
         monster_x, monster_y = monster.position
-        
+
         # 简单的寻路：朝玩家方向移动一格
         dx = 0 if player_x == monster_x else (1 if player_x > monster_x else -1)
         dy = 0 if player_y == monster_y else (1 if player_y > monster_y else -1)
-        
+
         new_x, new_y = monster_x + dx, monster_y + dy
-        
+
         # 检查新位置是否有效
         target_tile = game_state.current_map.get_tile(new_x, new_y)
-        if (target_tile and target_tile.terrain != TerrainType.WALL and 
+        if (target_tile and target_tile.terrain != TerrainType.WALL and
             not target_tile.character_id):
-            
+
             # 移动怪物
             old_tile = game_state.current_map.get_tile(monster_x, monster_y)
             if old_tile:
                 old_tile.character_id = None
-            
+
             target_tile.character_id = monster.id
             monster.position = (new_x, new_y)
-    
+
     @async_performance_monitor
     async def _save_game_async(self, game_state: GameState, user_id: str, retry_count: int = 3):
         """
@@ -1833,7 +1847,7 @@ class GameEngine:
 
         game_key = (user_id, game_id)
         self.auto_save_tasks[game_key] = task
-    
+
     async def close_game(self, user_id: str, game_id: str):
         """
         关闭游戏（异步版本，正确处理任务取消）

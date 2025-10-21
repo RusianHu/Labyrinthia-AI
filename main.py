@@ -705,6 +705,12 @@ async def process_combat_result(game_id: str, request: Request, response: Respon
                     context_data=context_data
                 )
 
+                # 触发进度管理器处理战斗胜利事件，确保任务进度与完成逻辑生效
+                try:
+                    await progress_manager.process_event(progress_context)
+                except Exception as _e:
+                    logger.warning(f"Progress manager failed to process combat victory event: {_e}")
+
             # 【新增】在进度更新之后检查任务进度补偿（确保在移除怪物后再检查）
             from quest_progress_compensator import quest_progress_compensator
             compensation_result = await quest_progress_compensator.check_and_compensate(game_state)

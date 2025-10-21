@@ -65,7 +65,7 @@ class ChoiceResult:
 
 class EventChoiceSystem:
     """事件选择系统"""
-    
+
     def __init__(self):
         self.active_contexts: Dict[str, EventChoiceContext] = {}
         self.choice_handlers: Dict[ChoiceEventType, Callable] = {}
@@ -76,7 +76,7 @@ class EventChoiceSystem:
 
         # 上下文过期时间（秒）
         self.context_expiry_time = 300  # 5分钟
-    
+
     def _register_default_handlers(self):
         """注册默认的选择处理器"""
         self.choice_handlers[ChoiceEventType.STORY_EVENT] = self._handle_story_choice
@@ -134,7 +134,7 @@ class EventChoiceSystem:
 
         logger.error(f"LLM call failed after {max_retries + 1} attempts")
         return None
-    
+
     async def create_story_event_choice(self, game_state: GameState, tile: MapTile) -> EventChoiceContext:
         """创建故事事件选择"""
         event_data = tile.event_data or {}
@@ -176,7 +176,7 @@ class EventChoiceSystem:
             quest_info=quest_info,
             event_description=event_data.get("description", "")
         )
-        
+
         # 使用重试机制调用LLM
         llm_response = await self._call_llm_with_retry(
             llm_service._async_generate_json,
@@ -220,7 +220,7 @@ class EventChoiceSystem:
         # 降级处理：创建默认选择
         logger.warning("Using fallback default story choice")
         return self._create_default_story_choice(game_state, tile)
-    
+
     async def create_quest_completion_choice(self, game_state: GameState, completed_quest: Quest) -> EventChoiceContext:
         """创建任务完成选择"""
         # 构建LLM提示
@@ -243,7 +243,7 @@ class EventChoiceSystem:
             current_map=game_state.current_map.name,
             map_depth=game_state.current_map.depth
         )
-        
+
         # 使用重试机制调用LLM
         llm_response = await self._call_llm_with_retry(
             llm_service._async_generate_json,
@@ -297,7 +297,7 @@ class EventChoiceSystem:
         # 降级处理：创建默认任务完成选择
         logger.warning("Using fallback default quest completion choice")
         return self._create_default_quest_completion_choice(game_state, completed_quest)
-    
+
     async def process_choice(self, game_state: GameState, context_id: str, choice_id: str) -> ChoiceResult:
         """处理玩家的选择"""
         # 首先检查游戏状态中的待处理上下文
@@ -374,24 +374,24 @@ class EventChoiceSystem:
         else:
             logger.error(f"No handler found for event type: {event_type}")
             return ChoiceResult(success=False, message="未找到对应的选择处理器")
-    
+
     def _check_choice_requirements(self, game_state: GameState, requirements: Dict[str, Any]) -> bool:
         """检查选择要求是否满足"""
         if not requirements:
             return True
-        
+
         player = game_state.player
-        
+
         # 检查等级要求
         if "min_level" in requirements:
             if player.stats.level < requirements["min_level"]:
                 return False
-        
+
         # 检查生命值要求
         if "min_hp" in requirements:
             if player.stats.hp < requirements["min_hp"]:
                 return False
-        
+
         # 检查物品要求
         if "required_items" in requirements:
             required_items = requirements["required_items"]
@@ -399,7 +399,7 @@ class EventChoiceSystem:
             for required_item in required_items:
                 if required_item not in player_items:
                     return False
-        
+
         # 检查属性要求
         if "min_stats" in requirements:
             min_stats = requirements["min_stats"]
@@ -407,7 +407,7 @@ class EventChoiceSystem:
                 if hasattr(player.stats, stat_name):
                     if getattr(player.stats, stat_name) < min_value:
                         return False
-        
+
         return True
 
     def _create_default_story_choice(self, game_state: GameState, tile: MapTile) -> EventChoiceContext:
@@ -623,6 +623,14 @@ class EventChoiceSystem:
 
                 # 应用更新到游戏状态
                 await self._apply_choice_result(game_state, result)
+                # 方案A：若存在 completed_quest_id，确保该任务完成并取消激活，保证单活跃任务
+                if completed_quest_id:
+                    for q in game_state.quests:
+                        if q.id == completed_quest_id:
+                            q.is_completed = True
+                            q.is_active = False
+                            break
+
 
                 # 处理新任务创建（如果LLM建议）
                 if llm_response.get("new_quest_data"):
@@ -969,10 +977,11 @@ class EventChoiceSystem:
             new_quest = Quest()
             new_quest.title = quest_data.get("title", "新的冒险")
             new_quest.description = quest_data.get("description", "一个新的挑战等待着你...")
-            new_quest.quest_type = quest_data.get("type", "exploration")
+            new_quest.quest_type = quest_data.get("quest_type") or quest_data.get("type", "exploration")
             new_quest.experience_reward = quest_data.get("experience_reward", 500)
             new_quest.objectives = quest_data.get("objectives", ["完成新的挑战"])
             new_quest.completed_objectives = [False] * len(new_quest.objectives)
+            # 延后统一去激活旧任务，先暂时激活新任务
             new_quest.is_active = True
             new_quest.is_completed = False
             new_quest.progress_percentage = 0.0
@@ -1007,7 +1016,7 @@ class EventChoiceSystem:
                     # 【修复】合并LLM提供的数据和生成的数据，优先使用LLM数据但补充缺失字段
                     new_quest.title = quest_data.get("title") or generated_quest.title
                     new_quest.description = quest_data.get("description") or generated_quest.description
-                    new_quest.quest_type = quest_data.get("type") or generated_quest.quest_type
+                    new_quest.quest_type = (quest_data.get("quest_type") or quest_data.get("type") or generated_quest.quest_type)
                     new_quest.experience_reward = quest_data.get("experience_reward") or generated_quest.experience_reward
                     new_quest.objectives = quest_data.get("objectives") or generated_quest.objectives
                     new_quest.completed_objectives = [False] * len(new_quest.objectives)
@@ -1041,6 +1050,12 @@ class EventChoiceSystem:
             game_state.quests.append(new_quest)
 
             # 添加新任务通知
+            # 方案A：在成功添加新任务后再统一取消其他任务激活，避免在创建过程中异常导致无活跃任务
+            for q in game_state.quests:
+                if q.id != new_quest.id:
+                    q.is_active = False
+            new_quest.is_active = True
+
             game_state.pending_events.append(f"新任务：{new_quest.title}")
             game_state.pending_events.append("你的冒险将继续...")
 
@@ -1064,10 +1079,12 @@ class EventChoiceSystem:
             new_quest = Quest()
             new_quest.title = quest_data.get("title", "新的冒险")
             new_quest.description = quest_data.get("description", "一个新的挑战等待着你...")
-            new_quest.quest_type = quest_data.get("type", "exploration")
+            new_quest.quest_type = quest_data.get("quest_type") or quest_data.get("type", "exploration")
             new_quest.experience_reward = quest_data.get("experience_reward", 500)
             new_quest.objectives = quest_data.get("objectives", ["完成新的挑战"])
             new_quest.completed_objectives = [False] * len(new_quest.objectives)
+            # 方案A：保证单活跃任务
+            # 延后统一去激活旧任务，先暂时激活新任务
             new_quest.is_active = True
             new_quest.is_completed = False
             new_quest.progress_percentage = 0.0
@@ -1085,7 +1102,7 @@ class EventChoiceSystem:
                     # 合并LLM提供的数据和生成的数据
                     new_quest.title = quest_data.get("title", generated_quest.title)
                     new_quest.description = quest_data.get("description", generated_quest.description)
-                    new_quest.quest_type = quest_data.get("type", generated_quest.quest_type)
+                    new_quest.quest_type = quest_data.get("quest_type", quest_data.get("type", generated_quest.quest_type))
                     new_quest.experience_reward = quest_data.get("experience_reward", generated_quest.experience_reward)
                     new_quest.objectives = quest_data.get("objectives", generated_quest.objectives)
                     new_quest.completed_objectives = [False] * len(new_quest.objectives)
@@ -1097,10 +1114,18 @@ class EventChoiceSystem:
             # 添加到游戏状态
             game_state.quests.append(new_quest)
 
+
+            # 方案A：在成功添加新任务后再统一取消其他任务激活，避免在创建过程中异常导致无活跃任务
+            for q in game_state.quests:
+                if q.id != new_quest.id:
+                    q.is_active = False
+            new_quest.is_active = True
+
             logger.info(f"Created new quest: {new_quest.title}")
 
         except Exception as e:
             logger.error(f"Error creating new quest: {e}")
+
 
     def cleanup_expired_contexts(self):
         """清理过期的上下文"""

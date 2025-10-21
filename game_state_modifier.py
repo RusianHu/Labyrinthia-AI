@@ -419,6 +419,9 @@ class GameStateModifier:
         result = ModificationResult()
 
         try:
+            # 记录本次更新中被显式设置为激活的任务ID（若有，则强制保持单活跃任务）
+            last_set_active_id = None
+
             for quest in game_state.quests:
                 quest_update = quest_updates.get(quest.id)
                 if quest_update:
@@ -430,6 +433,10 @@ class GameStateModifier:
                             setattr(quest, attr_name, value)
                             changes[attr_name] = {"old": old_value, "new": value}
 
+                            # 方案A强约束：若有任务被设置为 is_active=True，记录下来
+                            if attr_name == "is_active" and bool(value) is True:
+                                last_set_active_id = quest.id
+
                     if changes:
                         record = ModificationRecord(
                             modification_type=ModificationType.QUEST,
@@ -440,6 +447,18 @@ class GameStateModifier:
                         )
                         result.add_record(record)
                         logger.info(f"Updated quest {quest.title}: {list(changes.keys())}")
+
+            # 方案A收尾：若本次更新显式激活了某个任务，则保证仅此任务处于激活，其他任务全部取消激活
+            if last_set_active_id is not None:
+                for quest in game_state.quests:
+                    quest.is_active = (quest.id == last_set_active_id)
+            else:
+                # 若未显式设置，依然兜底：如果出现多个任务激活，仅保留第一个激活任务
+                active_quests = [q for q in game_state.quests if getattr(q, "is_active", False)]
+                if len(active_quests) > 1:
+                    keeper_id = active_quests[0].id
+                    for quest in game_state.quests:
+                        quest.is_active = (quest.id == keeper_id)
 
         except Exception as e:
             logger.error(f"Error applying quest updates: {e}")
