@@ -344,8 +344,10 @@ class EnhancedEffectsManager {
 
                 // 光线参数
                 const rayWidth = config.size + anime.random(-20, 20);
-                const rayHeight = 300; // 光线长度
-                const rayAngle = anime.random(-15, 15); // 倾斜角度
+                const rayHeight = (typeof config.rayHeight === 'number' ? config.rayHeight : 300); // 光线长度
+                const angleMin = Array.isArray(config.angleRange) ? config.angleRange[0] : -15;
+                const angleMax = Array.isArray(config.angleRange) ? config.angleRange[1] : 15;
+                const rayAngle = anime.random(angleMin, angleMax); // 倾斜角度
                 const rayLeft = anime.random(0, 100); // 水平位置
 
                 ray.style.cssText = `
@@ -362,10 +364,12 @@ class EnhancedEffectsManager {
                         rgba(255, 235, 150, ${config.opacity * 0.8}) 80%,
                         rgba(255, 245, 200, 0) 100%
                     );
-                    filter: blur(8px);
+                    filter: blur(${typeof config.blur === 'number' ? config.blur : 8}px);
                     pointer-events: none;
                     z-index: 1;
                     opacity: 0;
+                    ${config.blend ? `mix-blend-mode: ${config.blend};` : ''}
+                    ${config.glow ? `box-shadow: 0 0 ${config.glowSize || 10}px ${config.glowColor || 'rgba(255, 238, 150, 0.25)'};` : ''}
                 `;
 
                 // 存储光线参数
@@ -577,12 +581,22 @@ class EnhancedEffectsManager {
             },
             'town': {
                 type: 'sunlight',
-                count: 5,
-                size: 110,  // 增大光线宽度：80 → 110
-                color: 'rgba(255, 235, 59, 0.3)',  // 提高不透明度：0.15 → 0.3
+                count: 7,
+                size: 140,
+                color: 'rgba(255, 235, 59, 0.35)',
                 shape: 'ray',
-                opacity: 0.3,
-                speed: 'very-slow'
+                opacity: 0.42,
+                speed: 'very-slow',
+                rayHeight: 420,
+                angleRange: [-16, 16],
+                blur: 6,
+                blend: 'screen',
+                glow: true,
+                glowColor: 'rgba(255, 238, 150, 0.25)',
+                glowSize: 10,
+                swing: 3.2,
+                sway: 2.2,
+                opacityCurve: [0.38, 0.9, 0.6, 0.38]
             },
             'desert': {
                 type: 'sand',
@@ -911,24 +925,28 @@ class EnhancedEffectsManager {
                 delay: delay
             });
 
+            const swing = (typeof config.swing === 'number') ? config.swing : 3;
+            const sway = (typeof config.sway === 'number') ? config.sway : 2;
+            const curve = Array.isArray(config.opacityCurve) ? config.opacityCurve : [0.3, 0.8, 0.5, 0.3];
+
             timeline.add({
                 targets: particle,
                 // 光线摇曳（角度变化）
                 rotate: [
-                    { value: baseAngle - 3, duration: duration * 0.5, easing: 'easeInOutSine' },
-                    { value: baseAngle + 3, duration: duration * 0.5, easing: 'easeInOutSine' }
+                    { value: baseAngle - swing, duration: duration * 0.5, easing: 'easeInOutSine' },
+                    { value: baseAngle + swing, duration: duration * 0.5, easing: 'easeInOutSine' }
                 ],
                 // 水平位置微调
                 left: [
-                    { value: `${baseLeft - 2}%`, duration: duration * 0.5, easing: 'easeInOutSine' },
-                    { value: `${baseLeft + 2}%`, duration: duration * 0.5, easing: 'easeInOutSine' }
+                    { value: `${baseLeft - sway}%`, duration: duration * 0.5, easing: 'easeInOutSine' },
+                    { value: `${baseLeft + sway}%`, duration: duration * 0.5, easing: 'easeInOutSine' }
                 ],
-                // 透明度呼吸
+                // 透明度呼吸（可配置）
                 opacity: [
-                    { value: 0.3, duration: duration * 0.25, easing: 'easeInOutQuad' },
-                    { value: 0.8, duration: duration * 0.25, easing: 'easeInOutQuad' },
-                    { value: 0.5, duration: duration * 0.25, easing: 'easeInOutQuad' },
-                    { value: 0.3, duration: duration * 0.25, easing: 'easeInOutQuad' }
+                    { value: curve[0], duration: duration * 0.25, easing: 'easeInOutQuad' },
+                    { value: curve[1], duration: duration * 0.25, easing: 'easeInOutQuad' },
+                    { value: curve[2], duration: duration * 0.25, easing: 'easeInOutQuad' },
+                    { value: curve[3], duration: duration * 0.25, easing: 'easeInOutQuad' }
                 ],
                 duration: duration
             });

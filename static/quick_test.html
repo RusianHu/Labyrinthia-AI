@@ -58,7 +58,7 @@
             border: none;
             box-shadow: none;
             min-height: 350px; /* 调整容器高度以适应新的间距 */
-            margin-bottom: -150px; /* 进一步减少与下方内容的间距 */
+            margin-bottom: 24px; /* 为下方内容留出正常间距，修复重叠 */
         }
 
         @keyframes pulse-jump {
@@ -1299,7 +1299,7 @@
                         const debug = cfg?.game?.debug_mode;
                         if (!debug) {
                             document.querySelectorAll('.test-btn, .clear-btn').forEach(btn => btn.disabled = true);
-                            log('       ', 'warning');
+
                             log(' 调试模式未启用：快速测试功能已禁用', 'warning');
                         }
                     })
