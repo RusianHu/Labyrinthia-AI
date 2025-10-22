@@ -269,16 +269,6 @@ body {
     position: relative;
 }
 
-/* 【P0修复】未发现的陷阱（完全隐藏，透明显示地板图层） */
-.terrain-trap.trap-hidden {
-    background: transparent !important;
-    background-image: none !important;
-    animation: none !important;
-    box-shadow: none !important;
-    opacity: 1 !important;
-    /* 确保地板图层可见 */
-    z-index: auto;
-}
 
 /* 已发现的陷阱（高亮警告，脉冲动画） */
 .terrain-trap.trap-detected {
@@ -304,6 +294,27 @@ body {
     opacity: 0.5;
     animation: none;
     box-shadow: none;
+}
+
+
+/* 已触发陷阱角标徽记（保持基础地形，右下角显示“已触发”） */
+.map-tile.trap-triggered {
+    position: relative;
+}
+.map-tile.trap-triggered::after {
+    content: '已触发';
+    position: absolute;
+    right: 2px;
+    bottom: 2px;
+    font-size: 10px;
+    line-height: 1;
+    padding: 2px 4px;
+    background: linear-gradient(135deg, #c0392b, #e74c3c);
+    color: #fff;
+    border-radius: 3px;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.35);
+    opacity: 0.9;
+    pointer-events: none;
 }
 
 /* 陷阱脉冲动画 */
@@ -467,7 +478,7 @@ body {
 
 .tile-explored { opacity: 1; }
 .tile-unexplored { opacity: 0.3; }
-.tile-visible { 
+.tile-visible {
     box-shadow: 0 0 8px rgba(52, 152, 219, 0.6);
 }
 

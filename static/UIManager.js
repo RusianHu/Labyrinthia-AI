@@ -277,24 +277,35 @@ Object.assign(LabyrinthiaGame.prototype, {
         tile.innerHTML = '';
 
         if (tileData) {
-            // 设置地形样式
-            tile.classList.add(`terrain-${tileData.terrain}`);
+            // 优先根据陷阱状态决定“基础地形类”，避免隐藏陷阱看起来和普通地板不一致
+            const isTrap = (tileData.terrain === 'trap') || (tileData.has_event && tileData.event_type === 'trap');
 
-            // 陷阱状态样式
-            if (tileData.terrain === 'trap' || (tileData.has_event && tileData.event_type === 'trap')) {
+            if (isTrap) {
                 if (tileData.trap_disarmed) {
                     // 已解除的陷阱（灰色，半透明）
-                    tile.classList.add('trap-disarmed');
+                    tile.classList.add('terrain-trap', 'trap-disarmed');
                 } else if (tileData.event_triggered) {
-                    // 已触发的陷阱（显示图标但不脉冲，暗红色）
-                    tile.classList.add('trap-triggered');
+                    // 已触发的陷阱：使用基础地形+角标徽记（不再用整块红色底）
+                    const baseClass = (tileData.terrain === 'trap') ? 'terrain-floor' : `terrain-${tileData.terrain}`;
+                    tile.classList.add(baseClass, 'trap-triggered');
+                    tile.dataset.trapTriggered = '1';
+                    tile.title = '已触发的陷阱 - 已失效';
                 } else if (tileData.trap_detected) {
                     // 已发现但未触发的陷阱（高亮警告，脉冲动画）
-                    tile.classList.add('trap-detected');
+                    tile.classList.add('terrain-trap', 'trap-detected');
                 } else {
-                    // 未发现且未触发的陷阱（隐藏）
-                    tile.classList.add('trap-hidden');
+                    // 未发现的陷阱：完全伪装成基础地形（若原地形为trap则伪装为floor；否则保留原地形外观）
+                    if (tileData.terrain === 'trap') {
+                        tile.classList.add('terrain-floor');
+                    } else {
+                        tile.classList.add(`terrain-${tileData.terrain}`);
+                    }
+                    tile.dataset.hasTrap = '1';
+                    tile.dataset.trapHidden = '1';
                 }
+            } else {
+                // 非陷阱正常渲染
+                tile.classList.add(`terrain-${tileData.terrain}`);
             }
 
             // 设置房间类型样式

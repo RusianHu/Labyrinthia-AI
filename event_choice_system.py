@@ -835,10 +835,10 @@ class EventChoiceSystem:
         from trap_manager import get_trap_manager
 
         # 【P0修复】获取并验证陷阱数据
-        raw_trap_data = context.event_data.get('trap_data', {})
+        raw_trap_data = context.context_data.get('trap_data', {})
         trap_data = trap_validator.validate_and_normalize(raw_trap_data)
 
-        position = context.event_data.get('position', [0, 0])
+        position = context.context_data.get('position', [0, 0])
         tile = game_state.current_map.get_tile(position[0], position[1])
 
         if not tile:
@@ -851,7 +851,7 @@ class EventChoiceSystem:
         trap_manager = get_trap_manager()
 
         # 处理不同的选择
-        if choice.choice_id == "disarm":
+        if choice.id == "disarm":
             # 尝试解除陷阱
             disarm_dc = trap_data.get('disarm_dc', 18)
             result = trap_manager.attempt_disarm(game_state.player, disarm_dc)
@@ -911,7 +911,7 @@ class EventChoiceSystem:
                     }
                 )
 
-        elif choice.choice_id == "avoid":
+        elif choice.id == "avoid":
             # 尝试规避陷阱
             save_dc = trap_data.get('save_dc', 14)
             result = trap_manager.attempt_avoid(game_state.player, save_dc)
@@ -945,7 +945,7 @@ class EventChoiceSystem:
                     }
                 )
 
-        elif choice.choice_id == "trigger":
+        elif choice.id == "trigger":
             # 故意触发陷阱
             trigger_result = trap_manager.trigger_trap(game_state, tile)
 

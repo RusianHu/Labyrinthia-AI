@@ -621,6 +621,7 @@ async def register_trap_choice_context(request: Request, response: Response):
 
         # 创建EventChoiceContext
         from data_models import EventChoiceContext, EventChoice
+        from event_choice_system import event_choice_system
 
         context = EventChoiceContext(
             id=context_id,
@@ -639,10 +640,10 @@ async def register_trap_choice_context(request: Request, response: Response):
                 text=choice_data.get("text", ""),
                 description=choice_data.get("description", ""),
                 consequences=choice_data.get("consequences", ""),
-                requirements=choice_data.get("requirements", ""),
+                requirements=choice_data.get("requirements", {}),
                 is_available=True
             )
-            # 设置choice_id为前端传来的id
+            # 使用前端传来的id作为选项ID
             choice.id = choice_data.get("id", choice.id)
             context.choices.append(choice)
 
@@ -739,6 +740,129 @@ async def check_trap_detection(request: Request, response: Response):
     except Exception as e:
         logger.error(f"Failed to check trap detection: {e}")
         raise HTTPException(status_code=500, detail=f"检查陷阱侦测失败: {str(e)}")
+
+
+@app.post("/api/trap/trigger")
+async def trigger_trap(request: Request, response: Response):
+    """触发陷阱（统一处理，包含敏捷豁免判定）
+
+    当玩家未发现陷阱而直接触发时调用此接口。
+    后端会自动进行敏捷豁免判定，并根据结果计算伤害（可能减半）。
+
+    请求参数：
+    - game_id: 游戏ID
+    - position: 陷阱位置 [x, y]
+
+    返回：
+    - success: 是否成功处理
+    - save_attempted: 是否尝试了豁免
+    - save_result: 豁免判定结果（如果有）
+    - save_message: 豁免判定的详细信息（如 "🎲 1d20=8 + DEX+2 = 10 vs DC 14 - 失败"）
+    - trigger_result: 触发结果（包含伤害、描述等）
+    - narrative: LLM生成的叙述文本
+    - player_hp: 玩家当前HP
+    - player_died: 玩家是否死亡
+    """
+    try:
+        data = await request.json()
+        game_id = data.get("game_id")
+        position = data.get("position", [0, 0])
+
+        # 获取用户ID
+        user_id = user_session_manager.get_or_create_user_id(request, response)
+        game_key = (user_id, game_id)
+
+        # 获取游戏状态
+        game_state = game_engine.active_games.get(game_key)
+        if not game_state:
+            raise HTTPException(status_code=404, detail="游戏未找到")
+
+        # 获取目标瓦片
+        tile = game_state.current_map.get_tile(position[0], position[1])
+        if not tile or not tile.is_trap():
+            return {
+                "success": False,
+                "message": "该位置没有陷阱"
+            }
+
+        # 获取陷阱数据
+        from trap_schema import trap_validator
+        raw_trap_data = tile.get_trap_data()
+        trap_data = trap_validator.validate_and_normalize(raw_trap_data)
+
+        # 获取 TrapManager
+        from trap_manager import get_trap_manager
+        trap_manager = get_trap_manager()
+
+        # 检查陷阱是否可以被规避（需要豁免）
+        can_be_avoided = trap_data.get("can_be_avoided", True)
+        save_dc = trap_data.get("save_dc", 14)
+
+        save_attempted = False
+        save_result = None
+        save_message = ""
+
+        # 如果陷阱可以被规避，自动进行敏捷豁免
+        if can_be_avoided and save_dc > 0:
+            save_attempted = True
+            save_result = trap_manager.attempt_avoid(game_state.player, save_dc)
+
+            # 构建豁免判定的详细信息
+            success_icon = "✅" if save_result['success'] else "❌"
+            save_message = (
+                f"{success_icon} 敏捷豁免：🎲 1d20={save_result['roll']} + "
+                f"DEX{save_result['modifier']:+d} = {save_result['total']} "
+                f"vs DC {save_dc} - {'成功' if save_result['success'] else '失败'}"
+            )
+
+            logger.info(f"Trap trigger with save: {save_message}")
+
+        # 触发陷阱（传入豁免结果，如果有的话）
+        trigger_result = trap_manager.trigger_trap(game_state, tile, save_result=save_result)
+
+        # 调用 LLM 生成叙述文本
+        narrative = ""
+        try:
+            from llm_service import llm_service
+
+            # 构建上下文
+            trap_context = {
+                "trap_name": trap_data.get("trap_name", "未知陷阱"),
+                "trap_type": trap_data.get("trap_type", "damage"),
+                "damage": trigger_result.get("damage", 0),
+                "damage_type": trap_data.get("damage_type", "physical"),
+                "save_attempted": save_attempted,
+                "save_success": save_result['success'] if save_result else False,
+                "player_name": game_state.player.name,
+                "player_hp": game_state.player.stats.hp,
+                "player_max_hp": game_state.player.stats.max_hp
+            }
+
+            # 生成叙述
+            narrative = await llm_service.generate_trap_narrative(game_state, trap_context)
+
+        except Exception as e:
+            logger.warning(f"Failed to generate trap narrative: {e}")
+            # 如果 LLM 生成失败，使用默认描述
+            narrative = trigger_result.get("description", "触发了陷阱！")
+
+        # 返回结果
+        return {
+            "success": True,
+            "save_attempted": save_attempted,
+            "save_result": save_result,
+            "save_message": save_message,
+            "trigger_result": trigger_result,
+            "narrative": narrative,
+            "player_hp": game_state.player.stats.hp,
+            "player_max_hp": game_state.player.stats.max_hp,
+            "player_died": trigger_result.get("player_died", False),
+            "game_over": game_state.is_game_over
+        }
+
+    except Exception as e:
+        logger.error(f"Failed to trigger trap: {e}")
+        raise HTTPException(status_code=500, detail=f"触发陷阱失败: {str(e)}")
 
 
 @app.post("/api/sync-state")

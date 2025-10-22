@@ -1008,17 +1008,36 @@ class GameEngine:
         }
 
     async def _trigger_trap(self, game_state: GameState) -> str:
-        """触发陷阱"""
-        damage = random.randint(5, 15)
-        game_state.player.stats.hp -= damage
+        """触发陷阱 - 遗留方法，已升级为调用TrapManager
 
-        # 检查玩家是否死亡
-        if game_state.player.stats.hp <= 0:
-            game_state.is_game_over = True
-            game_state.game_over_reason = "被陷阱杀死"
-            return f"触发了陷阱！受到了 {damage} 点伤害！你被陷阱杀死了！"
+        注意：此方法已废弃，建议使用 TrapManager.trigger_trap
+        保留此方法仅用于向后兼容
+        """
+        logger.warning("_trigger_trap called - deprecated, use TrapManager.trigger_trap instead")
 
-        return f"触发了陷阱！受到了 {damage} 点伤害"
+        # 获取当前玩家位置的瓦片
+        tile = game_state.current_map.get_tile(*game_state.player.position)
+        if not tile or not tile.is_trap():
+            return "没有陷阱"
+
+        # 使用 TrapManager 统一处理
+        from trap_manager import get_trap_manager
+        trap_manager = get_trap_manager()
+
+        # 获取陷阱数据
+        from trap_schema import trap_validator
+        raw_trap_data = tile.get_trap_data()
+        trap_data = trap_validator.validate_and_normalize(raw_trap_data)
+
+        # 尝试敏捷豁免（如果陷阱允许）
+        save_result = None
+        if trap_data.get("can_be_avoided", True) and trap_data.get("save_dc", 0) > 0:
+            save_result = trap_manager.attempt_avoid(game_state.player, trap_data["save_dc"])
+
+        # 触发陷阱
+        trigger_result = trap_manager.trigger_trap(game_state, tile, save_result=save_result)
+
+        return trigger_result.get("description", "触发了陷阱！")
 
     async def _trigger_tile_event(self, game_state: GameState, tile: MapTile) -> str:
         """触发瓦片事件"""
@@ -1172,42 +1191,33 @@ class GameEngine:
         return result_message
 
     async def _handle_trap_event(self, game_state: GameState, tile: MapTile) -> str:
-        """处理陷阱事件 - 遗留接口，前端LocalGameEngine已处理
+        """处理陷阱事件 - 遗留接口，已升级为调用TrapManager
 
         注意：陷阱的计算型逻辑(伤害计算、传送位置等)已由前端LocalGameEngine完成
         后端保留此方法仅用于不支持LocalEngine的旧版本客户端
+        此方法已升级为调用 TrapManager，确保与新接口行为一致
         """
         logger.warning("_handle_trap_event called - this should be handled by frontend LocalGameEngine")
 
-        event_data = tile.event_data
-        trap_type = event_data.get("trap_type", "damage")
-        damage = event_data.get("damage", 15)
+        # 使用 TrapManager 统一处理
+        from trap_manager import get_trap_manager
+        trap_manager = get_trap_manager()
 
-        if trap_type == "damage":
-            game_state.player.stats.hp -= damage
-            if game_state.player.stats.hp <= 0:
-                game_state.is_game_over = True
-                game_state.game_over_reason = "被陷阱杀死"
-                return f"触发了陷阱！受到了 {damage} 点伤害！你被陷阱杀死了！"
-            return f"触发了陷阱！受到了 {damage} 点伤害！"
-        elif trap_type == "debuff":
-            return "触发了减速陷阱！移动变得困难！"
-        elif trap_type == "teleport":
-            spawn_positions = content_generator.get_spawn_positions(game_state.current_map, 1)
-            if spawn_positions:
-                old_tile = game_state.current_map.get_tile(*game_state.player.position)
-                if old_tile:
-                    old_tile.character_id = None
-                new_pos = spawn_positions[0]
-                game_state.player.position = new_pos
-                new_tile = game_state.current_map.get_tile(*new_pos)
-                if new_tile:
-                    new_tile.character_id = game_state.player.id
-                    new_tile.is_explored = True
-                    new_tile.is_visible = True
-                return f"触发了传送陷阱！被传送到了 ({new_pos[0]}, {new_pos[1]})！"
+        # 获取陷阱数据
+        from trap_schema import trap_validator
+        raw_trap_data = tile.get_trap_data()
+        trap_data = trap_validator.validate_and_normalize(raw_trap_data)
 
-        return "触发了一个神秘的陷阱！"
+        # 尝试敏捷豁免（如果陷阱允许）
+        save_result = None
+        if trap_data.get("can_be_avoided", True) and trap_data.get("save_dc", 0) > 0:
+            save_result = trap_manager.attempt_avoid(game_state.player, trap_data["save_dc"])
+            logger.info(f"Trap save attempt: {save_result}")
+
+        # 触发陷阱
+        trigger_result = trap_manager.trigger_trap(game_state, tile, save_result=save_result)
+
+        return trigger_result.get("description", "触发了一个神秘的陷阱！")
 
     async def _generate_trap_narrative(self, game_state: GameState, trap_result: Dict[str, Any]) -> str:
         """生成陷阱触发的描述性文本（生成型逻辑）

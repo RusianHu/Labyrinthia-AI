@@ -387,9 +387,11 @@ class MapTile:
         return {
             "trap_type": "damage",
             "damage": 15,
+            "damage_type": "physical",
             "detect_dc": 15,
             "disarm_dc": 18,
-            "save_dc": 14
+            "save_dc": 14,
+            "save_half_damage": True
         }
 
     def to_dict(self) -> Dict[str, Any]:

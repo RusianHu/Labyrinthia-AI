@@ -271,16 +271,28 @@ class LocalGameEngine {
     async checkTrapDetection(tile, position) {
         const gameState = this.getGameState();
 
-        // 如果陷阱已经被发现，直接显示选项框
-        if (tile.trap_detected) {
-            console.log('[LocalGameEngine] Trap already detected, showing choices');
-            await this.showTrapChoices(tile, position);
+        // 优先检查陷阱是否已经触发（触发后trap_detected也会是true，所以要先检查）
+        if (tile.event_triggered) {
+            console.log('[LocalGameEngine] Trap already triggered');
+            // 已触发陷阱：不弹对话框、不再次触发，只进行常规回合与UI刷新
+            try {
+                await this.processMonsterTurns();
+                if (this.game && this.game.updateUI) {
+                    await this.game.updateUI();
+                }
+                if (this.shouldSync()) {
+                    await this.syncToBackend();
+                }
+            } catch (e) {
+                console.warn('[LocalGameEngine] Post-move pipeline after triggered trap failed:', e);
+            }
             return;
         }
 
-        // 如果陷阱已经触发，不再处理
-        if (tile.event_triggered) {
-            console.log('[LocalGameEngine] Trap already triggered');
+        // 如果陷阱已经被发现（但未触发），直接显示选项框
+        if (tile.trap_detected) {
+            console.log('[LocalGameEngine] Trap already detected, showing choices');
+            await this.showTrapChoices(tile, position);
             return;
         }
 
@@ -313,8 +325,14 @@ class LocalGameEngine {
                 // 播放发现陷阱特效
                 this.showTrapDetectedEffect([position.x, position.y]);
 
-                // 显示选项框
-                await this.showTrapChoices(tile, position);
+                // 显示选项框（若陷阱尚未被触发）
+                if (tile.event_triggered || (tile.event_data && (tile.event_data.is_triggered || tile.event_data.trap_triggered))) {
+                    console.log('[LocalGameEngine] Trap already triggered, skip showing choices');
+                    // 可选提示：
+                    // this.addMessage('该陷阱已被触发。', 'info');
+                } else {
+                    await this.showTrapChoices(tile, position);
+                }
             } else {
                 // 未能发现陷阱，直接触发
                 console.log('[LocalGameEngine] Trap not detected, triggering...');
@@ -393,7 +411,13 @@ class LocalGameEngine {
         const trapName = trapData.trap_name || "未知陷阱";
         const trapDesc = trapData.trap_description || "你发现了一个陷阱！";
 
-        const contextId = `trap_${Date.now()}`;
+        // 使用UUID作为上下文ID，满足后端校验要求
+        const contextId = (window.crypto && window.crypto.randomUUID)
+            ? window.crypto.randomUUID()
+            : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+                  const r = Math.random() * 16 | 0, v = c === 'x' ? r : (r & 0x3 | 0x8);
+                  return v.toString(16);
+              });
 
         // 先调用后端注册context
         try {
@@ -424,8 +448,8 @@ class LocalGameEngine {
                         choices: choices
                     });
                 } else {
-                    console.error('[LocalGameEngine] showEventChoiceDialog not available');
-                    this.addMessage('无法显示选项对话框', 'error');
+                    console.warn('[LocalGameEngine] showEventChoiceDialog not available');
+                    // 当前页面未集成选项对话框组件时，静默降级，不打扰用户
                 }
             } else {
                 console.error('[LocalGameEngine] Failed to register trap context:', result);
@@ -453,86 +477,115 @@ class LocalGameEngine {
     }
 
     /**
-     * 处理陷阱（前端计算效果，后端生成描述）
-     * 注意：此方法现在仅用于未被发现的陷阱直接触发
+     * 处理陷阱（统一调用后端接口，包含敏捷豁免判定）
+     * 注意：此方法用于未被发现的陷阱直接触发
+     * 后端会自动进行敏捷豁免判定，并根据结果计算伤害（可能减半）
      */
     async handleTrap(tile) {
         const gameState = this.getGameState();
-        const player = gameState.player;
-        const eventData = tile.event_data || {};
-        const trapType = eventData.trap_type || 'damage';
-        const damage = eventData.damage || 15;
+        const position = [tile.x, tile.y];
 
-        // 【修复】触发陷阱后，陷阱位置暴露
-        tile.event_triggered = true;
-        tile.trap_detected = true;  // 触发后玩家知道这里有陷阱
-        if (tile.has_event && tile.event_type === 'trap') {
-            if (!tile.event_data) tile.event_data = {};
-            tile.event_data.is_detected = true;
-        }
+        console.log('[LocalGameEngine] Triggering trap at', position);
 
-        // 前端先计算陷阱效果
-        let trapResult = {
-            type: trapType,
-            damage: 0,
-            teleported: false,
-            newPosition: null,
-            playerDied: false
-        };
+        // 显示LLM遮罩（因为需要后端处理和LLM生成叙述）
+        this.game.showLLMOverlay('trap_trigger');
 
-        if (trapType === 'damage') {
-            player.stats.hp -= damage;
-            trapResult.damage = damage;
-            this.addMessage(`触发了陷阱！受到了 ${damage} 点伤害！`, 'combat');
-
-            // 检查玩家是否死亡
-            if (player.stats.hp <= 0) {
-                this.addMessage('你被陷阱杀死了！游戏结束！', 'error');
-                gameState.is_game_over = true;
-                gameState.game_over_reason = '被陷阱杀死';
-                trapResult.playerDied = true;
-                if (this.game.handleGameOver) {
-                    this.game.handleGameOver(gameState.game_over_reason);
-                }
-            }
-        } else if (trapType === 'debuff') {
-            this.addMessage('触发了减速陷阱！移动变得困难！', 'system');
-            // TODO: 实现减速效果
-        } else if (trapType === 'teleport') {
-            // 随机传送
-            const randomX = this.randomInt(0, gameState.current_map.width - 1);
-            const randomY = this.randomInt(0, gameState.current_map.height - 1);
-            const targetTile = this.getTile(randomX, randomY);
-
-            if (targetTile && targetTile.terrain !== 'wall' && !targetTile.character_id) {
-                this.updatePlayerPosition(randomX, randomY);
-                this.updateVisibility(randomX, randomY);
-                trapResult.teleported = true;
-                trapResult.newPosition = [randomX, randomY];
-                this.addMessage(`触发了传送陷阱！被传送到了 (${randomX}, ${randomY})！`, 'system');
-            } else {
-                this.addMessage('触发了传送陷阱，但传送失败了！', 'system');
-            }
-        }
-
-        // 调用后端生成描述性文本（可选，增强体验）
-        if (!trapResult.playerDied) {
-            await this.triggerBackendEvent('trap_narrative', {
-                tile: tile,
-                position: [tile.x, tile.y],
-                trap_result: trapResult
+        try {
+            // 调用后端统一陷阱触发接口
+            const response = await fetch('/api/trap/trigger', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    game_id: gameState.id,
+                    position: position
+                })
             });
 
-            // 【修复】处理怪物回合（triggerBackendEvent已经更新了UI）
-            await this.processMonsterTurns();
-
-            // 【修复】检查是否需要同步
-            if (this.shouldSync()) {
-                await this.syncToBackend();
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
             }
-        } else {
-            // 玩家死亡，只更新UI显示游戏结束状态
-            this.game.updateUI();
+
+            const result = await response.json();
+
+            if (result.success) {
+                // 【修复】触发陷阱后，陷阱位置暴露
+                tile.event_triggered = true;
+                tile.trap_detected = true;  // 触发后玩家知道这里有陷阱
+                if (tile.has_event && tile.event_type === 'trap') {
+                    if (!tile.event_data) tile.event_data = {};
+                    tile.event_data.is_detected = true;
+                    tile.event_data.is_triggered = true;
+                }
+
+                // 显示豁免判定信息（如果有）
+                if (result.save_attempted && result.save_message) {
+                    this.addMessage(result.save_message, 'system');
+                }
+
+                // 显示触发结果（优先使用后端描述，避免重复）
+                const triggerResult = result.trigger_result;
+                if (triggerResult.description) {
+                    this.addMessage(triggerResult.description, 'combat');
+                } else if (triggerResult.damage > 0) {
+                    this.addMessage(`触发了陷阱！受到了 ${triggerResult.damage} 点伤害！`, 'combat');
+                }
+
+                // 显示LLM生成的叙述（避免与描述重复）
+                if (result.narrative && result.narrative !== (triggerResult.description || '')) {
+                    this.addMessage(result.narrative, 'narrative');
+                }
+
+                // 更新玩家HP
+                gameState.player.stats.hp = result.player_hp;
+
+                // 处理传送效果（如果有）
+                if (triggerResult.teleported && triggerResult.new_position) {
+                    const newPos = triggerResult.new_position;
+                    this.updatePlayerPosition(newPos[0], newPos[1]);
+                    this.updateVisibility(newPos[0], newPos[1]);
+                    this.addMessage(
+                        `触发了传送陷阱！被传送到了 (${newPos[0]}, ${newPos[1]})！`,
+                        'system'
+                    );
+                }
+
+                // 检查玩家是否死亡
+                if (result.player_died) {
+                    this.addMessage('你被陷阱杀死了！游戏结束！', 'error');
+                    gameState.is_game_over = true;
+                    gameState.game_over_reason = '被陷阱杀死';
+
+                    // 更新UI显示游戏结束状态
+                    this.game.updateUI();
+
+                    // 触发游戏结束处理
+                    if (this.game.handleGameOver) {
+                        this.game.handleGameOver(gameState.game_over_reason);
+                    }
+                } else {
+                    // 玩家存活，继续游戏流程
+
+                    // 处理怪物回合
+                    await this.processMonsterTurns();
+
+                    // 更新UI
+                    await this.game.updateUI();
+
+                    // 检查是否需要同步
+                    if (this.shouldSync()) {
+                        await this.syncToBackend();
+                    }
+                }
+            } else {
+                this.addMessage(result.message || '陷阱触发失败', 'error');
+            }
+
+        } catch (error) {
+            console.error('[LocalGameEngine] Failed to trigger trap:', error);
+            this.addMessage('陷阱触发失败，请重试', 'error');
+        } finally {
+            // 确保隐藏遮罩
+            this.game.hideLLMOverlay();
         }
     }
 
