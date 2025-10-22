@@ -83,9 +83,36 @@ Object.assign(LabyrinthiaGame.prototype, {
             await new Promise(resolve => setTimeout(resolve, 400));
 
             this.updateOverlayProgress(30, '读取游戏数据...');
-            const response = await fetch(`/api/load/${saveId}`, {
+
+            // 先尝试普通加载
+            let response = await fetch(`/api/load/${saveId}`, {
                 method: 'POST'
             });
+
+            // 如果404且调试模式开启，尝试使用调试强制加载
+            if (response.status === 404 && this.debugMode) {
+                console.log('[SaveManager] Normal load failed (404), trying debug force-load...');
+                this.updateOverlayProgress(35, '[调试模式] 尝试强制加载...');
+
+                // 先获取所有存档，找到这个game_id对应的user_id
+                const savesResponse = await fetch('/api/debug/list-all-saves');
+                if (savesResponse.ok) {
+                    const allSaves = await savesResponse.json();
+                    const targetSave = allSaves.saves.find(s => s.game_id === saveId);
+
+                    if (targetSave) {
+                        console.log(`[SaveManager] Found save in user ${targetSave.user_id}, force loading...`);
+                        response = await fetch('/api/debug/force-load', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                game_id: saveId,
+                                user_id: targetSave.user_id
+                            })
+                        });
+                    }
+                }
+            }
 
             this.updateOverlayProgress(50, '解析游戏状态...');
             const result = await response.json();

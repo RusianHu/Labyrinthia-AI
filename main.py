@@ -12,6 +12,7 @@ import tempfile
 from datetime import datetime
 from typing import Dict, List, Optional, Any
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request, Response, UploadFile, File
 from fastapi.staticfiles import StaticFiles
@@ -1959,10 +1960,15 @@ if config.game.debug_mode:
                 if monster_tile:
                     monster_tile.character_id = monster.id
 
-            # 添加到活跃游戏列表
-            game_key = (target_user_id, game_state.id)
+            # 获取当前会话用户ID
+            current_session_user_id = user_session_manager.get_or_create_user_id(request, response)
+
+            # 添加到活跃游戏列表（使用当前会话用户ID，这样前端可以访问）
+            game_key = (current_session_user_id, game_state.id)
             game_engine.active_games[game_key] = game_state
-            game_engine._start_auto_save(target_user_id, game_state.id)
+            game_engine._start_auto_save(current_session_user_id, game_state.id)
+
+            logger.info(f"[DEBUG] Game added to active games for current session user: {current_session_user_id}")
 
             # 生成重新进入游戏的叙述
             try:
@@ -1972,12 +1978,13 @@ if config.game.debug_mode:
                 logger.error(f"Failed to generate return narrative: {e}")
                 game_state.last_narrative = f"[调试模式] 你重新回到了 {game_state.current_map.name}，继续你的冒险..."
 
-            logger.info(f"[DEBUG] Successfully force-loaded game {req.game_id} for user {target_user_id}")
+            logger.info(f"[DEBUG] Successfully force-loaded game {req.game_id} (original user: {target_user_id}, session user: {current_session_user_id})")
 
             return {
                 "success": True,
                 "game_id": game_state.id,
-                "user_id": target_user_id,
+                "user_id": current_session_user_id,  # 返回当前会话用户ID
+                "original_user_id": target_user_id,  # 原始用户ID（用于调试信息）
                 "message": f"[调试模式] 游戏已强制加载：{game_state.player.name}",
                 "narrative": game_state.last_narrative,
                 "debug_info": {
@@ -1994,6 +2001,59 @@ if config.game.debug_mode:
         except Exception as e:
             logger.error(f"[DEBUG] Failed to force load game: {e}")
             raise HTTPException(status_code=500, detail=f"强制加载游戏失败: {str(e)}")
+
+    @app.get("/api/debug/list-all-saves")
+    async def debug_list_all_saves():
+        """
+        调试专用：列出所有用户的所有存档
+
+        此接口仅在调试模式下可用，用于查找特定game_id对应的user_id。
+
+        Returns:
+            所有存档的列表，包含game_id、user_id、玩家名称等信息
+        """
+        if not config.game.debug_mode:
+            raise HTTPException(status_code=404, detail="API端点未找到")
+
+        try:
+            all_saves = []
+            saves_dir = Path("saves/users")
+
+            if not saves_dir.exists():
+                return {"saves": []}
+
+            # 遍历所有用户目录
+            for user_dir in saves_dir.iterdir():
+                if not user_dir.is_dir():
+                    continue
+
+                user_id = user_dir.name
+
+                # 遍历该用户的所有存档
+                for save_file in user_dir.glob("*.json"):
+                    try:
+                        with open(save_file, 'r', encoding='utf-8') as f:
+                            save_data = json.load(f)
+
+                        all_saves.append({
+                            "game_id": save_data.get("id"),
+                            "user_id": user_id,
+                            "player_name": save_data.get("player", {}).get("name"),
+                            "player_level": save_data.get("player", {}).get("stats", {}).get("level"),
+                            "map_name": save_data.get("current_map", {}).get("name"),
+                            "turn_count": save_data.get("turn_count"),
+                            "last_saved": save_data.get("last_saved")
+                        })
+                    except Exception as e:
+                        logger.warning(f"[DEBUG] Failed to read save file {save_file}: {e}")
+                        continue
+
+            logger.info(f"[DEBUG] Listed {len(all_saves)} saves from all users")
+            return {"saves": all_saves}
+
+        except Exception as e:
+            logger.error(f"[DEBUG] Failed to list all saves: {e}")
+            raise HTTPException(status_code=500, detail=f"列出存档失败: {str(e)}")
 
     # ==================== LLM 上下文日志接口 ====================
 
