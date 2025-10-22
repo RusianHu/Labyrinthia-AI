@@ -147,23 +147,31 @@ class GameEngine:
         except ValueError:
             player.character_class = CharacterClass.FIGHTER
 
-        # 根据职业设置初始属性
+        # 根据职业设置初始属性（按DND 5E规则）
         class_configs = {
             CharacterClass.FIGHTER: {
                 "abilities": {"strength": 15, "constitution": 14, "dexterity": 12},
-                "hp": 120, "mp": 30
+                "hp": 120, "mp": 30,
+                "saving_throw_proficiencies": ["strength", "constitution"],  # 战士：力量+体质豁免
+                "skill_proficiencies": ["athletics", "intimidation"]  # 示例技能
             },
             CharacterClass.WIZARD: {
                 "abilities": {"intelligence": 15, "wisdom": 14, "constitution": 12},
-                "hp": 80, "mp": 100
+                "hp": 80, "mp": 100,
+                "saving_throw_proficiencies": ["intelligence", "wisdom"],  # 法师：智力+感知豁免
+                "skill_proficiencies": ["arcana", "investigation"]
             },
             CharacterClass.ROGUE: {
                 "abilities": {"dexterity": 15, "intelligence": 14, "charisma": 12},
-                "hp": 100, "mp": 50
+                "hp": 100, "mp": 50,
+                "saving_throw_proficiencies": ["dexterity", "intelligence"],  # 盗贼：敏捷+智力豁免
+                "skill_proficiencies": ["stealth", "perception", "sleight_of_hand"]
             },
             CharacterClass.CLERIC: {
                 "abilities": {"wisdom": 15, "constitution": 14, "strength": 12},
-                "hp": 110, "mp": 80
+                "hp": 110, "mp": 80,
+                "saving_throw_proficiencies": ["wisdom", "charisma"],  # 牧师：感知+魅力豁免
+                "skill_proficiencies": ["religion", "medicine"]
             }
         }
 
@@ -186,6 +194,15 @@ class GameEngine:
         if "mp" in class_config:
             player.stats.mp = class_config["mp"]
             player.stats.max_mp = class_config["mp"]
+
+        # 设置豁免熟练和技能熟练（按DND 5E职业规则）
+        if "saving_throw_proficiencies" in class_config:
+            player.saving_throw_proficiencies = class_config["saving_throw_proficiencies"]
+        if "skill_proficiencies" in class_config:
+            player.skill_proficiencies = class_config["skill_proficiencies"]
+
+        # 更新熟练加值（基于等级）
+        player.update_proficiency_bonus()
 
         # 使用LLM生成角色描述
         description_prompt = f"""

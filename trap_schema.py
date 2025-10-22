@@ -30,6 +30,7 @@ class TrapSchema:
     
     # 伤害型陷阱参数
     damage: int = 15
+    damage_formula: Optional[str] = None  # 骰子表达式（如 "2d10+3"），优先于damage字段
     damage_type: str = "physical"  # physical, fire, cold, poison, acid, etc.
     save_half_damage: bool = True  # 豁免成功是否减半伤害
     
@@ -60,7 +61,7 @@ class TrapSchema:
     
     def to_dict(self) -> Dict[str, Any]:
         """转换为字典"""
-        return {
+        result = {
             "trap_type": self.trap_type,
             "trap_name": self.trap_name,
             "trap_description": self.trap_description,
@@ -84,6 +85,10 @@ class TrapSchema:
             "can_be_disarmed": self.can_be_disarmed,
             "can_be_avoided": self.can_be_avoided
         }
+        # 只在有值时添加damage_formula
+        if self.damage_formula:
+            result["damage_formula"] = self.damage_formula
+        return result
 
 
 class TrapDataValidator:
@@ -95,10 +100,11 @@ class TrapDataValidator:
     # 有效的陷阱类型
     VALID_TRAP_TYPES = {"damage", "debuff", "teleport", "alarm", "restraint"}
     
-    # 有效的伤害类型
+    # 有效的伤害类型（DND 5E标准）
     VALID_DAMAGE_TYPES = {
-        "physical", "fire", "cold", "poison", "acid", 
-        "lightning", "thunder", "necrotic", "radiant", "psychic", "force"
+        "physical", "bludgeoning", "piercing", "slashing",  # 物理伤害类型
+        "fire", "cold", "poison", "acid",  # 元素伤害
+        "lightning", "thunder", "necrotic", "radiant", "psychic", "force"  # 其他伤害
     }
     
     # 有效的减益类型
@@ -138,6 +144,8 @@ class TrapDataValidator:
         
         # 根据陷阱类型设置特定参数
         if trap_type == "damage":
+            # 优先使用damage_formula，如果没有则使用damage
+            schema.damage_formula = trap_data.get("damage_formula", None)
             schema.damage = max(1, min(100, trap_data.get("damage", 15)))
             damage_type = trap_data.get("damage_type", "physical")
             if damage_type not in TrapDataValidator.VALID_DAMAGE_TYPES:

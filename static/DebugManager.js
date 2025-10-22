@@ -939,6 +939,113 @@ const DebugMethods = {
 
         console.log('📷 Camera Follow Status:', status);
         this.addMessage('📷 视角追踪状态已输出到控制台', 'system');
+    },
+
+    // ==================== 调试专用加载功能 ====================
+
+    /**
+     * 调试强制加载存档
+     * @param {string} gameId - 游戏ID
+     * @param {string} userId - 可选：用户ID，不指定则使用当前会话用户
+     */
+    async debugForceLoadGame(gameId, userId = null) {
+        if (!gameId) {
+            this.addMessage('❌ 请提供游戏ID', 'error');
+            return;
+        }
+
+        try {
+            this.setLoading(true);
+            this.showFullscreenOverlay('调试加载', '正在强制加载存档...', `游戏ID: ${gameId}`);
+
+            console.log(`[DEBUG] Force loading game: ${gameId}${userId ? ` for user: ${userId}` : ''}`);
+
+            const response = await fetch('/api/debug/force-load', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    game_id: gameId,
+                    user_id: userId
+                })
+            });
+
+            const result = await response.json();
+
+            if (result.success) {
+                this.addMessage(`✅ ${result.message}`, 'success');
+                console.log('[DEBUG] Force load result:', result);
+
+                // 显示调试信息
+                if (result.debug_info) {
+                    console.log('[DEBUG] Game info:', result.debug_info);
+                    this.addMessage(
+                        `📊 等级: ${result.debug_info.player_level} | ` +
+                        `回合: ${result.debug_info.turn_count} | ` +
+                        `地图: ${result.debug_info.map_name} (深度${result.debug_info.map_depth})`,
+                        'info'
+                    );
+                }
+
+                // 设置游戏ID并刷新状态
+                this.gameId = result.game_id;
+                await this.refreshGameState();
+
+                // 切换到游戏界面
+                this.showGameInterface();
+
+                this.addMessage('🎮 游戏已加载，可以开始冒险了！', 'success');
+            } else {
+                this.addMessage(`❌ 加载失败: ${result.message || '未知错误'}`, 'error');
+            }
+        } catch (error) {
+            console.error('[DEBUG] Force load error:', error);
+            this.addMessage(`❌ 强制加载失败: ${error.message}`, 'error');
+        } finally {
+            this.setLoading(false);
+            this.hideFullscreenOverlay();
+        }
+    },
+
+    /**
+     * 从输入框获取游戏ID并强制加载
+     */
+    async debugForceLoadFromInput() {
+        const gameId = prompt('请输入要加载的游戏ID:');
+        if (gameId) {
+            await this.debugForceLoadGame(gameId.trim());
+        }
+    },
+
+    /**
+     * 列出所有可用的存档（调试用）
+     */
+    async debugListAllSaves() {
+        try {
+            const response = await fetch('/api/saves');
+            const saves = await response.json();
+
+            if (saves && saves.length > 0) {
+                console.log('📁 可用存档列表:', saves);
+                this.addMessage(`📁 找到 ${saves.length} 个存档，详情见控制台`, 'info');
+
+                // 在控制台显示格式化的存档列表
+                console.table(saves.map(s => ({
+                    ID: s.id,
+                    玩家: s.player_name,
+                    等级: s.player_level,
+                    职业: s.character_class,
+                    回合: s.turn_count,
+                    最后保存: s.last_saved
+                })));
+            } else {
+                this.addMessage('📁 没有找到存档', 'warning');
+            }
+        } catch (error) {
+            console.error('[DEBUG] List saves error:', error);
+            this.addMessage(`❌ 获取存档列表失败: ${error.message}`, 'error');
+        }
     }
 };
 

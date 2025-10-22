@@ -9,6 +9,9 @@ from typing import Dict, Any, Optional
 from data_models import Character, Monster, MapTile, GameState, TerrainType
 from entity_manager import EntityManager
 from trap_schema import trap_validator
+from roll_resolver import roll_resolver, CheckResult
+from dice_roller import dice_roller
+from config import config
 
 logger = logging.getLogger(__name__)
 
@@ -57,61 +60,120 @@ class TrapManager:
         
         return detected
     
-    def active_detect_trap(self, player: Character, trap_dc: int, 
+    def active_detect_trap(self, player: Character, trap_dc: int,
                           advantage: bool = False) -> Dict[str, Any]:
         """主动侦测陷阱（感知检定）
-        
+
         玩家选择"搜索陷阱"行动时使用。
-        
+
         Args:
             player: 玩家角色
             trap_dc: 陷阱的侦测难度等级
             advantage: 是否有优势（如仔细搜索）
-            
+
         Returns:
             检定结果字典，包含success、roll、total等信息
         """
+        # 使用新引擎（如果启用）
+        if config.game.use_new_roll_resolver:
+            check_result = roll_resolver.ability_check(
+                player, "wisdom", trap_dc,
+                skill="perception",  # 自动检查perception熟练
+                advantage=advantage
+            )
+
+            # 转换为旧格式（向后兼容）
+            result = {
+                "entity_name": check_result.entity_name,
+                "ability": check_result.ability,
+                "roll": check_result.roll,
+                "modifier": check_result.ability_modifier,
+                "proficiency_bonus": check_result.proficiency_bonus,
+                "total": check_result.total,
+                "dc": check_result.dc,
+                "success": check_result.success,
+                "critical_success": check_result.critical_success,
+                "critical_failure": check_result.critical_failure,
+                "advantage": check_result.advantage,
+                "disadvantage": check_result.disadvantage,
+                "breakdown": check_result.breakdown,  # 新增：详细过程
+                "ui_text": check_result.ui_text  # 新增：UI文本
+            }
+
+            logger.info(f"Active trap detection (new engine): {check_result.breakdown}")
+            return result
+
+        # 旧引擎（保持向后兼容）
         result = self.entity_manager.ability_check(
             player, "wisdom", trap_dc, advantage=advantage
         )
-        
+
         # 添加技能熟练加值（如果有perception技能）
         if "perception" in player.skill_proficiencies:
             result["proficiency_bonus"] = player.proficiency_bonus
             result["total"] += player.proficiency_bonus
             result["success"] = result["total"] >= trap_dc
             logger.info(f"Added perception proficiency bonus: +{player.proficiency_bonus}")
-        
+
         logger.info(
             f"Active trap detection: {result['roll']}+{result['modifier']} = {result['total']} "
             f"vs DC={trap_dc} - {'Success' if result['success'] else 'Failure'}"
         )
-        
+
         return result
     
     # ==================== 规避机制 ====================
     
     def attempt_avoid(self, player: Character, trap_dc: int) -> Dict[str, Any]:
         """尝试规避陷阱（敏捷豁免）
-        
+
         发现陷阱后尝试避免触发，或触发后减少伤害。
-        
+
         Args:
             player: 玩家角色
             trap_dc: 陷阱的豁免难度等级
-            
+
         Returns:
             豁免结果字典
         """
+        # 使用新引擎（如果启用）
+        if config.game.use_new_roll_resolver:
+            check_result = roll_resolver.saving_throw(
+                player, "dexterity", trap_dc
+                # proficient会自动从player.saving_throw_proficiencies检查
+            )
+
+            # 转换为旧格式（向后兼容）
+            result = {
+                "entity_name": check_result.entity_name,
+                "ability": check_result.ability,
+                "roll": check_result.roll,
+                "modifier": check_result.ability_modifier,
+                "proficiency_bonus": check_result.proficiency_bonus,
+                "total": check_result.total,
+                "dc": check_result.dc,
+                "success": check_result.success,
+                "critical_success": check_result.critical_success,
+                "critical_failure": check_result.critical_failure,
+                "advantage": check_result.advantage,
+                "disadvantage": check_result.disadvantage,
+                "breakdown": check_result.breakdown,  # 新增：详细过程
+                "ui_text": check_result.ui_text  # 新增：UI文本
+            }
+
+            logger.info(f"Trap avoidance (new engine): {check_result.breakdown}")
+            return result
+
+        # 旧引擎（保持向后兼容）
         result = self.entity_manager.saving_throw(
             player, "dexterity", trap_dc
         )
-        
+
         logger.info(
             f"Trap avoidance (DEX save): {result['roll']}+{result['modifier']} = {result['total']} "
             f"vs DC={trap_dc} - {'Success' if result['success'] else 'Failure'}"
         )
-        
+
         return result
     
     # ==================== 解除机制 ====================
@@ -209,27 +271,54 @@ class TrapManager:
         
         return result
     
-    def _trigger_damage_trap(self, player: Character, trap_data: Dict[str, Any], 
+    def _trigger_damage_trap(self, player: Character, trap_data: Dict[str, Any],
                             save_result: Optional[Dict] = None) -> Dict[str, Any]:
-        """触发伤害型陷阱"""
-        base_damage = trap_data.get("damage", 15)
+        """触发伤害型陷阱
+
+        支持骰子表达式（如 "2d10+3"）或固定伤害值
+        """
         damage_type = trap_data.get("damage_type", "physical")
         save_half = trap_data.get("save_half_damage", True)
-        
+        damage_formula = trap_data.get("damage_formula", None)
+
+        # 计算伤害
+        damage_breakdown = ""
+        if damage_formula:
+            # 使用骰子表达式
+            try:
+                dice_result = dice_roller.roll_expression(damage_formula)
+                base_damage = dice_result.total
+                damage_breakdown = dice_result.breakdown
+                logger.info(f"Trap damage roll: {damage_breakdown}")
+            except Exception as e:
+                logger.error(f"Failed to parse damage formula '{damage_formula}': {e}")
+                # 回退到固定伤害
+                base_damage = trap_data.get("damage", 15)
+                damage_breakdown = f"{base_damage} (固定)"
+        else:
+            # 使用固定伤害值
+            base_damage = trap_data.get("damage", 15)
+            damage_breakdown = f"{base_damage} (固定)"
+
         # 如果有豁免检定且成功，可能减半伤害
         if save_result and save_result.get("success") and save_half:
             damage = base_damage // 2
             description = f"触发了陷阱！但你灵巧地避开了部分伤害，受到了 {damage} 点{damage_type}伤害（减半）"
+            if damage_breakdown:
+                description += f"\n💥 伤害骰：{damage_breakdown} → {damage}（减半）"
         else:
             damage = base_damage
             description = f"触发了陷阱！受到了 {damage} 点{damage_type}伤害"
-        
+            if damage_breakdown and damage_formula:
+                description += f"\n💥 伤害骰：{damage_breakdown}"
+
         player.stats.hp -= damage
-        
+
         return {
             "damage": damage,
             "damage_type": damage_type,
-            "description": description
+            "description": description,
+            "damage_breakdown": damage_breakdown  # 新增：伤害骰详情
         }
     
     def _trigger_debuff_trap(self, player: Character, trap_data: Dict[str, Any],

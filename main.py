@@ -807,13 +807,21 @@ async def trigger_trap(request: Request, response: Response):
             save_attempted = True
             save_result = trap_manager.attempt_avoid(game_state.player, save_dc)
 
-            # 构建豁免判定的详细信息
-            success_icon = "✅" if save_result['success'] else "❌"
-            save_message = (
-                f"{success_icon} 敏捷豁免：🎲 1d20={save_result['roll']} + "
-                f"DEX{save_result['modifier']:+d} = {save_result['total']} "
-                f"vs DC {save_dc} - {'成功' if save_result['success'] else '失败'}"
-            )
+            # 使用统一的消息格式（优先使用新引擎的ui_text）
+            if "ui_text" in save_result:
+                save_message = save_result["ui_text"]
+            elif "breakdown" in save_result:
+                # 如果有breakdown但没有ui_text，手动构建
+                success_icon = "✅" if save_result['success'] else "❌"
+                save_message = f"{success_icon} DEX豁免：{save_result['breakdown']} vs DC {save_dc} - {'成功' if save_result['success'] else '失败'}"
+            else:
+                # 旧格式兼容
+                success_icon = "✅" if save_result['success'] else "❌"
+                save_message = (
+                    f"{success_icon} 敏捷豁免：🎲 1d20={save_result['roll']} + "
+                    f"DEX{save_result['modifier']:+d} = {save_result['total']} "
+                    f"vs DC {save_dc} - {'成功' if save_result['success'] else '失败'}"
+                )
 
             logger.info(f"Trap trigger with save: {save_message}")
 
@@ -1886,6 +1894,106 @@ if config.game.debug_mode:
         """调试：获取游戏详细状态"""
         user_id = user_session_manager.get_or_create_user_id(request, response)
         return debug_api.get_game_detail(user_id, game_id)
+
+    # ==================== 调试专用加载接口 ====================
+
+    class DebugForceLoadRequest(BaseModel):
+        """调试强制加载请求"""
+        game_id: str
+        user_id: Optional[str] = None  # 可选：指定用户ID，默认使用当前会话用户
+
+    @app.post("/api/debug/force-load")
+    async def debug_force_load(req: DebugForceLoadRequest, request: Request, response: Response):
+        """
+        调试专用：强制加载指定游戏存档
+
+        此接口仅在调试模式下可用，用于快速加载任意存档进行测试。
+        与普通加载接口的区别：
+        1. 可以指定user_id加载其他用户的存档（调试用）
+        2. 绕过某些权限检查，方便开发调试
+        3. 仅在DEBUG_MODE=True时启用
+
+        Args:
+            req: 包含game_id和可选user_id的请求
+            request: FastAPI请求对象
+            response: FastAPI响应对象
+
+        Returns:
+            加载结果，包含游戏状态和叙述
+        """
+        try:
+            # 确定要使用的用户ID
+            if req.user_id:
+                # 调试模式下允许指定用户ID
+                target_user_id = req.user_id
+                logger.info(f"[DEBUG] Force loading game {req.game_id} for specified user {target_user_id}")
+            else:
+                # 使用当前会话用户
+                target_user_id = user_session_manager.get_or_create_user_id(request, response)
+                logger.info(f"[DEBUG] Force loading game {req.game_id} for current user {target_user_id}")
+
+            # 从用户存档目录加载
+            save_data = user_session_manager.load_game_for_user(target_user_id, req.game_id)
+
+            if not save_data:
+                raise HTTPException(status_code=404, detail=f"存档未找到: {req.game_id} (user: {target_user_id})")
+
+            # 重建游戏状态
+            game_state = data_manager._dict_to_game_state(save_data)
+
+            # 清除所有瓦片的character_id（防止存档中有错误数据）
+            for tile in game_state.current_map.tiles.values():
+                tile.character_id = None
+            logger.info(f"[DEBUG] Cleared all character_id from {len(game_state.current_map.tiles)} tiles")
+
+            # 重新设置玩家位置的character_id
+            player_tile = game_state.current_map.get_tile(*game_state.player.position)
+            if player_tile:
+                player_tile.character_id = game_state.player.id
+                player_tile.is_explored = True
+                player_tile.is_visible = True
+
+            # 重新设置怪物位置的character_id
+            for monster in game_state.monsters:
+                monster_tile = game_state.current_map.get_tile(*monster.position)
+                if monster_tile:
+                    monster_tile.character_id = monster.id
+
+            # 添加到活跃游戏列表
+            game_key = (target_user_id, game_state.id)
+            game_engine.active_games[game_key] = game_state
+            game_engine._start_auto_save(target_user_id, game_state.id)
+
+            # 生成重新进入游戏的叙述
+            try:
+                return_narrative = await llm_service.generate_return_narrative(game_state)
+                game_state.last_narrative = return_narrative
+            except Exception as e:
+                logger.error(f"Failed to generate return narrative: {e}")
+                game_state.last_narrative = f"[调试模式] 你重新回到了 {game_state.current_map.name}，继续你的冒险..."
+
+            logger.info(f"[DEBUG] Successfully force-loaded game {req.game_id} for user {target_user_id}")
+
+            return {
+                "success": True,
+                "game_id": game_state.id,
+                "user_id": target_user_id,
+                "message": f"[调试模式] 游戏已强制加载：{game_state.player.name}",
+                "narrative": game_state.last_narrative,
+                "debug_info": {
+                    "player_level": game_state.player.stats.level,
+                    "turn_count": game_state.turn_count,
+                    "map_name": game_state.current_map.name,
+                    "map_depth": game_state.current_map.depth,
+                    "active_quests": len([q for q in game_state.quests if q.is_active])
+                }
+            }
+
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"[DEBUG] Failed to force load game: {e}")
+            raise HTTPException(status_code=500, detail=f"强制加载游戏失败: {str(e)}")
 
     # ==================== LLM 上下文日志接口 ====================
 

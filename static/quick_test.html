@@ -452,6 +452,10 @@
                             <span class="material-icons">manage_accounts</span>
                             游戏状态管理
                         </button>
+                        <button class="test-btn" onclick="testDebugForceLoad()">
+                            <span class="material-icons">upload_file</span>
+                            调试强制加载测试
+                        </button>
                     </div>
                 </div>
 
@@ -1692,6 +1696,104 @@
 
                 } catch (error) {
                     log(`❌ 压力测试异常: ${error.message}`, 'error');
+                }
+            });
+        }
+
+        // ==================== 调试强制加载测试 ====================
+
+        async function testDebugForceLoad() {
+            const button = event.target;
+            await withLoadingButton(button, async () => {
+                log('开始调试强制加载测试...', 'info');
+
+                try {
+                    // 1. 先列出所有存档
+                    log('📁 步骤1: 获取存档列表...', 'info');
+                    const savesResponse = await fetch('/api/saves');
+                    if (!savesResponse.ok) {
+                        log('❌ 获取存档列表失败', 'error');
+                        return;
+                    }
+
+                    const saves = await savesResponse.json();
+                    if (!saves || saves.length === 0) {
+                        log('⚠️ 没有找到存档，请先创建一个游戏', 'warning');
+                        log('💡 提示：可以运行"游戏初始化测试"创建测试游戏', 'info');
+                        return;
+                    }
+
+                    log(`✅ 找到 ${saves.length} 个存档`, 'success');
+
+                    // 显示存档列表
+                    saves.forEach((save, index) => {
+                        log(`  ${index + 1}. ${save.player_name} (Lv.${save.player_level}) - ID: ${save.id}`, 'info');
+                    });
+
+                    // 2. 选择第一个存档进行测试
+                    const testSave = saves[0];
+                    log(`\n🎯 步骤2: 测试强制加载存档...`, 'info');
+                    log(`📋 目标存档: ${testSave.player_name} (ID: ${testSave.id})`, 'info');
+
+                    // 3. 调用调试强制加载API
+                    const forceLoadResponse = await fetch('/api/debug/force-load', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({
+                            game_id: testSave.id
+                        })
+                    });
+
+                    if (!forceLoadResponse.ok) {
+                        const errorData = await forceLoadResponse.json();
+                        log(`❌ 强制加载失败: ${errorData.detail || '未知错误'}`, 'error');
+                        return;
+                    }
+
+                    const result = await forceLoadResponse.json();
+
+                    if (result.success) {
+                        log('✅ 强制加载成功！', 'success');
+                        log(`📊 游戏信息:`, 'info');
+                        log(`  - 游戏ID: ${result.game_id}`, 'info');
+                        log(`  - 用户ID: ${result.user_id}`, 'info');
+                        log(`  - 消息: ${result.message}`, 'info');
+
+                        if (result.debug_info) {
+                            log(`  - 玩家等级: ${result.debug_info.player_level}`, 'info');
+                            log(`  - 回合数: ${result.debug_info.turn_count}`, 'info');
+                            log(`  - 地图: ${result.debug_info.map_name} (深度${result.debug_info.map_depth})`, 'info');
+                            log(`  - 活跃任务: ${result.debug_info.active_quests}`, 'info');
+                        }
+
+                        log(`\n📖 叙述: ${result.narrative}`, 'info');
+
+                        // 4. 验证游戏状态
+                        log(`\n🔍 步骤3: 验证游戏状态...`, 'info');
+                        const stateResponse = await fetch(`/api/game/${result.game_id}`);
+
+                        if (stateResponse.ok) {
+                            const gameState = await stateResponse.json();
+                            log('✅ 游戏状态验证成功', 'success');
+                            log(`  - 玩家位置: (${gameState.player.position[0]}, ${gameState.player.position[1]})`, 'info');
+                            log(`  - 地图大小: ${gameState.current_map.width}x${gameState.current_map.height}`, 'info');
+                            log(`  - 怪物数量: ${gameState.monsters.length}`, 'info');
+                        } else {
+                            log('⚠️ 游戏状态验证失败', 'warning');
+                        }
+
+                        log('\n✅ 调试强制加载测试完成！', 'success');
+                        log('💡 提示：你可以在主界面使用 /?game_id=' + result.game_id + ' 直接进入游戏', 'info');
+
+                    } else {
+                        log(`❌ 强制加载失败: ${result.message || '未知错误'}`, 'error');
+                    }
+
+                } catch (error) {
+                    log(`❌ 测试异常: ${error.message}`, 'error');
+                    console.error('Debug force load test error:', error);
                 }
             });
         }

@@ -192,6 +192,10 @@ class GameConfig:
     quest_monster_full_context: bool = True        # 任务怪物击败使用完整上下文
     normal_monster_full_context: bool = False      # 普通怪物击败使用简化上下文
 
+    # DND判定系统设置
+    use_new_roll_resolver: bool = True             # 使用新的统一判定引擎（支持豁免熟练、详细breakdown等）
+    show_detailed_rolls: bool = True               # 显示详细的投掷过程（调试模式）
+
     # 内容生成设置
     enable_ai_generation: bool = True
     batch_generation_size: int = 5  # 批量生成内容的数量

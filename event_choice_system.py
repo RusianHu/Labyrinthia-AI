@@ -918,7 +918,14 @@ class EventChoiceSystem:
 
             if result['success']:
                 # 规避成功，安全通过
-                message = f"✅ 你灵巧地避开了陷阱！🎲 1d20={result['roll']} + DEX{result['modifier']:+d} = {result['total']} vs DC {save_dc}"
+                # 使用统一的消息格式（优先使用新引擎的ui_text）
+                if "ui_text" in result:
+                    message = f"✅ 你灵巧地避开了陷阱！{result['ui_text']}"
+                elif "breakdown" in result:
+                    message = f"✅ 你灵巧地避开了陷阱！{result['breakdown']} vs DC {save_dc}"
+                else:
+                    # 旧格式兼容
+                    message = f"✅ 你灵巧地避开了陷阱！🎲 1d20={result['roll']} + DEX{result['modifier']:+d} = {result['total']} vs DC {save_dc}"
                 events = ["成功规避陷阱"]
 
                 return ChoiceResult(
@@ -930,7 +937,14 @@ class EventChoiceSystem:
                 # 规避失败，触发陷阱（可能减半伤害）
                 trigger_result = trap_manager.trigger_trap(game_state, tile, save_result=result)
 
-                message = f"❌ 规避失败！陷阱被触发了！🎲 1d20={result['roll']} + DEX{result['modifier']:+d} = {result['total']} vs DC {save_dc}"
+                # 使用统一的消息格式
+                if "ui_text" in result:
+                    message = f"❌ 规避失败！陷阱被触发了！{result['ui_text']}"
+                elif "breakdown" in result:
+                    message = f"❌ 规避失败！陷阱被触发了！{result['breakdown']} vs DC {save_dc}"
+                else:
+                    # 旧格式兼容
+                    message = f"❌ 规避失败！陷阱被触发了！🎲 1d20={result['roll']} + DEX{result['modifier']:+d} = {result['total']} vs DC {save_dc}"
                 events = [trigger_result['description']]
 
                 return ChoiceResult(

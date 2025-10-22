@@ -393,6 +393,23 @@
                     </div>
                 </div>
 
+                <!-- 存档调试功能 -->
+                <div class="debug-button-group">
+                    <h5>💾 存档调试</h5>
+                    <button class="debug-btn" onclick="game.debugListAllSaves()" title="列出当前用户的所有存档，详情显示在控制台">
+                        <i class="material-icons">folder_open</i>列出所有存档
+                    </button>
+                    <button class="debug-btn" onclick="game.debugForceLoadFromInput()" title="输入游戏ID强制加载存档（绕过权限检查）">
+                        <i class="material-icons">upload_file</i>强制加载存档
+                    </button>
+                    <div class="debug-teleport-group">
+                        <input type="text" id="debug-gameid-input" placeholder="游戏ID" class="debug-input" style="flex: 1;">
+                        <button class="debug-btn" onclick="game.debugForceLoadGame(document.getElementById('debug-gameid-input').value)" title="从输入框读取游戏ID并强制加载">
+                            <i class="material-icons">play_arrow</i>快速加载
+                        </button>
+                    </div>
+                </div>
+
                 <!-- 地图与战斗调试 -->
                 <div class="debug-button-group">
                     <h5>地图与战斗</h5>

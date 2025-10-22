@@ -251,6 +251,7 @@ class Character:
     proficiency_bonus: int = 2  # 熟练加值（基于等级，2-6）
     skill_proficiencies: List[str] = field(default_factory=list)  # 熟练技能列表（如["perception", "stealth"]）
     tool_proficiencies: List[str] = field(default_factory=list)  # 熟练工具列表（如["thieves_tools"]）
+    saving_throw_proficiencies: List[str] = field(default_factory=list)  # 豁免熟练列表（如["dexterity", "intelligence"]）
 
     def get_passive_perception(self) -> int:
         """计算被动感知值 (Passive Perception)
@@ -308,6 +309,7 @@ class Character:
             "proficiency_bonus": self.proficiency_bonus,
             "skill_proficiencies": self.skill_proficiencies,
             "tool_proficiencies": self.tool_proficiencies,
+            "saving_throw_proficiencies": self.saving_throw_proficiencies,
             "passive_perception": self.get_passive_perception()
         }
 
