@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>粒子系统测试 - Labyrinthia AI</title>
     <link rel="stylesheet" href="https://fonts.googleapis.com/icon?family=Material+Icons">
+    <link rel="stylesheet" href="css/enhanced_effects.css">
     <style>
         * {
             margin: 0;
@@ -279,10 +280,10 @@
     </div>
 
     <!-- 加载 anime.js -->
-    <script src="/static/js/anime.min.js"></script>
-    
+    <script src="js/anime.min.js"></script>
+
     <!-- 加载 EnhancedEffectsManager -->
-    <script src="/static/EnhancedEffectsManager.js"></script>
+    <script src="EnhancedEffectsManager.js"></script>
 
     <script>
         // 创建一个模拟的游戏对象
@@ -370,13 +371,13 @@
         // 更新统计信息
         function updateStats() {
             document.getElementById('stat-systems').textContent = effectsManager.particleSystems.size;
-            
+
             let totalParticles = 0;
             effectsManager.particleSystems.forEach(system => {
                 totalParticles += system.particles.length;
             });
             document.getElementById('stat-particles').textContent = totalParticles;
-            
+
             document.getElementById('stat-animations').textContent = effectsManager.activeAnimations.size;
             document.getElementById('stat-anime').textContent = typeof anime !== 'undefined' ? '✅ 已加载' : '❌ 未加载';
         }
@@ -392,7 +393,7 @@
 
         // 初始化
         createTestBoxes();
-        
+
         // 自动应用每个主题到对应的测试框
         setTimeout(() => {
             themes.forEach(theme => {
