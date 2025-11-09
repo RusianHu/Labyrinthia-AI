@@ -735,26 +735,38 @@ class LocalGameEngine {
             return;
         }
 
+        // 读取目标瓦片信息
+        const targetTile = this.getTile(newPos.x, newPos.y);
+        if (!targetTile) {
+            this.addMessage('无法移动到该位置', 'error');
+            return;
+        }
+
+        // 键盘移动遇到敌人时自动发起攻击
+        if (targetTile.character_id && targetTile.character_id !== gameState.player.id) {
+            const monster = this.findMonster(targetTile.character_id);
+            if (monster) {
+                const distance = this.calculateDistance(gameState.player.position, monster.position);
+                if (distance <= 1) {
+                    await this.attackMonster(monster.id);
+                } else {
+                    this.addMessage('目标距离太远，无法攻击', 'error');
+                }
+            } else {
+                this.addMessage('该位置已被占据', 'error');
+            }
+            return;
+        }
+
         // 验证移动
         if (!this.canMoveTo(newPos.x, newPos.y)) {
-            const tile = this.getTile(newPos.x, newPos.y);
-            if (tile && tile.terrain === 'wall') {
+            if (targetTile.terrain === 'wall') {
                 this.addMessage('无法穿过墙壁', 'error');
-            } else if (tile && tile.character_id) {
-                const monster = this.findMonster(tile.character_id);
-                if (monster) {
-                    this.addMessage(`该位置有 ${monster.name}，请使用攻击命令`, 'error');
-                } else {
-                    this.addMessage('该位置已被占据', 'error');
-                }
             } else {
                 this.addMessage('无法移动到该位置', 'error');
             }
             return;
         }
-
-        // 检查目标瓦片
-        const targetTile = this.getTile(newPos.x, newPos.y);
 
         // 检查是否需要后端处理（在移动前检查，以便正确显示遮罩）
         const needsBackend = this.needsBackendProcessing(targetTile);
