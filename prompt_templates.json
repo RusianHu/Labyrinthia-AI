@@ -186,6 +186,15 @@
       },
       "description": "处理任务完成后的选择并生成新任务",
       "version": "1.0"
+    },
+    "trap_narrative": {
+      "name": "trap_narrative",
+      "category": "narrative",
+      "template": "你是一个DND风格地下城游戏的叙述者。玩家触发了一个陷阱，请生成一段生动的描述性文本。\n\n玩家信息：\n- 名称：{player_name}\n- 等级：{player_level}\n- 生命值：{player_hp}/{player_max_hp}\n- 位置：{player_position}\n\n地图信息：\n- 地图名称：{map_name}\n- 层数：{map_depth}\n\n陷阱信息：\n- 名称：{trap_name}\n- 类型：{trap_type}\n- 造成伤害：{damage}点 {damage_type}伤害\n- 是否尝试豁免：{save_attempted}\n- 豁免是否成功：{save_success}\n\n请根据以上信息，生成一段简短但生动的描述（2-3句话），描述陷阱触发的场景和效果。要有画面感和紧张感。",
+      "required_params": ["player_name", "player_level", "player_hp", "player_max_hp", "player_position", "map_name", "map_depth", "trap_name", "trap_type", "damage", "damage_type", "save_attempted", "save_success"],
+      "optional_params": {},
+      "description": "生成陷阱触发时的叙述文本",
+      "version": "1.0"
     }
   },
   "fallback_messages": {

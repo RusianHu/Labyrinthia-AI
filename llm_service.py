@@ -676,6 +676,36 @@ class LLMService:
 
         return await self._async_generate(prompt)
 
+    async def generate_trap_narrative(self, game_state: GameState, trap_context: Dict[str, Any]) -> str:
+        """生成陷阱触发的叙述文本"""
+        try:
+            # 使用PromptManager构建提示词
+            player_context = prompt_manager.build_player_context(game_state.player)
+            map_context = prompt_manager.build_map_context(game_state.current_map)
+
+            # 合并所有上下文
+            context = {
+                **player_context,
+                **map_context,
+                "trap_name": trap_context.get("trap_name", "未知陷阱"),
+                "trap_type": trap_context.get("trap_type", "damage"),
+                "damage": trap_context.get("damage", 0),
+                "damage_type": trap_context.get("damage_type", "physical"),
+                "save_attempted": trap_context.get("save_attempted", False),
+                "save_success": trap_context.get("save_success", False),
+            }
+
+            prompt = prompt_manager.format_prompt("trap_narrative", **context)
+            
+            narrative = await self._async_generate(prompt)
+            
+            return narrative.strip()
+
+        except Exception as e:
+            logger.error(f"Failed to generate trap narrative: {e}")
+            # 返回一个更通用的默认描述
+            return "你触发了一个隐藏的机关！"
+
     async def generate_text(self, prompt: str) -> str:
         """生成文本（通用方法）"""
         return await self._async_generate(prompt)

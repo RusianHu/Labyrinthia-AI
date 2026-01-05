@@ -506,8 +506,33 @@ class GameEngine:
     async def _handle_move(self, game_state: GameState, parameters: Dict[str, Any]) -> Dict[str, Any]:
         """处理移动行动 - 后端仅处理生成型逻辑
 
-        注意：所有计算型验证(边界检查、地形检查、碰撞检测等)已由前端LocalGameEngine完成
-        后端专注于生成型逻辑：LLM交互、事件生成、叙述生成
+        【重要架构说明】
+        ================
+        本游戏采用前后端分离的事件处理架构：
+
+        前端 (LocalGameEngine.js) 负责：
+        - 边界检查、地形检查、碰撞检测
+        - 陷阱侦测和触发判定（调用 /api/check-trap 和 /api/trap/trigger）
+        - 楼梯事件提示（仅显示提示，不自动触发LLM交互）
+        - 战斗计算（伤害、经验值、升级检查）
+        - 物品拾取的即时交互
+
+        后端 (game_engine.py) 负责：
+        - LLM叙述生成
+        - 任务进度更新
+        - 事件选择系统（EventChoiceSystem）
+        - 地图生成和切换
+        - 存档管理
+
+        【关于事件触发】
+        ===============
+        移动后的事件触发（如陷阱、故事事件）完全由前端 LocalGameEngine.js 负责：
+        - 前端在 handleMoveResult() 中检查目标瓦片
+        - 前端调用 checkAndTriggerTileEvents() 处理事件
+        - 前端仅在需要LLM生成叙述时才调用后端 /api/llm-event
+
+        本方法是遗留接口，主要用于不支持 LocalGameEngine 的旧版本客户端。
+        新版本前端不应调用此方法处理移动。
         """
         # 前端已完成所有验证，后端直接信任前端传来的位置
         # 这是一个遗留接口，主要用于不支持LocalGameEngine的旧版本客户端
@@ -1025,12 +1050,31 @@ class GameEngine:
         }
 
     async def _trigger_trap(self, game_state: GameState) -> str:
-        """触发陷阱 - 遗留方法，已升级为调用TrapManager
+        """触发陷阱 - 【已废弃】遗留方法
 
-        注意：此方法已废弃，建议使用 TrapManager.trigger_trap
-        保留此方法仅用于向后兼容
+        ⚠️ DEPRECATED / 已废弃 ⚠️
+        ==========================
+        此方法已被废弃，请使用 TrapManager.trigger_trap() 代替。
+
+        废弃原因：
+        - 陷阱处理逻辑已统一迁移到 TrapManager 类
+        - 前端 LocalGameEngine.js 直接调用 /api/trap/trigger 接口
+        - 此方法仅为向后兼容保留，未来版本可能移除
+
+        推荐替代方案：
+        - 后端：使用 trap_manager.trigger_trap(game_state, tile, save_result)
+        - 前端：调用 POST /api/trap/trigger 接口
+
+        保留原因：
+        - 兼容不支持 LocalGameEngine 的旧版本客户端
         """
-        logger.warning("_trigger_trap called - deprecated, use TrapManager.trigger_trap instead")
+        import warnings
+        warnings.warn(
+            "_trigger_trap is deprecated, use TrapManager.trigger_trap instead",
+            DeprecationWarning,
+            stacklevel=2
+        )
+        logger.warning("⚠️ _trigger_trap called - DEPRECATED, use TrapManager.trigger_trap instead")
 
         # 获取当前玩家位置的瓦片
         tile = game_state.current_map.get_tile(*game_state.player.position)
@@ -1055,6 +1099,54 @@ class GameEngine:
         trigger_result = trap_manager.trigger_trap(game_state, tile, save_result=save_result)
 
         return trigger_result.get("description", "触发了陷阱！")
+
+    async def _generate_trap_narrative(self, game_state: GameState, trap_result: Dict[str, Any]) -> str:
+        """生成陷阱触发的叙述文本
+
+        此方法包装 llm_service.generate_trap_narrative，为 /api/llm-event 接口提供支持。
+
+        Args:
+            game_state: 游戏状态
+            trap_result: 陷阱触发结果，包含以下字段：
+                - trap_name: 陷阱名称
+                - trap_type: 陷阱类型
+                - damage: 造成的伤害
+                - damage_type: 伤害类型
+                - save_attempted: 是否尝试了豁免
+                - save_success: 豁免是否成功
+
+        Returns:
+            LLM生成的叙述文本
+        """
+        try:
+            # 构建上下文 - 【修复】确保 trap_name 正确获取
+            trap_context = {
+                "trap_name": trap_result.get("trap_name", trap_result.get("name", "未知陷阱")),
+                "trap_type": trap_result.get("trap_type", trap_result.get("type", "damage")),
+                "damage": trap_result.get("damage", 0),
+                "damage_type": trap_result.get("damage_type", "physical"),
+                "save_attempted": trap_result.get("save_attempted", False),
+                "save_success": trap_result.get("save_success", False),
+                "player_name": game_state.player.name,
+                "player_hp": game_state.player.stats.hp,
+                "player_max_hp": game_state.player.stats.max_hp
+            }
+
+            # 调用 LLM 服务生成叙述
+            narrative = await llm_service.generate_trap_narrative(game_state, trap_context)
+            return narrative
+
+        except Exception as e:
+            logger.error(f"Failed to generate trap narrative: {e}")
+            # 如果 LLM 生成失败，返回默认描述
+            description = trap_result.get("description", "")
+            if description:
+                return description
+            trap_name = trap_result.get("trap_name", trap_result.get("name", "陷阱"))
+            damage = trap_result.get("damage", 0)
+            if damage > 0:
+                return f"你触发了{trap_name}，受到了 {damage} 点伤害！"
+            return f"你触发了{trap_name}！"
 
     async def _trigger_tile_event(self, game_state: GameState, tile: MapTile) -> str:
         """触发瓦片事件"""
@@ -1208,13 +1300,29 @@ class GameEngine:
         return result_message
 
     async def _handle_trap_event(self, game_state: GameState, tile: MapTile) -> str:
-        """处理陷阱事件 - 遗留接口，已升级为调用TrapManager
+        """处理陷阱事件 - 【已废弃】遗留接口
 
-        注意：陷阱的计算型逻辑(伤害计算、传送位置等)已由前端LocalGameEngine完成
-        后端保留此方法仅用于不支持LocalEngine的旧版本客户端
-        此方法已升级为调用 TrapManager，确保与新接口行为一致
+        ⚠️ DEPRECATED / 已废弃 ⚠️
+        ==========================
+        此方法已被废弃。陷阱处理应由前端 LocalGameEngine.js 完成。
+
+        现代架构流程：
+        1. 前端检测到陷阱瓦片
+        2. 前端调用 POST /api/check-trap 进行被动侦测
+        3. 如果未发现陷阱，前端调用 POST /api/trap/trigger 触发陷阱
+        4. 如果发现陷阱，前端显示选择对话框（通过 /api/trap-choice/register）
+
+        保留原因：
+        - 兼容不支持 LocalGameEngine 的旧版本客户端
+        - 此方法内部已升级为调用 TrapManager，确保行为一致性
         """
-        logger.warning("_handle_trap_event called - this should be handled by frontend LocalGameEngine")
+        import warnings
+        warnings.warn(
+            "_handle_trap_event is deprecated, trap handling should be done by frontend",
+            DeprecationWarning,
+            stacklevel=2
+        )
+        logger.warning("⚠️ _handle_trap_event called - DEPRECATED, should be handled by frontend LocalGameEngine")
 
         # 使用 TrapManager 统一处理
         from trap_manager import get_trap_manager
@@ -1235,52 +1343,6 @@ class GameEngine:
         trigger_result = trap_manager.trigger_trap(game_state, tile, save_result=save_result)
 
         return trigger_result.get("description", "触发了一个神秘的陷阱！")
-
-    async def _generate_trap_narrative(self, game_state: GameState, trap_result: Dict[str, Any]) -> str:
-        """生成陷阱触发的描述性文本（生成型逻辑）
-
-        前端已经计算了陷阱效果，这里只生成描述性文本来增强游戏体验
-        """
-        try:
-            trap_type = trap_result.get('type', 'damage')
-            damage = trap_result.get('damage', 0)
-            teleported = trap_result.get('teleported', False)
-            new_position = trap_result.get('newPosition')
-
-            # 构建提示词
-            prompt = f"""你是一个DND风格地下城游戏的叙述者。玩家触发了一个陷阱，请生成一段生动的描述性文本。
-
-陷阱类型: {trap_type}
-"""
-            if trap_type == 'damage' and damage > 0:
-                prompt += f"造成伤害: {damage}点\n"
-            elif trap_type == 'teleport' and teleported and new_position:
-                prompt += f"传送到: ({new_position[0]}, {new_position[1]})\n"
-
-            prompt += f"""
-当前场景:
-- 地图: {game_state.current_map.name}
-- 楼层: {game_state.current_map.depth}
-- 玩家位置: {game_state.player.position}
-- 玩家HP: {game_state.player.stats.hp}/{game_state.player.stats.max_hp}
-
-请生成一段简短但生动的描述（2-3句话），描述陷阱触发的场景和效果。要有画面感和紧张感。
-"""
-
-            # 调用LLM生成叙述
-            narrative = await llm_service.generate_text(prompt)
-
-            return narrative.strip()
-
-        except Exception as e:
-            logger.error(f"Failed to generate trap narrative: {e}")
-            # 返回默认描述
-            if trap_result.get('type') == 'damage':
-                return "陷阱突然触发，锋利的机关从地面弹出！"
-            elif trap_result.get('type') == 'teleport':
-                return "一阵眩晕感袭来，周围的景象开始扭曲变形..."
-            else:
-                return "你触发了一个隐藏的机关！"
 
     async def _handle_mystery_event(self, game_state: GameState, tile: MapTile) -> str:
         """处理神秘事件"""

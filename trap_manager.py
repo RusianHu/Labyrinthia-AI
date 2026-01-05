@@ -225,15 +225,18 @@ class TrapManager:
             save_result: 豁免检定结果（如果有）
 
         Returns:
-            触发结果字典，包含description、damage、state_updates等
+            触发结果字典，包含trap_name、trap_type、description、damage、state_updates等
         """
         # 【P0修复】获取并验证陷阱数据
         raw_trap_data = tile.get_trap_data()
         trap_data = trap_validator.validate_and_normalize(raw_trap_data)
         trap_type = trap_data.get("trap_type", "damage")
+        # 【修复】确保trap_name始终包含在返回结果中
+        trap_name = trap_data.get("trap_name", trap_data.get("name", "未知陷阱"))
         player = game_state.player
         
         result = {
+            "trap_name": trap_name,  # 【新增】陷阱名称
             "trap_type": trap_type,
             "description": "",
             "damage": 0,
@@ -267,7 +270,7 @@ class TrapManager:
             result["player_died"] = True
             result["description"] += " 你被陷阱杀死了！"
         
-        logger.info(f"Trap triggered: {trap_type} - {result['description']}")
+        logger.info(f"Trap triggered: {trap_name} ({trap_type}) - {result['description']}")
         
         return result
     
