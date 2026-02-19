@@ -175,6 +175,9 @@ class GameConfig:
     default_map_size: tuple = (20, 20)
     max_map_size: tuple = (50, 50)
     min_map_size: tuple = (10, 10)
+    map_generation_provider: str = "llm"  # llm | local
+    map_generation_fallback_to_llm: bool = True
+    local_map_monster_hints_enabled: bool = True
 
     # 角色设置
     max_player_level: int = 20
@@ -381,6 +384,17 @@ class Config:
 
         if show_llm_debug := os.getenv("SHOW_LLM_DEBUG"):
             self.game.show_llm_debug = show_llm_debug.lower() in ("true", "1", "yes")
+
+        if map_provider := os.getenv("MAP_GENERATION_PROVIDER"):
+            provider = map_provider.strip().lower()
+            if provider in ("llm", "local"):
+                self.game.map_generation_provider = provider
+
+        if map_fallback := os.getenv("MAP_GENERATION_FALLBACK_TO_LLM"):
+            self.game.map_generation_fallback_to_llm = map_fallback.lower() in ("true", "1", "yes")
+
+        if local_hints := os.getenv("LOCAL_MAP_MONSTER_HINTS_ENABLED"):
+            self.game.local_map_monster_hints_enabled = local_hints.lower() in ("true", "1", "yes")
 
         # 调试配置
         if debug_enabled := os.getenv("DEBUG_ENABLED"):

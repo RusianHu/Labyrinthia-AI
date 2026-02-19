@@ -697,14 +697,14 @@ class EventChoiceSystem:
                     else f"神秘区域（第{target_depth}阶段/层级）"
                 )
 
-                # 生成新地图
-                from content_generator import content_generator
-                new_map = await content_generator.generate_dungeon_map(
+                # 生成新地图（通过 game_engine 统一 provider 分流与回退）
+                new_map = await game_engine._generate_map_with_provider(
                     width=config.game.default_map_size[0],
                     height=config.game.default_map_size[1],
                     depth=target_depth,
                     theme=transition_data.get("theme", default_theme),
-                    quest_context=quest_context
+                    quest_context=quest_context,
+                    source=f"event_choice:{source}"
                 )
 
                 # 确保新地图的深度正确设置
@@ -781,8 +781,10 @@ class EventChoiceSystem:
 
         # 生成新怪物
         from game_engine import game_engine
-        monsters = await content_generator.generate_encounter_monsters(
-            game_state.player.stats.level, "normal"
+        monsters = await game_engine._generate_encounter_monsters_by_map_hints(
+            game_state,
+            new_map,
+            default_difficulty="normal",
         )
 
         # 生成任务专属怪物
@@ -790,7 +792,7 @@ class EventChoiceSystem:
         monsters.extend(quest_monsters)
 
         # 放置怪物
-        monster_positions = content_generator.get_spawn_positions(new_map, len(monsters))
+        monster_positions = game_engine._get_monster_spawn_positions(new_map, len(monsters))
         for monster, position in zip(monsters, monster_positions):
             monster.position = position
             tile = new_map.get_tile(*position)

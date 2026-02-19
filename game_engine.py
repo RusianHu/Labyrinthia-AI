@@ -70,12 +70,13 @@ class GameEngine:
             quest_context = active_quest.to_dict()
 
         # 生成初始地图（考虑任务上下文）
-        game_state.current_map = await content_generator.generate_dungeon_map(
+        game_state.current_map = await self._generate_map_with_provider(
             width=config.game.default_map_size[0],
             height=config.game.default_map_size[1],
             depth=1,
             theme="起始区域",
-            quest_context=quest_context
+            quest_context=quest_context,
+            source="create_new_game"
         )
 
         # 设置玩家初始位置
@@ -90,8 +91,10 @@ class GameEngine:
                 tile.is_visible = True
 
         # 生成初始怪物
-        monsters = await content_generator.generate_encounter_monsters(
-            game_state.player.stats.level, "easy"
+        monsters = await self._generate_encounter_monsters_by_map_hints(
+            game_state,
+            game_state.current_map,
+            default_difficulty="easy",
         )
 
         # 生成任务专属怪物
@@ -99,7 +102,7 @@ class GameEngine:
         monsters.extend(quest_monsters)
 
         # 为怪物分配位置
-        monster_positions = content_generator.get_spawn_positions(
+        monster_positions = self._get_monster_spawn_positions(
             game_state.current_map, len(monsters)
         )
 
@@ -1417,12 +1420,13 @@ class GameEngine:
         if active_quest:
             quest_context = active_quest.to_dict()
 
-        new_map = await content_generator.generate_dungeon_map(
+        new_map = await self._generate_map_with_provider(
             width=game_state.current_map.width,
             height=game_state.current_map.height,
             depth=new_depth,
             theme=f"冒险区域（第{new_depth}阶段/层级）",
-            quest_context=quest_context
+            quest_context=quest_context,
+            source="descend_stairs"
         )
 
         # 更新游戏状态 - 确保正确更新
@@ -1451,15 +1455,17 @@ class GameEngine:
         game_state.monsters.clear()
 
         # 生成新的怪物
-        monsters = await content_generator.generate_encounter_monsters(
-            game_state.player.stats.level, "medium"
+        monsters = await self._generate_encounter_monsters_by_map_hints(
+            game_state,
+            new_map,
+            default_difficulty="medium",
         )
 
         # 生成任务专属怪物（如果有活跃任务）
         quest_monsters = await self._generate_quest_monsters(game_state, new_map)
         monsters.extend(quest_monsters)
 
-        monster_positions = content_generator.get_spawn_positions(new_map, len(monsters))
+        monster_positions = self._get_monster_spawn_positions(new_map, len(monsters))
         for monster, position in zip(monsters, monster_positions):
             monster.position = position
             tile = new_map.get_tile(*position)
@@ -1506,12 +1512,13 @@ class GameEngine:
 
         # 这里可以实现返回上一层的逻辑
         # 简化实现：重新生成上一层
-        new_map = await content_generator.generate_dungeon_map(
+        new_map = await self._generate_map_with_provider(
             width=game_state.current_map.width,
             height=game_state.current_map.height,
             depth=new_depth,
             theme=f"冒险区域（第{new_depth}阶段/层级）",
-            quest_context=quest_context
+            quest_context=quest_context,
+            source="ascend_stairs"
         )
 
         # 更新游戏状态 - 确保正确更新
@@ -1540,15 +1547,17 @@ class GameEngine:
         game_state.monsters.clear()
 
         # 生成新的怪物（上楼时也应该有怪物）
-        monsters = await content_generator.generate_encounter_monsters(
-            game_state.player.stats.level, "medium"
+        monsters = await self._generate_encounter_monsters_by_map_hints(
+            game_state,
+            new_map,
+            default_difficulty="medium",
         )
 
         # 生成任务专属怪物（如果有活跃任务）
         quest_monsters = await self._generate_quest_monsters(game_state, new_map)
         monsters.extend(quest_monsters)
 
-        monster_positions = content_generator.get_spawn_positions(new_map, len(monsters))
+        monster_positions = self._get_monster_spawn_positions(new_map, len(monsters))
         for monster, position in zip(monsters, monster_positions):
             monster.position = position
             tile = new_map.get_tile(*position)
@@ -1565,6 +1574,155 @@ class GameEngine:
 
         logger.info(f"Ascended to floor {new_depth}: {new_map.name}")
         return f"返回到了{new_map.name}"
+
+    async def _generate_map_with_provider(
+        self,
+        width: int,
+        height: int,
+        depth: int,
+        theme: str,
+        quest_context: Optional[Dict[str, Any]],
+        source: str,
+    ) -> GameMap:
+        """根据配置选择地图生成提供方，并在需要时回退到LLM。"""
+        provider = str(getattr(config.game, "map_generation_provider", "llm") or "llm").lower()
+        fallback_to_llm = bool(getattr(config.game, "map_generation_fallback_to_llm", True))
+
+        if provider == "local":
+            try:
+                from local_map_provider import local_map_provider
+
+                local_map, monster_hints = local_map_provider.generate_map(
+                    width=width,
+                    height=height,
+                    depth=depth,
+                    theme=theme,
+                    quest_context=quest_context,
+                )
+
+                if not isinstance(local_map.generation_metadata, dict):
+                    local_map.generation_metadata = {}
+
+                local_map.generation_metadata.update(
+                    {
+                        "map_provider": "local",
+                        "source": source,
+                        "monster_hints": monster_hints,
+                    }
+                )
+                logger.info(f"Map generated by local provider ({source}): {local_map.name}")
+                return local_map
+            except Exception as e:
+                logger.error(f"Local map provider failed at {source}: {e}")
+                if not fallback_to_llm:
+                    raise
+
+        llm_map = await content_generator.generate_dungeon_map(
+            width=width,
+            height=height,
+            depth=depth,
+            theme=theme,
+            quest_context=quest_context,
+        )
+
+        if not isinstance(llm_map.generation_metadata, dict):
+            llm_map.generation_metadata = {}
+        llm_map.generation_metadata.update(
+            {
+                "map_provider": "llm",
+                "source": source,
+            }
+        )
+        return llm_map
+
+    def _get_monster_hint_context(self, game_map: GameMap) -> Dict[str, Any]:
+        """提取地图中可用的monster_hints上下文。"""
+        metadata = game_map.generation_metadata if isinstance(game_map.generation_metadata, dict) else {}
+        hints = metadata.get("monster_hints") if isinstance(metadata.get("monster_hints"), dict) else {}
+
+        spawn_points = hints.get("spawn_points") if isinstance(hints.get("spawn_points"), list) else []
+        difficulty = hints.get("encounter_difficulty") if isinstance(hints.get("encounter_difficulty"), str) else ""
+        quest_ctx = hints.get("llm_context") if isinstance(hints.get("llm_context"), dict) else {}
+
+        return {
+            "hints": hints,
+            "spawn_points": spawn_points,
+            "difficulty": difficulty,
+            "quest_context": quest_ctx,
+        }
+
+    async def _generate_encounter_monsters_by_map_hints(
+        self,
+        game_state: GameState,
+        game_map: GameMap,
+        default_difficulty: str,
+    ) -> List[Monster]:
+        """优先使用地图monster_hints控制遭遇怪物生成参数。"""
+        hint_ctx = self._get_monster_hint_context(game_map)
+        hints = hint_ctx["hints"]
+
+        encounter_difficulty = hint_ctx["difficulty"] or default_difficulty
+        quest_context = hint_ctx["quest_context"] if hint_ctx["quest_context"] else None
+
+        monsters = await content_generator.generate_encounter_monsters(
+            game_state.player.stats.level,
+            encounter_difficulty,
+            quest_context,
+        )
+
+        if isinstance(hints.get("encounter_count"), int) and hints["encounter_count"] >= 0:
+            monsters = monsters[:hints["encounter_count"]]
+
+        return monsters
+
+    def _get_monster_spawn_positions(self, game_map: GameMap, count: int) -> List[Tuple[int, int]]:
+        """优先使用monster_hints中的坐标，否则回退到默认随机点位。"""
+        if count <= 0:
+            return []
+
+        hint_ctx = self._get_monster_hint_context(game_map)
+        hint_points = hint_ctx["spawn_points"]
+
+        positions: List[Tuple[int, int]] = []
+        used = set()
+
+        for point in hint_points:
+            if not isinstance(point, dict):
+                continue
+            x = point.get("x")
+            y = point.get("y")
+            if not isinstance(x, int) or not isinstance(y, int):
+                continue
+            if (x, y) in used:
+                continue
+
+            tile = game_map.get_tile(x, y)
+            if not tile:
+                continue
+            if tile.character_id:
+                continue
+            if tile.terrain not in {
+                TerrainType.FLOOR,
+                TerrainType.DOOR,
+                TerrainType.TRAP,
+                TerrainType.TREASURE,
+            }:
+                continue
+
+            positions.append((x, y))
+            used.add((x, y))
+            if len(positions) >= count:
+                break
+
+        remain = count - len(positions)
+        if remain > 0:
+            fallback_positions = content_generator.get_spawn_positions(game_map, remain)
+            for pos in fallback_positions:
+                if pos not in used:
+                    positions.append(pos)
+                    used.add(pos)
+
+        return positions[:count]
 
     async def _generate_quest_monsters(self, game_state: GameState, game_map: GameMap) -> List[Monster]:
         """
@@ -1666,12 +1824,13 @@ class GameEngine:
             new_depth = game_state.current_map.depth + 1
             quest_context = new_quest.to_dict()
 
-            new_map = await content_generator.generate_dungeon_map(
+            new_map = await self._generate_map_with_provider(
                 width=config.game.default_map_size[0],
                 height=config.game.default_map_size[1],
                 depth=new_depth,
                 theme=f"冒险区域（第{new_depth}阶段/层级） - {new_quest.title}",
-                quest_context=quest_context
+                quest_context=quest_context,
+                source="generate_new_quest_map"
             )
 
             # 更新游戏状态
@@ -1691,8 +1850,10 @@ class GameEngine:
             game_state.monsters.clear()
 
             # 生成普通怪物
-            monsters = await content_generator.generate_encounter_monsters(
-                game_state.player.stats.level, "normal"
+            monsters = await self._generate_encounter_monsters_by_map_hints(
+                game_state,
+                new_map,
+                default_difficulty="normal",
             )
 
             # 生成任务专属怪物
@@ -1700,7 +1861,7 @@ class GameEngine:
             monsters.extend(quest_monsters)
 
             # 放置怪物
-            monster_positions = content_generator.get_spawn_positions(new_map, len(monsters))
+            monster_positions = self._get_monster_spawn_positions(new_map, len(monsters))
             for monster, position in zip(monsters, monster_positions):
                 monster.position = position
                 tile = new_map.get_tile(*position)

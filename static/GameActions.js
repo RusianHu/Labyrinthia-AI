@@ -41,6 +41,9 @@ Object.assign(LabyrinthiaGame.prototype, {
             this.setLoading(true);
         }
 
+        // 【修复】标志位：是否有待处理的选择上下文（用于避免 isVisible 竞态）
+        let hasPendingChoiceContext = false;
+
         try {
             const requestData = {
                 game_id: this.gameId,
@@ -93,6 +96,13 @@ Object.assign(LabyrinthiaGame.prototype, {
                 // 更新游戏状态
                 await this.refreshGameState();
 
+                // 【修复】检查 refreshGameState 是否已触发选择对话框（旁路竞态保护）
+                if (!hasPendingChoiceContext && this.gameState?.pending_choice_context && window.eventChoiceManager) {
+                    console.log('[GameActions] Found pending_choice_context after refreshGameState');
+                    this.isLoading = true;
+                    hasPendingChoiceContext = true;
+                }
+
                 // 添加消息
                 if (result.message) {
                     this.addMessage(result.message, 'action');
@@ -113,6 +123,9 @@ Object.assign(LabyrinthiaGame.prototype, {
                 // 【修复】检查是否有待处理的选择上下文，立即显示
                 if (result.pending_choice_context && window.eventChoiceManager) {
                     console.log('[GameActions] Found pending_choice_context in action result, showing dialog immediately');
+                    // 【修复】设置加载状态阻止输入，直到玩家完成选择
+                    this.isLoading = true;
+                    hasPendingChoiceContext = true; // 【修复】设置标志位，避免 isVisible 竞态
                     window.eventChoiceManager.showChoiceDialog(result.pending_choice_context);
                 } else {
                     // 回合制游戏：操作完成后检查是否有待处理的选择
@@ -138,6 +151,27 @@ Object.assign(LabyrinthiaGame.prototype, {
             console.error('Action error:', error);
             this.addMessage('网络错误，请重试', 'error');
         } finally {
+            // 【修复】优先使用标志位判断，避免 isVisible() 与动画延迟的竞态
+            if (hasPendingChoiceContext) {
+                console.log('[GameActions] Keeping input locked - pending choice context exists');
+                // 隐藏遮罩但保持锁定
+                if (needsSpecificLLMOverlay) {
+                    this.hideLLMOverlay();
+                }
+                return; // 不解锁，由 EventChoiceManager 负责解锁
+            }
+
+            // 【修复】后备检查：使用 isVisible() 作为兜底
+            const hasPendingDialog = window.eventChoiceManager?.isVisible();
+            if (hasPendingDialog) {
+                console.log('[GameActions] Keeping input locked - choice dialog is visible');
+                // 隐藏遮罩但保持锁定
+                if (needsSpecificLLMOverlay) {
+                    this.hideLLMOverlay();
+                }
+                return; // 不解锁，由 EventChoiceManager 负责解锁
+            }
+
             // 隐藏特定的LLM遮罩
             if (needsSpecificLLMOverlay) {
                 this.hideLLMOverlay();

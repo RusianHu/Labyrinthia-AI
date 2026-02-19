@@ -209,6 +209,8 @@ class LabyrinthiaGame {
             // 检查是否有待处理的选择上下文，直接显示
             if (gameState.pending_choice_context && window.eventChoiceManager) {
                 console.log('[GameCore] Found pending_choice_context in refreshed state, showing dialog');
+                // 【修复】设置加载状态阻止输入，直到玩家完成选择
+                this.isLoading = true;
                 window.eventChoiceManager.showChoiceDialog(gameState.pending_choice_context);
             }
             // 【优化】移除自动检查 pending-choice
@@ -250,6 +252,20 @@ class LabyrinthiaGame {
         this.updateDirectionButtons();
     }
 
+    /**
+     * 显示事件选择对话框（供 LocalGameEngine 调用）
+     * @param {Object} choiceContext - 选择上下文
+     */
+    showEventChoiceDialog(choiceContext) {
+        if (window.eventChoiceManager) {
+            // 【修复】设置加载状态阻止输入，直到玩家完成选择
+            this.isLoading = true;
+            window.eventChoiceManager.showChoiceDialog(choiceContext);
+        } else {
+            console.error('[GameCore] EventChoiceManager not available');
+        }
+    }
+
     async updateGameState(newGameState) {
         /**
          * 更新游戏状态并刷新UI
@@ -274,11 +290,13 @@ class LabyrinthiaGame {
 
         await this.updateUI(); // 等待UI更新完成
 
-        // 检查是否有待处理的选择上下文，直接显示
-        if (newGameState.pending_choice_context && window.eventChoiceManager) {
-            console.log('[GameCore] Found pending_choice_context in updated state, showing dialog');
-            window.eventChoiceManager.showChoiceDialog(newGameState.pending_choice_context);
-        }
+            // 检查是否有待处理的选择上下文，直接显示
+            if (newGameState.pending_choice_context && window.eventChoiceManager) {
+                console.log('[GameCore] Found pending_choice_context in updated state, showing dialog');
+                // 【修复】设置加载状态阻止输入，直到玩家完成选择
+                this.isLoading = true;
+                window.eventChoiceManager.showChoiceDialog(newGameState.pending_choice_context);
+            }
         // 【优化】移除自动检查 pending-choice
         // updateGameState 在多种情况下被调用（加载游戏、后端事件、普通移动）
         // 只有后端事件会产生 pending-choice，应该由 triggerBackendEvent 负责检查
@@ -421,6 +439,9 @@ class LabyrinthiaGame {
         this.setLoading(true);
         this.showPartialOverlay('地图切换', '正在进入新区域...', '准备继续你的冒险...');
 
+        // 【修复】使用标志位控制是否在 finally 中解锁
+        let keepLockedForChoice = false;
+
         try {
             // 地图切换前强制同步状态到后端，确保使用最新状态生成新地图
             if (this.localEngine) {
@@ -466,12 +487,20 @@ class LabyrinthiaGame {
 
                 this.updateOverlayProgress(100, '完成！');
 
+                // 【修复】检查是否有待处理的选择上下文
+                const hasPendingChoice = result.pending_choice_context && window.eventChoiceManager;
+
+                if (hasPendingChoice) {
+                    keepLockedForChoice = true; // 【修复】设置标志位，告诉 finally 不要解锁
+                }
+
                 setTimeout(() => {
                     this.hidePartialOverlay();
 
-                    // 【修复】检查是否有待处理的选择上下文（任务完成等）
-                    if (result.pending_choice_context && window.eventChoiceManager) {
+                    // 【修复】如果有待处理选择，显示对话框（保持锁定状态）
+                    if (hasPendingChoice) {
                         console.log('[transitionMap] Found pending_choice_context, showing dialog');
+                        // 保持 isLoading = true，由 EventChoiceManager 负责解锁
                         window.eventChoiceManager.showChoiceDialog(result.pending_choice_context);
                     }
                 }, 500);
@@ -484,7 +513,12 @@ class LabyrinthiaGame {
             this.addMessage('地图切换时发生错误', 'error');
             this.hidePartialOverlay();
         } finally {
-            this.setLoading(false);
+            // 【修复】使用标志位判断是否解锁
+            if (!keepLockedForChoice) {
+                this.setLoading(false);
+            } else {
+                console.log('[transitionMap] Keeping input locked for pending choice');
+            }
         }
     }
 

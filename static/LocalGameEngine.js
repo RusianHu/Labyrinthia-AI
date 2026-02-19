@@ -296,6 +296,9 @@ class LocalGameEngine {
             return;
         }
 
+        // 【修复】设置加载状态以阻止键盘输入
+        this.game.isLoading = true;
+
         // 调用后端检查被动侦测
         try {
             const response = await fetch('/api/check-trap', {
@@ -328,6 +331,8 @@ class LocalGameEngine {
                 // 显示选项框（若陷阱尚未被触发）
                 if (tile.event_triggered || (tile.event_data && (tile.event_data.is_triggered || tile.event_data.trap_triggered))) {
                     console.log('[LocalGameEngine] Trap already triggered, skip showing choices');
+                    // 【修复】重置加载状态
+                    this.game.isLoading = false;
                     // 可选提示：
                     // this.addMessage('该陷阱已被触发。', 'info');
                 } else {
@@ -347,10 +352,13 @@ class LocalGameEngine {
                     this.addMessage('你踩到了什么东西...', 'warning');
                 }
 
+                // handleTrap内部会管理isLoading状态
                 await this.handleTrap(tile);
             }
         } catch (error) {
             console.error('[LocalGameEngine] Failed to check trap detection:', error);
+            // 【修复】重置加载状态
+            this.game.isLoading = false;
             // 出错时直接触发陷阱
             await this.handleTrap(tile);
         }
@@ -363,6 +371,9 @@ class LocalGameEngine {
         const gameState = this.getGameState();
         const trapData = tile.event_data || {};
         const player = gameState.player;
+
+        // 【修复】设置加载状态以阻止键盘输入，直到选项框显示完成
+        this.game.isLoading = true;
 
         // 构建选项列表
         const choices = [];
@@ -439,6 +450,8 @@ class LocalGameEngine {
 
             if (result.success) {
                 // 显示选项对话框
+                // 【重要】不在此处重置 isLoading，保持锁定直到玩家完成选择
+                // EventChoiceManager.selectChoice 的 finally 块会负责解锁
                 if (this.game && this.game.showEventChoiceDialog) {
                     this.game.showEventChoiceDialog({
                         success: true,
@@ -448,14 +461,19 @@ class LocalGameEngine {
                         choices: choices
                     });
                 } else {
+                    // 当前页面未集成选项对话框组件时，需要解锁
+                    this.game.isLoading = false;
                     console.warn('[LocalGameEngine] showEventChoiceDialog not available');
-                    // 当前页面未集成选项对话框组件时，静默降级，不打扰用户
                 }
             } else {
+                // 【修复】重置加载状态
+                this.game.isLoading = false;
                 console.error('[LocalGameEngine] Failed to register trap context:', result);
                 this.addMessage('无法注册陷阱事件', 'error');
             }
         } catch (error) {
+            // 【修复】重置加载状态
+            this.game.isLoading = false;
             console.error('[LocalGameEngine] Failed to register trap context:', error);
             this.addMessage('陷阱事件注册失败', 'error');
         }
@@ -486,6 +504,9 @@ class LocalGameEngine {
         const position = [tile.x, tile.y];
 
         console.log('[LocalGameEngine] Triggering trap at', position);
+
+        // 【修复】设置加载状态以阻止键盘输入
+        this.game.isLoading = true;
 
         // 显示LLM遮罩（因为需要后端处理和LLM生成叙述）
         this.game.showLLMOverlay('trap_trigger');
@@ -584,6 +605,8 @@ class LocalGameEngine {
             console.error('[LocalGameEngine] Failed to trigger trap:', error);
             this.addMessage('陷阱触发失败，请重试', 'error');
         } finally {
+            // 【修复】重置加载状态
+            this.game.isLoading = false;
             // 确保隐藏遮罩
             this.game.hideLLMOverlay();
         }
@@ -593,21 +616,29 @@ class LocalGameEngine {
      * 处理宝藏（前端本地处理，但物品生成需要后端LLM）
      */
     async handleTreasure(tile) {
-        // 宝藏物品生成需要LLM，所以还是要调用后端
-        await this.triggerBackendEvent('treasure', {
-            tile: tile,
-            position: [tile.x, tile.y]
-        });
+        // 【修复】设置加载状态以阻止键盘输入
+        this.game.isLoading = true;
 
-        // 宝藏被发现后变为地板
-        tile.terrain = 'floor';
+        try {
+            // 宝藏物品生成需要LLM，所以还是要调用后端
+            await this.triggerBackendEvent('treasure', {
+                tile: tile,
+                position: [tile.x, tile.y]
+            });
 
-        // 【修复】处理怪物回合（triggerBackendEvent已经更新了UI）
-        await this.processMonsterTurns();
+            // 宝藏被发现后变为地板
+            tile.terrain = 'floor';
 
-        // 【修复】检查是否需要同步
-        if (this.shouldSync()) {
-            await this.syncToBackend();
+            // 【修复】处理怪物回合（triggerBackendEvent已经更新了UI）
+            await this.processMonsterTurns();
+
+            // 【修复】检查是否需要同步
+            if (this.shouldSync()) {
+                await this.syncToBackend();
+            }
+        } finally {
+            // 【修复】重置加载状态
+            this.game.isLoading = false;
         }
     }
 
@@ -616,6 +647,12 @@ class LocalGameEngine {
      */
     async triggerBackendEvent(eventType, eventData) {
         console.log('[LocalGameEngine] Triggering backend event:', eventType);
+
+        // 【修复】确保加载状态已设置（调用者应该已经设置，但这里做双重保险）
+        const wasLoading = this.game.isLoading;
+        if (!wasLoading) {
+            this.game.isLoading = true;
+        }
 
         // 显示LLM遮罩
         this.game.showLLMOverlay(eventType);
@@ -655,6 +692,10 @@ class LocalGameEngine {
             console.error('[LocalGameEngine] 后端事件处理失败:', error);
             this.addMessage('网络错误，请重试', 'error');
         } finally {
+            // 【修复】只有在调用前未设置加载状态时才重置
+            if (!wasLoading) {
+                this.game.isLoading = false;
+            }
             // 确保隐藏遮罩
             this.game.hideLLMOverlay();
         }
@@ -725,6 +766,12 @@ class LocalGameEngine {
     async movePlayer(direction) {
         const gameState = this.getGameState();
         if (!gameState) return;
+
+        // 【修复】检查游戏是否正在加载中，如果是则忽略移动请求
+        if (this.game.isLoading) {
+            console.log('[LocalGameEngine] Move blocked - game is loading');
+            return;
+        }
 
         console.log('[LocalGameEngine] Moving player:', direction);
 
@@ -978,6 +1025,9 @@ class LocalGameEngine {
         }
         monster._processing = true;
 
+        // 【修复】设置加载状态以阻止键盘输入
+        this.game.isLoading = true;
+
         // 显示LLM遮罩，准备生成战斗叙述
         this.game.showLLMOverlay('combat_victory');
 
@@ -1109,6 +1159,9 @@ class LocalGameEngine {
                 window.eventChoiceManager.checkAfterPlayerAction();
                 this._needCheckPendingChoice = false;
             }
+
+            // 【修复】重置加载状态
+            this.game.isLoading = false;
         }
     }
 
@@ -1156,6 +1209,12 @@ class LocalGameEngine {
         const player = gameState.player;
         const monster = this.findMonster(monsterId);
 
+        // 【修复】检查游戏是否正在加载中
+        if (this.game.isLoading) {
+            console.log('[LocalGameEngine] Attack blocked - game is loading');
+            return;
+        }
+
         console.log('[LocalGameEngine] Attacking monster:', monsterId);
 
         if (!monster) {
@@ -1178,6 +1237,9 @@ class LocalGameEngine {
             this.addMessage('视线被阻挡，无法攻击', 'error');
             return;
         }
+
+        // 【修复】设置加载状态
+        this.game.isLoading = true;
 
         // 显示攻击遮罩（简短）
         this.game.showLLMOverlay('attack');
@@ -1220,6 +1282,10 @@ class LocalGameEngine {
             // 任务完成检查已经在 handleMonsterDeath 中根据后端响应的 has_pending_choice 标志处理
             // 普通攻击不会产生 pending-choice，不需要每次都发起 GET 请求
         } finally {
+            // 【修复】重置加载状态（怪物死亡的情况已在 handleMonsterDeath 中处理）
+            if (monster.stats.hp > 0) {
+                this.game.isLoading = false;
+            }
             // 隐藏攻击遮罩
             this.game.hideLLMOverlay();
         }

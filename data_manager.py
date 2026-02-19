@@ -268,6 +268,7 @@ class DataManager:
         game_map.height = data.get("height", 20)
         game_map.depth = data.get("depth", 1)
         game_map.floor_theme = data.get("floor_theme", "normal")  # 【修复】加载地板主题
+        game_map.generation_metadata = data.get("generation_metadata", {})
 
         # 瓦片
         if tiles_data := data.get("tiles"):

@@ -429,6 +429,7 @@ class GameMap:
     depth: int = 1  # 地下层数
     floor_theme: str = "normal"  # 地板主题: normal, magic, abandoned, cave, combat
     tiles: Dict[tuple, MapTile] = field(default_factory=dict)
+    generation_metadata: Dict[str, Any] = field(default_factory=dict)
     
     def get_tile(self, x: int, y: int) -> Optional[MapTile]:
         """获取指定位置的瓦片"""
@@ -449,6 +450,7 @@ class GameMap:
             "height": self.height,
             "depth": self.depth,
             "floor_theme": self.floor_theme,
+            "generation_metadata": self.generation_metadata,
             "tiles": {f"{k[0]},{k[1]}": v.to_dict() for k, v in self.tiles.items()}
         }
 

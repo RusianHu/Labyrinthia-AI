@@ -44,6 +44,13 @@ Object.assign(LabyrinthiaGame.prototype, {
     },
     
     handleKeyPress(e) {
+        // 【修复】如果游戏正在加载或处理中，忽略所有键盘输入
+        if (this.isLoading) {
+            console.log('[EventHandler] Keyboard input blocked - game is loading');
+            e.preventDefault();
+            return;
+        }
+
         const keyMap = {
             'ArrowUp': 'north',
             'ArrowDown': 'south',
@@ -60,7 +67,7 @@ Object.assign(LabyrinthiaGame.prototype, {
             'r': 'rest',
             ' ': 'rest'
         };
-        
+
         const action = keyMap[e.key.toLowerCase()];
         if (action) {
             e.preventDefault();

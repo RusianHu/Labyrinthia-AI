@@ -1,0 +1,1133 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>本地地图算法实验室</title>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg0: #0b111b;
+            --bg1: #101a29;
+            --panel: #162235;
+            --panel-2: #1b2a42;
+            --text: #e8eef8;
+            --muted: #9fb2cf;
+            --accent: #5ec5ff;
+            --ok: #4cd184;
+            --warn: #f0b34f;
+            --err: #ff6d6d;
+            --tile-size: 22px;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            min-height: 100vh;
+            font-family: "Noto Sans SC", "Microsoft YaHei", sans-serif;
+            color: var(--text);
+            background:
+                radial-gradient(circle at 12% 15%, rgba(94, 197, 255, 0.12), transparent 30%),
+                radial-gradient(circle at 88% 5%, rgba(112, 87, 255, 0.12), transparent 26%),
+                linear-gradient(160deg, var(--bg0), var(--bg1));
+            padding: 18px;
+        }
+
+        .lab-root {
+            max-width: 1480px;
+            margin: 0 auto;
+        }
+
+        .lab-header {
+            display: flex;
+            align-items: flex-end;
+            justify-content: space-between;
+            gap: 12px;
+            margin-bottom: 14px;
+        }
+
+        .lab-title {
+            margin: 0;
+            font-size: clamp(1.3rem, 2vw, 2rem);
+            letter-spacing: 0.02em;
+        }
+
+        .lab-subtitle {
+            margin: 6px 0 0;
+            color: var(--muted);
+            font-size: 0.95rem;
+        }
+
+        .top-links {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+
+        .link-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            text-decoration: none;
+            color: #eef6ff;
+            background: linear-gradient(135deg, #2d466d, #2a3956);
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            border-radius: 8px;
+            padding: 8px 12px;
+            font-size: 0.85rem;
+            transition: transform 0.18s ease, box-shadow 0.18s ease;
+        }
+
+        .link-btn:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 14px rgba(22, 102, 181, 0.36);
+        }
+
+        .lab-grid {
+            display: grid;
+            grid-template-columns: 360px minmax(0, 1fr);
+            gap: 14px;
+        }
+
+        .panel {
+            background: linear-gradient(180deg, rgba(32, 49, 76, 0.9), rgba(22, 35, 56, 0.92));
+            border: 1px solid rgba(132, 171, 230, 0.18);
+            border-radius: 12px;
+            box-shadow: 0 8px 24px rgba(4, 10, 21, 0.4);
+            overflow: hidden;
+        }
+
+        .panel-head {
+            padding: 12px 14px;
+            border-bottom: 1px solid rgba(132, 171, 230, 0.2);
+            background: linear-gradient(90deg, rgba(94, 197, 255, 0.13), rgba(63, 101, 176, 0.08));
+        }
+
+        .panel-head h2,
+        .panel-head h3 {
+            margin: 0;
+            font-size: 1rem;
+            font-weight: 700;
+        }
+
+        .panel-body {
+            padding: 12px 14px;
+        }
+
+        .controls .panel-body {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .field {
+            display: grid;
+            gap: 6px;
+        }
+
+        .field label {
+            font-size: 0.85rem;
+            color: var(--muted);
+        }
+
+        .field input,
+        .field select,
+        .field textarea {
+            width: 100%;
+            border: 1px solid rgba(159, 178, 207, 0.4);
+            background: rgba(10, 17, 29, 0.72);
+            color: var(--text);
+            border-radius: 8px;
+            padding: 8px 10px;
+            font-family: inherit;
+        }
+
+        .field textarea {
+            min-height: 260px;
+            resize: vertical;
+            font-family: "JetBrains Mono", Consolas, monospace;
+            line-height: 1.45;
+            font-size: 0.82rem;
+        }
+
+        .inline-fields {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 8px;
+        }
+
+        .btn-group {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 8px;
+        }
+
+        .btn {
+            border: none;
+            border-radius: 8px;
+            padding: 9px 10px;
+            cursor: pointer;
+            font-size: 0.84rem;
+            color: #f5fbff;
+            background: linear-gradient(135deg, #318bd4, #2567b7);
+            transition: transform 0.16s ease, box-shadow 0.16s ease, opacity 0.16s ease;
+        }
+
+        .btn:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(44, 131, 213, 0.45);
+        }
+
+        .btn.secondary {
+            background: linear-gradient(135deg, #736fe8, #6357d7);
+        }
+
+        .btn.warn {
+            background: linear-gradient(135deg, #d6903c, #b9792f);
+        }
+
+        .btn.ghost {
+            background: linear-gradient(135deg, #40577a, #314561);
+        }
+
+        .row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+
+        .row input[type="checkbox"] {
+            width: auto;
+        }
+
+        .row.tight {
+            gap: 6px;
+        }
+
+        .mini-input {
+            width: 110px;
+            border: 1px solid rgba(159, 178, 207, 0.4);
+            background: rgba(10, 17, 29, 0.72);
+            color: var(--text);
+            border-radius: 6px;
+            padding: 5px 8px;
+            font-size: 0.8rem;
+        }
+
+        .hint {
+            color: var(--muted);
+            font-size: 0.8rem;
+            line-height: 1.45;
+        }
+
+        .output-wrap {
+            display: grid;
+            grid-template-rows: auto auto minmax(0, 1fr);
+            gap: 10px;
+            height: 100%;
+        }
+
+        .stat-cards {
+            display: grid;
+            grid-template-columns: repeat(5, minmax(0, 1fr));
+            gap: 8px;
+        }
+
+        .stat {
+            background: rgba(8, 17, 29, 0.58);
+            border: 1px solid rgba(136, 173, 224, 0.22);
+            border-radius: 8px;
+            padding: 8px;
+            min-height: 72px;
+        }
+
+        .stat .k {
+            font-size: 0.74rem;
+            color: var(--muted);
+        }
+
+        .stat .v {
+            margin-top: 4px;
+            font-weight: 700;
+            font-family: "JetBrains Mono", Consolas, monospace;
+            font-size: 0.9rem;
+            word-break: break-all;
+        }
+
+        .status-ok {
+            color: var(--ok);
+        }
+
+        .status-err {
+            color: var(--err);
+        }
+
+        .status-warn {
+            color: var(--warn);
+        }
+
+        .main-split {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) 370px;
+            gap: 10px;
+            min-height: 0;
+        }
+
+        .map-panel,
+        .info-panel,
+        .log-panel {
+            background: rgba(11, 20, 35, 0.65);
+            border: 1px solid rgba(136, 173, 224, 0.2);
+            border-radius: 10px;
+            min-height: 0;
+        }
+
+        .section-head {
+            font-size: 0.84rem;
+            padding: 8px 10px;
+            border-bottom: 1px solid rgba(136, 173, 224, 0.18);
+            color: var(--muted);
+        }
+
+        .map-host {
+            height: 100%;
+            max-height: 620px;
+            overflow: auto;
+            padding: 10px;
+        }
+
+        .map-grid {
+            display: grid;
+            grid-auto-rows: var(--tile-size);
+            gap: 1px;
+            padding: 6px;
+            background: #1a2a3d;
+            border-radius: 8px;
+            width: max-content;
+            min-width: 100%;
+        }
+
+        .map-tile {
+            width: var(--tile-size);
+            height: var(--tile-size);
+            border-radius: 2px;
+            position: relative;
+            transition: transform 0.12s ease;
+        }
+
+        .map-tile:hover {
+            transform: scale(1.15);
+            z-index: 3;
+            box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.24), 0 3px 8px rgba(0, 0, 0, 0.4);
+        }
+
+        .terrain-floor { background: #d0d8df; }
+        .terrain-wall { background: #31455b; }
+        .terrain-door { background: #9a6a3a; }
+        .terrain-trap { background: #bf4444; }
+        .terrain-treasure { background: #d0ac31; }
+        .terrain-stairs_up { background: #62a8de; }
+        .terrain-stairs_down { background: #8f7bcf; }
+
+        .room-entrance { box-shadow: inset 0 0 0 2px rgba(72, 211, 132, 0.5); }
+        .room-boss { box-shadow: inset 0 0 0 2px rgba(255, 109, 109, 0.6); }
+        .room-special { box-shadow: inset 0 0 0 2px rgba(115, 111, 232, 0.6); }
+        .room-treasure { box-shadow: inset 0 0 0 2px rgba(240, 179, 79, 0.6); }
+
+        .tile-explored { opacity: 1; }
+        .tile-unexplored { opacity: 0.35; }
+        .tile-visible { filter: saturate(1.05); }
+
+        .character-player {
+            position: absolute;
+            width: calc(var(--tile-size) - 7px);
+            height: calc(var(--tile-size) - 7px);
+            left: 3px;
+            top: 3px;
+            border-radius: 50%;
+            background: #37d386;
+            border: 2px solid #1f9d5f;
+            box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.35);
+            pointer-events: none;
+        }
+
+        .event-dot {
+            position: absolute;
+            width: 7px;
+            height: 7px;
+            border-radius: 50%;
+            right: 2px;
+            top: 2px;
+            background: #ff8866;
+            border: 1px solid rgba(0, 0, 0, 0.35);
+            pointer-events: none;
+        }
+
+        .event-dot.mandatory {
+            background: #ffd166;
+        }
+
+        .legend {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            padding: 8px 10px;
+            border-top: 1px solid rgba(136, 173, 224, 0.18);
+            font-size: 0.76rem;
+            color: var(--muted);
+        }
+
+        .legend-item {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+        .legend-sw {
+            width: 12px;
+            height: 12px;
+            border-radius: 3px;
+            display: inline-block;
+        }
+
+        .info-body,
+        .log-body {
+            padding: 10px;
+            height: 100%;
+            max-height: 620px;
+            overflow: auto;
+            font-family: "JetBrains Mono", Consolas, monospace;
+            font-size: 0.78rem;
+            line-height: 1.45;
+            white-space: pre-wrap;
+            color: #d7e7ff;
+        }
+
+        .log-line {
+            margin: 0 0 4px;
+            padding: 4px 6px;
+            border-radius: 6px;
+            background: rgba(22, 35, 56, 0.55);
+        }
+
+        .log-line.ok { border-left: 3px solid var(--ok); }
+        .log-line.warn { border-left: 3px solid var(--warn); }
+        .log-line.err { border-left: 3px solid var(--err); }
+        .log-line.info { border-left: 3px solid var(--accent); }
+
+        .failure-panel {
+            margin-top: 10px;
+            background: rgba(11, 20, 35, 0.65);
+            border: 1px solid rgba(136, 173, 224, 0.2);
+            border-radius: 10px;
+            min-height: 0;
+        }
+
+        .failure-list {
+            padding: 8px 10px;
+            max-height: 210px;
+            overflow: auto;
+            display: grid;
+            gap: 6px;
+        }
+
+        .failure-item {
+            width: 100%;
+            border: 1px solid rgba(136, 173, 224, 0.25);
+            border-radius: 8px;
+            background: linear-gradient(135deg, rgba(40, 55, 80, 0.86), rgba(25, 37, 57, 0.86));
+            color: var(--text);
+            padding: 7px 8px;
+            text-align: left;
+            cursor: pointer;
+            font-family: "JetBrains Mono", Consolas, monospace;
+            font-size: 0.74rem;
+            line-height: 1.35;
+            transition: transform 0.12s ease, border-color 0.12s ease;
+        }
+
+        .failure-item:hover {
+            transform: translateY(-1px);
+            border-color: rgba(94, 197, 255, 0.6);
+        }
+
+        .failure-item.empty {
+            cursor: default;
+            opacity: 0.7;
+        }
+
+        .failure-item.active {
+            border-color: rgba(255, 209, 102, 0.8);
+            box-shadow: 0 0 0 1px rgba(255, 209, 102, 0.35) inset;
+        }
+
+        @media (max-width: 1200px) {
+            .lab-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .main-split {
+                grid-template-columns: 1fr;
+            }
+
+            .stat-cards {
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+            }
+        }
+    </style>
+</head>
+<body>
+<div class="lab-root">
+    <div class="lab-header">
+        <div>
+            <h1 class="lab-title">前端本地地图算法实验室</h1>
+            <p class="lab-subtitle">模拟任务请求 -> 本地确定性地图创建 -> 模拟LLM补丁 -> 约束校验</p>
+        </div>
+        <div class="top-links">
+            <a class="link-btn" href="/quick_test.html" target="_blank">返回快速测试</a>
+            <a class="link-btn" href="/" target="_blank">打开主界面</a>
+        </div>
+    </div>
+
+    <div class="lab-grid">
+        <section class="panel controls">
+            <div class="panel-head"><h2>任务与生成控制</h2></div>
+            <div class="panel-body">
+                <div class="field">
+                    <label for="scenario-select">预设任务场景</label>
+                    <select id="scenario-select"></select>
+                </div>
+
+                <div class="inline-fields">
+                    <div class="field">
+                        <label for="seed-input">种子（同seed应同结果）</label>
+                        <input id="seed-input" type="text" value="demo-seed-001">
+                    </div>
+                    <div class="field">
+                        <label for="runs-input">稳定性回归次数/场景</label>
+                        <input id="runs-input" type="number" min="1" max="500" value="30">
+                    </div>
+                </div>
+
+                <div class="row">
+                    <input type="checkbox" id="auto-patch" checked>
+                    <label for="auto-patch">生成后自动模拟LLM补丁并做校验</label>
+                </div>
+
+                <div class="row tight">
+                    <input type="checkbox" id="reliability-with-patch">
+                    <label for="reliability-with-patch">稳定性回归包含补丁流程</label>
+                    <label for="random-scenario-count">随机场景数</label>
+                    <input id="random-scenario-count" class="mini-input" type="number" min="0" max="300" value="12">
+                </div>
+
+                <div class="field">
+                    <label for="request-json">任务请求JSON（可手改）</label>
+                    <textarea id="request-json"></textarea>
+                </div>
+
+                <div class="btn-group">
+                    <button class="btn" id="btn-generate">生成地图</button>
+                    <button class="btn secondary" id="btn-apply-patch">仅应用LLM补丁</button>
+                    <button class="btn ghost" id="btn-check-determinism">确定性检查</button>
+                    <button class="btn warn" id="btn-reliability">稳定性回归</button>
+                </div>
+
+                <div class="hint">说明：地图拓扑由浏览器端算法创建；事件补丁与初始怪物预览仍可调用后端LLM能力，便于验证“本地地图+LLM怪物”组合链路。</div>
+            </div>
+        </section>
+
+        <section class="panel">
+            <div class="panel-head"><h2>结果与可视化</h2></div>
+            <div class="panel-body output-wrap">
+                <div class="stat-cards">
+                    <div class="stat"><div class="k">生成状态</div><div class="v" id="stat-status">-</div></div>
+                    <div class="stat"><div class="k">地图哈希</div><div class="v" id="stat-hash">-</div></div>
+                    <div class="stat"><div class="k">房间数量</div><div class="v" id="stat-rooms">-</div></div>
+                    <div class="stat"><div class="k">可行走占比</div><div class="v" id="stat-walk">-</div></div>
+                    <div class="stat"><div class="k">补丁结果</div><div class="v" id="stat-patch">-</div></div>
+                    <div class="stat"><div class="k">地形覆盖</div><div class="v" id="stat-cap">-</div></div>
+                </div>
+
+                <div class="main-split">
+                    <div class="map-panel">
+                        <div class="section-head">地图预览（本地生成）</div>
+                        <div class="map-host" id="map-host">
+                            <div id="map-grid" class="map-grid"></div>
+                        </div>
+                        <div class="legend">
+                            <span class="legend-item"><span class="legend-sw" style="background:#d0d8df"></span>floor</span>
+                            <span class="legend-item"><span class="legend-sw" style="background:#31455b"></span>wall</span>
+                            <span class="legend-item"><span class="legend-sw" style="background:#9a6a3a"></span>door</span>
+                            <span class="legend-item"><span class="legend-sw" style="background:#bf4444"></span>trap</span>
+                            <span class="legend-item"><span class="legend-sw" style="background:#d0ac31"></span>treasure</span>
+                            <span class="legend-item"><span class="legend-sw" style="background:#62a8de"></span>stairs_up</span>
+                            <span class="legend-item"><span class="legend-sw" style="background:#8f7bcf"></span>stairs_down</span>
+                        </div>
+                    </div>
+                    <div class="info-panel">
+                        <div class="section-head">详细输出（MapSpec / 校验 / 补丁）</div>
+                        <div class="info-body" id="info-body">等待生成...</div>
+                    </div>
+                </div>
+
+                <div class="log-panel">
+                    <div class="section-head">调试日志</div>
+                    <div class="log-body" id="log-body"></div>
+                </div>
+
+                <div class="failure-panel">
+                    <div class="section-head">失败样本重放（点击条目自动回放）</div>
+                    <div class="failure-list" id="failure-list"></div>
+                </div>
+            </div>
+        </section>
+    </div>
+</div>
+
+<script src="/static/LocalMapGenerator.js"></script>
+<script>
+    (function () {
+        'use strict';
+
+        if (!window.LocalMapAlgo) {
+            alert('LocalMapGenerator.js 未加载，无法运行演示。');
+            return;
+        }
+
+        const state = {
+            scenarios: LocalMapAlgo.createScenarioLibrary(),
+            currentResult: null,
+            currentPatched: null,
+            reliabilitySuite: null,
+            selectedFailureIndex: -1
+        };
+
+        const els = {
+            scenarioSelect: document.getElementById('scenario-select'),
+            seedInput: document.getElementById('seed-input'),
+            runsInput: document.getElementById('runs-input'),
+            autoPatch: document.getElementById('auto-patch'),
+            reliabilityWithPatch: document.getElementById('reliability-with-patch'),
+            randomScenarioCount: document.getElementById('random-scenario-count'),
+            requestJson: document.getElementById('request-json'),
+            mapGrid: document.getElementById('map-grid'),
+            mapHost: document.getElementById('map-host'),
+            infoBody: document.getElementById('info-body'),
+            logBody: document.getElementById('log-body'),
+            failureList: document.getElementById('failure-list'),
+            statStatus: document.getElementById('stat-status'),
+            statHash: document.getElementById('stat-hash'),
+            statRooms: document.getElementById('stat-rooms'),
+            statWalk: document.getElementById('stat-walk'),
+            statPatch: document.getElementById('stat-patch'),
+            statCap: document.getElementById('stat-cap'),
+            btnGenerate: document.getElementById('btn-generate'),
+            btnApplyPatch: document.getElementById('btn-apply-patch'),
+            btnCheckDeterminism: document.getElementById('btn-check-determinism'),
+            btnReliability: document.getElementById('btn-reliability')
+        };
+
+        function nowTime() {
+            return new Date().toLocaleTimeString('zh-CN', { hour12: false });
+        }
+
+        function log(message, level) {
+            const line = document.createElement('div');
+            line.className = `log-line ${level || 'info'}`;
+            line.textContent = `[${nowTime()}] ${message}`;
+            els.logBody.appendChild(line);
+            els.logBody.scrollTop = els.logBody.scrollHeight;
+        }
+
+        function pretty(value) {
+            return JSON.stringify(value, null, 2);
+        }
+
+        function setButtonBusy(button, busy, busyText) {
+            if (busy) {
+                button.dataset.origin = button.textContent;
+                button.disabled = true;
+                button.textContent = busyText;
+            } else {
+                button.disabled = false;
+                if (button.dataset.origin) {
+                    button.textContent = button.dataset.origin;
+                }
+            }
+        }
+
+        function parseRequest() {
+            const text = els.requestJson.value.trim();
+            if (!text) {
+                throw new Error('任务请求JSON不能为空');
+            }
+            return JSON.parse(text);
+        }
+
+        function loadScenario(index) {
+            const scenario = state.scenarios[index];
+            if (!scenario) {
+                return;
+            }
+            els.requestJson.value = pretty(scenario.request);
+            els.seedInput.value = `${scenario.id}-seed-001`;
+            log(`已载入场景: ${scenario.name}`, 'info');
+        }
+
+        function renderMap(map, spawn) {
+            const hostWidth = Math.max(360, els.mapHost.clientWidth - 24);
+            const sizeW = Math.floor(hostWidth / map.width) - 1;
+            const sizeH = Math.floor(560 / map.height) - 1;
+            const tileSize = Math.max(12, Math.min(26, Math.min(sizeW, sizeH)));
+            els.mapGrid.style.setProperty('--tile-size', `${tileSize}px`);
+            els.mapGrid.style.gridTemplateColumns = `repeat(${map.width}, var(--tile-size))`;
+            els.mapGrid.innerHTML = '';
+
+            for (let y = 0; y < map.height; y += 1) {
+                for (let x = 0; x < map.width; x += 1) {
+                    const key = `${x},${y}`;
+                    const tile = map.tiles[key];
+                    const div = document.createElement('div');
+                    div.className = 'map-tile';
+
+                    if (tile) {
+                        div.classList.add(`terrain-${tile.terrain}`);
+                        if (tile.room_type) {
+                            div.classList.add(`room-${tile.room_type}`);
+                        }
+                        div.classList.add('tile-explored', 'tile-visible');
+
+                        const titleParts = [
+                            `(${x}, ${y})`,
+                            `terrain=${tile.terrain}`,
+                            `room_type=${tile.room_type || '-'}`,
+                            `event=${tile.has_event ? tile.event_type : '-'}`
+                        ];
+                        div.title = titleParts.join(' | ');
+
+                        if (tile.has_event) {
+                            const dot = document.createElement('span');
+                            dot.className = 'event-dot';
+                            if (tile.event_data && tile.event_data.is_mandatory) {
+                                dot.classList.add('mandatory');
+                            }
+                            div.appendChild(dot);
+                        }
+                    }
+
+                    if (spawn && spawn.x === x && spawn.y === y) {
+                        const marker = document.createElement('div');
+                        marker.className = 'character-player';
+                        marker.title = '出生点';
+                        div.appendChild(marker);
+                    }
+
+                    els.mapGrid.appendChild(div);
+                }
+            }
+        }
+
+        function updateStatsFromResult(result) {
+            const valid = result.validation && result.validation.ok;
+            els.statStatus.textContent = valid ? 'PASS' : 'FAIL';
+            els.statStatus.className = `v ${valid ? 'status-ok' : 'status-err'}`;
+            els.statHash.textContent = result.hash || '-';
+            els.statRooms.textContent = String(result.metrics.room_count);
+            els.statWalk.textContent = `${(result.metrics.walkable_ratio * 100).toFixed(1)}%`;
+            els.statPatch.textContent = '-';
+            els.statPatch.className = 'v';
+
+            const coverage = LocalMapAlgo.collectCapabilityCoverage(result.map);
+            const capText = `D:${coverage.has_door ? 'Y' : 'N'} T:${coverage.has_trap_terrain ? 'Y' : 'N'} $:${coverage.has_treasure_terrain ? 'Y' : 'N'}`;
+            els.statCap.textContent = capText;
+            els.statCap.className = `v ${(coverage.has_door && coverage.has_trap_terrain && coverage.has_treasure_terrain) ? 'status-ok' : 'status-warn'}`;
+        }
+
+        function showResultInfo(title, payload) {
+            els.infoBody.textContent = `${title}\n${'-'.repeat(56)}\n${pretty(payload)}`;
+        }
+
+        function showFailureList(cases) {
+            els.failureList.innerHTML = '';
+            const list = Array.isArray(cases) ? cases : [];
+            if (list.length === 0) {
+                const empty = document.createElement('button');
+                empty.type = 'button';
+                empty.className = 'failure-item empty';
+                empty.disabled = true;
+                empty.textContent = '暂无失败样本，可先运行稳定性回归';
+                els.failureList.appendChild(empty);
+                return;
+            }
+
+            list.forEach((item, idx) => {
+                const btn = document.createElement('button');
+                btn.type = 'button';
+                btn.className = 'failure-item';
+                if (state.selectedFailureIndex === idx) {
+                    btn.classList.add('active');
+                }
+                btn.textContent = `#${idx + 1} | ${item.scenario_name || item.scenario} | seed=${item.seed}\n${item.reason || '无详细失败原因'}`;
+                btn.addEventListener('click', () => replayFailureCase(idx));
+                els.failureList.appendChild(btn);
+            });
+        }
+
+        async function generateMap(autoPatch) {
+            const request = parseRequest();
+            const seed = els.seedInput.value.trim() || 'default-demo-seed';
+            const spec = LocalMapAlgo.buildMapSpecFromQuestRequest(request);
+            const generator = new LocalMapAlgo.LocalMapGenerator(seed);
+            const result = generator.generate(spec);
+
+            state.currentResult = result;
+            state.currentPatched = null;
+
+            renderMap(result.map, result.spawn);
+            updateStatsFromResult(result);
+            const capability = LocalMapAlgo.collectCapabilityCoverage(result.map);
+
+            showResultInfo('原始生成结果', {
+                seed: result.seed,
+                hash: result.hash,
+                spec: result.spec,
+                metrics: result.metrics,
+                capability,
+                monster_hints: result.monster_hints,
+                validation: result.validation,
+                events: result.events
+            });
+
+            if (result.validation.ok) {
+                log(`地图生成成功，hash=${result.hash}，房间=${result.metrics.room_count}，可行走占比=${(result.metrics.walkable_ratio * 100).toFixed(1)}%`, 'ok');
+                log(`能力覆盖: door=${capability.has_door} trapTerrain=${capability.has_trap_terrain} treasureTerrain=${capability.has_treasure_terrain}`, 'info');
+                if (result.monster_hints) {
+                    log(`怪物参数建议: difficulty=${result.monster_hints.encounter_difficulty}, encounters=${result.monster_hints.encounter_count}, boss=${result.monster_hints.boss_count}`, 'info');
+                }
+            } else {
+                log(`地图生成失败：${result.validation.errors.join(' | ')}`, 'err');
+            }
+
+            if (autoPatch) {
+                applyPatch();
+            }
+            const monsterPreview = await fetchMonsterPreview(result);
+            if (monsterPreview && monsterPreview.ok) {
+                showResultInfo('原始生成结果 + 怪物初始化预览', {
+                    seed: result.seed,
+                    hash: result.hash,
+                    spec: result.spec,
+                    metrics: result.metrics,
+                    capability,
+                    monster_hints: result.monster_hints,
+                    monster_preview: monsterPreview.data,
+                    validation: result.validation,
+                    events: result.events
+                });
+            }
+        }
+
+        function applyPatch() {
+            if (!state.currentResult) {
+                log('请先生成地图，再应用补丁', 'warn');
+                return;
+            }
+
+            const seed = els.seedInput.value.trim() || 'default-demo-seed';
+            const patches = LocalMapAlgo.createSimulatedLLMPatches(
+                state.currentResult.map,
+                state.currentResult.spec,
+                seed
+            );
+
+            if (!patches || patches.length === 0) {
+                log('本轮没有可应用的模拟LLM补丁', 'warn');
+                els.statPatch.textContent = '0/0';
+                return;
+            }
+
+            const patched = LocalMapAlgo.applyPatchesWithValidation(
+                state.currentResult.map,
+                state.currentResult.spec,
+                state.currentResult.spawn,
+                patches
+            );
+
+            state.currentPatched = {
+                patches,
+                result: patched
+            };
+
+            renderMap(patched.map, state.currentResult.spawn);
+            els.statHash.textContent = patched.final_hash;
+            els.statPatch.textContent = `${patched.accepted.length}/${patches.length}`;
+            els.statPatch.className = `v ${patched.rejected.length === 0 ? 'status-ok' : 'status-warn'}`;
+
+            const finalOk = patched.final_validation && patched.final_validation.ok;
+            els.statStatus.textContent = finalOk ? 'PASS' : 'FAIL';
+            els.statStatus.className = `v ${finalOk ? 'status-ok' : 'status-err'}`;
+
+            showResultInfo('补丁应用结果', {
+                base_hash: state.currentResult.hash,
+                patched_hash: patched.final_hash,
+                patches,
+                accepted: patched.accepted,
+                rejected: patched.rejected,
+                final_validation: patched.final_validation
+            });
+
+            log(`模拟补丁应用完成：通过 ${patched.accepted.length}/${patches.length}，拒绝 ${patched.rejected.length}`, patched.rejected.length === 0 ? 'ok' : 'warn');
+            if (patched.rejected.length > 0) {
+                patched.rejected.forEach((item, index) => {
+                    log(`补丁拒绝[${index + 1}] ${item.reason}`, 'warn');
+                });
+            }
+        }
+
+        function checkDeterminism() {
+            const request = parseRequest();
+            const seed = els.seedInput.value.trim() || 'default-demo-seed';
+            const spec = LocalMapAlgo.buildMapSpecFromQuestRequest(request);
+
+            const runA = new LocalMapAlgo.LocalMapGenerator(seed).generate(spec);
+            const runB = new LocalMapAlgo.LocalMapGenerator(seed).generate(spec);
+            const same = runA.hash === runB.hash;
+
+            log(`确定性检查: hashA=${runA.hash}, hashB=${runB.hash}`, same ? 'ok' : 'err');
+            log(same ? '同seed结果一致' : '同seed结果不一致，需要修复随机路径', same ? 'ok' : 'err');
+
+            showResultInfo('确定性检查详情', {
+                seed,
+                hash_a: runA.hash,
+                hash_b: runB.hash,
+                deterministic: same,
+                validation_a: runA.validation,
+                validation_b: runB.validation
+            });
+        }
+
+        function runReliability() {
+            const runs = Number(els.runsInput.value || 30);
+            const randomScenarioCount = Number(els.randomScenarioCount.value || 0);
+            const includePatches = Boolean(els.reliabilityWithPatch.checked);
+            const suite = LocalMapAlgo.runReliabilitySuite({
+                scenarios: state.scenarios,
+                runs_per_scenario: runs,
+                random_scenario_count: randomScenarioCount,
+                random_scenario_seed: `lab-random-${els.seedInput.value.trim() || 'default'}`,
+                include_patches: includePatches,
+                max_failure_records: 150
+            });
+
+            state.reliabilitySuite = suite;
+            state.selectedFailureIndex = -1;
+
+            const passPercent = (suite.pass_rate * 100).toFixed(2);
+            const detPercent = (suite.deterministic_rate * 100).toFixed(2);
+            log(`稳定性回归完成: 总数=${suite.total}, 通过=${suite.pass}, 失败=${suite.fail}, 通过率=${passPercent}%`, suite.fail === 0 ? 'ok' : 'warn');
+            log(`确定性一致率=${detPercent}%`, suite.deterministic_rate === 1 ? 'ok' : 'err');
+            if (suite.include_patches) {
+                const patchPercent = ((suite.patch_rate || 0) * 100).toFixed(2);
+                log(`补丁回归通过率=${patchPercent}%`, suite.patch_rate === 1 ? 'ok' : 'warn');
+            }
+            log(`场景数=${suite.scenario_count}（其中随机场景=${suite.random_scenario_count}）`, 'info');
+
+            const capabilitySummary = buildCapabilitySummary(suite.scenario_breakdown || []);
+            showResultInfo('稳定性回归报告', {
+                ...suite,
+                capability_summary: capabilitySummary
+            });
+            log(`能力覆盖率: door=${(capabilitySummary.door_rate * 100).toFixed(2)}% trap=${(capabilitySummary.trap_terrain_rate * 100).toFixed(2)}% treasure=${(capabilitySummary.treasure_terrain_rate * 100).toFixed(2)}%`, 'info');
+            showFailureList(suite.replay_cases || []);
+        }
+
+        function buildCapabilitySummary(breakdown) {
+            const rows = Array.isArray(breakdown) ? breakdown : [];
+            if (rows.length === 0) {
+                return {
+                    scenarios: 0,
+                    door_rate: 0,
+                    trap_terrain_rate: 0,
+                    treasure_terrain_rate: 0
+                };
+            }
+
+            let total = 0;
+            let doorWeighted = 0;
+            let trapWeighted = 0;
+            let treasureWeighted = 0;
+            for (let i = 0; i < rows.length; i += 1) {
+                const row = rows[i];
+                const n = Number(row.total || 0);
+                total += n;
+                doorWeighted += Number(row.door_rate || 0) * n;
+                trapWeighted += Number(row.trap_terrain_rate || 0) * n;
+                treasureWeighted += Number(row.treasure_terrain_rate || 0) * n;
+            }
+
+            if (total <= 0) {
+                return {
+                    scenarios: rows.length,
+                    door_rate: 0,
+                    trap_terrain_rate: 0,
+                    treasure_terrain_rate: 0
+                };
+            }
+
+            return {
+                scenarios: rows.length,
+                samples: total,
+                door_rate: Number((doorWeighted / total).toFixed(4)),
+                trap_terrain_rate: Number((trapWeighted / total).toFixed(4)),
+                treasure_terrain_rate: Number((treasureWeighted / total).toFixed(4))
+            };
+        }
+
+        async function fetchMonsterPreview(result) {
+            if (!result || !result.monster_hints) {
+                return null;
+            }
+            const hints = result.monster_hints;
+            const payload = {
+                test_type: 'monster',
+                player_level: hints.recommended_player_level || 1,
+                monster_plan: {
+                    encounter_difficulty: hints.encounter_difficulty,
+                    encounter_count: hints.encounter_count,
+                    boss_count: hints.boss_count,
+                    spawn_points: hints.spawn_points,
+                    llm_context: hints.llm_context
+                }
+            };
+
+            try {
+                const resp = await fetch('/api/test/content-generation', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                const data = await resp.json();
+                if (data && data.success) {
+                    log(`怪物LLM预览成功: ${data.generated_content?.name || 'unknown'} (count=${data.count || 0})`, 'ok');
+                    return {
+                        ok: true,
+                        payload,
+                        data
+                    };
+                }
+                log(`怪物LLM预览失败: ${data && data.message ? data.message : 'unknown error'}`, 'warn');
+                return {
+                    ok: false,
+                    payload,
+                    data
+                };
+            } catch (error) {
+                log(`怪物LLM预览请求异常: ${error.message}`, 'warn');
+                return {
+                    ok: false,
+                    payload,
+                    error: error.message
+                };
+            }
+        }
+
+        function replayFailureCase(index) {
+            const suite = state.reliabilitySuite;
+            const replayCases = Array.isArray(suite && suite.replay_cases) ? suite.replay_cases : [];
+            const item = replayCases[index];
+            if (!item) {
+                log('失败样本不存在，无法回放', 'warn');
+                return;
+            }
+
+            state.selectedFailureIndex = index;
+            els.requestJson.value = pretty(item.request || {});
+            els.seedInput.value = item.seed;
+            showFailureList(replayCases);
+            log(`开始回放失败样本 #${index + 1}: ${item.scenario_name || item.scenario} / ${item.seed}`, 'warn');
+
+            const autoPatchBackup = Boolean(els.autoPatch.checked);
+            if (item.include_patches === true) {
+                els.autoPatch.checked = true;
+            }
+
+            withBusy(els.btnGenerate, '回放中...', async () => {
+                try {
+                    await generateMap(els.autoPatch.checked);
+                    showResultInfo('失败样本回放详情', {
+                        selected_case: item,
+                        current_result_hash: state.currentResult ? state.currentResult.hash : null,
+                        patched_hash: state.currentPatched && state.currentPatched.result ? state.currentPatched.result.final_hash : null,
+                        monster_hints: state.currentResult ? state.currentResult.monster_hints : null
+                    });
+                } finally {
+                    if (item.include_patches !== true) {
+                        els.autoPatch.checked = autoPatchBackup;
+                    }
+                }
+            });
+        }
+
+        function initScenarios() {
+            state.scenarios.forEach((item, idx) => {
+                const option = document.createElement('option');
+                option.value = String(idx);
+                option.textContent = item.name;
+                els.scenarioSelect.appendChild(option);
+            });
+
+            els.scenarioSelect.addEventListener('change', () => {
+                const index = Number(els.scenarioSelect.value);
+                loadScenario(index);
+            });
+
+            loadScenario(0);
+        }
+
+        async function withBusy(button, label, fn) {
+            setButtonBusy(button, true, label);
+            try {
+                await Promise.resolve(fn());
+            } catch (error) {
+                log(`操作失败: ${error.message}`, 'err');
+            } finally {
+                setButtonBusy(button, false, '');
+            }
+        }
+
+        function bindEvents() {
+            els.btnGenerate.addEventListener('click', () => {
+                withBusy(els.btnGenerate, '生成中...', async () => generateMap(els.autoPatch.checked));
+            });
+
+            els.btnApplyPatch.addEventListener('click', () => {
+                withBusy(els.btnApplyPatch, '应用中...', () => applyPatch());
+            });
+
+            els.btnCheckDeterminism.addEventListener('click', () => {
+                withBusy(els.btnCheckDeterminism, '检查中...', () => checkDeterminism());
+            });
+
+            els.btnReliability.addEventListener('click', () => {
+                withBusy(els.btnReliability, '回归中...', () => runReliability());
+            });
+        }
+
+        function init() {
+            initScenarios();
+            bindEvents();
+            showFailureList([]);
+            log(`LocalMapAlgo v${LocalMapAlgo.version} 已加载`, 'ok');
+            log('先点击“生成地图”，再看补丁与回归结果', 'info');
+        }
+
+        init();
+    }());
+</script>
+</body>
+</html>

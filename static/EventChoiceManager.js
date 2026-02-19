@@ -54,6 +54,7 @@ class EventChoiceManager {
         // 添加ESC键关闭功能
         document.addEventListener('keydown', (e) => {
             if (e.key === 'Escape' && this.isVisible() && this.canClose()) {
+                e.preventDefault(); // 【修复】阻止ESC触发其他操作
                 this.hideDialog();
             }
         });
@@ -90,6 +91,10 @@ class EventChoiceManager {
             const data = await response.json();
 
             if (data.success && data.has_pending_choice && data.choice_context) {
+                // 【修复】设置加载状态阻止输入，直到玩家完成选择
+                if (window.game) {
+                    window.game.isLoading = true;
+                }
                 this.showChoiceDialog(data.choice_context);
                 console.log('[EventChoiceManager] Found pending choice:', data.choice_context.title);
             } else {
@@ -109,6 +114,11 @@ class EventChoiceManager {
     showChoiceDialog(choiceContext) {
         if (!this.dialog || !this.title || !this.description || !this.optionsContainer) {
             console.error('[EventChoiceManager] Cannot show dialog - elements not initialized');
+            // 【修复】元素未初始化时兜底解锁，避免死锁
+            if (window.game && window.game.isLoading) {
+                window.game.isLoading = false;
+                console.log('[EventChoiceManager] Unlocked input due to dialog elements not ready');
+            }
             return;
         }
 
@@ -296,9 +306,7 @@ class EventChoiceManager {
             }
 
             if (result.success) {
-                // 隐藏对话框
-                this.hideDialog();
-
+                // 【修复】先更新游戏状态，再隐藏对话框
                 // 显示结果消息
                 if (result.message) {
                     window.game?.addMessage(result.message, 'success');
@@ -311,10 +319,13 @@ class EventChoiceManager {
                     });
                 }
 
-                // 更新游戏状态
+                // 更新游戏状态（在隐藏对话框前完成，避免提前解锁）
                 if (result.game_state && window.game) {
                     await window.game.updateGameState(result.game_state);
                 }
+
+                // 状态更新完成后再隐藏对话框
+                this.hideDialog(false); // false = 不在hideDialog中解锁，由finally块统一解锁
 
                 console.log('Choice processed successfully:', result);
             } else {
@@ -339,19 +350,43 @@ class EventChoiceManager {
             });
         } finally {
             this.isProcessing = false;
+
+            // 【修复】检查是否还有链式待处理选择，避免提前解锁
+            if (window.game?.gameState?.pending_choice_context) {
+                console.log('[EventChoiceManager] Chain choice detected, keeping locked');
+                // 显示新的选择对话框，保持锁定
+                this.showChoiceDialog(window.game.gameState.pending_choice_context);
+                return; // 不解锁，等待下一个选择完成
+            }
+
+            // 【修复】使用 setLoading(false) 统一恢复按钮状态和输入锁定
+            if (window.game) {
+                window.game.setLoading(false);
+                console.log('[EventChoiceManager] Game input unlocked via setLoading(false)');
+            }
         }
     }
 
-    hideDialog() {
+    /**
+     * 隐藏对话框
+     * @param {boolean} shouldUnlockInput - 是否解锁输入（默认true，由用户主动调用时设为false让调用方控制）
+     */
+    hideDialog(shouldUnlockInput = true) {
         if (!this.isVisible()) return;
 
         this.dialog.classList.remove('show');
-        
+
         setTimeout(() => {
             this.dialog.style.display = 'none';
             this.currentContext = null;
             this.optionsContainer.innerHTML = '';
         }, 300);
+
+        // 【修复】只在允许时解锁输入，使用 setLoading(false) 统一恢复
+        if (shouldUnlockInput && window.game && window.game.isLoading) {
+            window.game.setLoading(false);
+            console.log('[EventChoiceManager] Game input unlocked in hideDialog via setLoading(false)');
+        }
 
         console.log('Event choice dialog hidden');
     }

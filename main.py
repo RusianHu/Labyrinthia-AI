@@ -2301,14 +2301,29 @@ if config.game.debug_mode:
                         "count": len(items)
                     }
             elif test_type == "monster":
-                # 生成怪物
-                monsters = await content_generator.generate_encounter_monsters(player_level, "normal")
+                # 生成怪物（支持前端传入地图生成后的参数建议）
+                monster_plan = request_data.get("monster_plan") if isinstance(request_data.get("monster_plan"), dict) else {}
+                encounter_difficulty = monster_plan.get("encounter_difficulty", "normal")
+                quest_context = monster_plan.get("llm_context") if isinstance(monster_plan.get("llm_context"), dict) else None
+
+                monsters = await content_generator.generate_encounter_monsters(
+                    player_level,
+                    encounter_difficulty,
+                    quest_context
+                )
                 if monsters:
+                    preview = {
+                        "recommended_count": monster_plan.get("encounter_count"),
+                        "boss_count": monster_plan.get("boss_count"),
+                        "spawn_points": monster_plan.get("spawn_points", [])
+                    }
                     return {
                         "success": True,
                         "content_type": "monster",
                         "generated_content": monsters[0].to_dict(),
-                        "count": len(monsters)
+                        "count": len(monsters),
+                        "monster_plan_preview": preview,
+                        "encounter_difficulty": encounter_difficulty
                     }
             elif test_type == "quest":
                 # 生成任务
