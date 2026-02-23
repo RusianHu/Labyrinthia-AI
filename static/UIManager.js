@@ -581,8 +581,19 @@ Object.assign(LabyrinthiaGame.prototype, {
             if (i < inventory.length) {
                 const item = inventory[i];
                 slot.classList.add('has-item');
-                slot.title = `${item.name}\n${item.description}`;
+
+                const rarity = item.rarity || 'common';
+                const type = item.item_type || 'misc';
+                const charges = Number(item.max_charges || 0) > 0
+                    ? `\n充能: ${item.charges ?? 0}/${item.max_charges}`
+                    : '';
+                const cooldown = Number(item.current_cooldown || 0) > 0
+                    ? `\n冷却: ${item.current_cooldown}回合`
+                    : '';
+
+                slot.title = `${item.name}\n[${type}/${rarity}]\n${item.description}${charges}${cooldown}`;
                 slot.textContent = item.name.charAt(0).toUpperCase();
+                slot.dataset.rarity = rarity;
 
                 // 【修复】存储物品ID而不是整个物品对象，避免闭包问题
                 const itemId = item.id;

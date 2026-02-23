@@ -29,6 +29,12 @@ window.checkDebugStatus = function() {
 
 // 防止重复初始化的标志
 let debugMethodsInitialized = false;
+let debugFabMissingLogged = false;
+
+function isQuickTestPage() {
+    const path = window.location?.pathname || '';
+    return path.endsWith('/quick_test.html') || path === '/quick_test.html';
+}
 
 // 等待DOM加载完成后自动添加调试方法
 document.addEventListener('DOMContentLoaded', function() {
@@ -104,6 +110,13 @@ const DebugMethods = {
             debugFab.addEventListener('click', this.boundToggleDebugPanel);
             console.log('Debug FAB button event listener attached');
         } else {
+            if (isQuickTestPage()) {
+                if (!debugFabMissingLogged) {
+                    console.info('DebugManager: quick_test 页面未包含 debug-fab，跳过 FAB 绑定');
+                    debugFabMissingLogged = true;
+                }
+                return;
+            }
             console.warn('Debug FAB button not found, retrying in 100ms...');
             setTimeout(() => {
                 this.setupDebugFabButton();
@@ -188,6 +201,13 @@ const DebugMethods = {
                 console.log('DebugManager: Debug FAB button hidden');
             }
         } else {
+            if (isQuickTestPage()) {
+                if (!debugFabMissingLogged) {
+                    console.info('DebugManager: quick_test 页面未包含 debug-fab，跳过可见性更新');
+                    debugFabMissingLogged = true;
+                }
+                return;
+            }
             console.warn('DebugManager: Debug FAB button element not found');
             // 如果按钮还没有创建，稍后再试
             setTimeout(() => {

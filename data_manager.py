@@ -14,7 +14,7 @@ from pathlib import Path
 from config import config
 from data_models import (
     GameState, Character, Monster, GameMap, Quest, Item, Spell,
-    MapTile, TerrainType, CharacterClass, CreatureType, DamageType
+    MapTile, TerrainType, CharacterClass, CreatureType, DamageType, StatusEffect
 )
 
 
@@ -138,43 +138,65 @@ class DataManager:
     def _dict_to_character(self, data: Dict[str, Any]) -> Character:
         """从字典重建Character对象"""
         from data_models import Ability, Stats
-        
+
         character = Character()
         character.id = data.get("id", character.id)
         character.name = data.get("name", "")
         character.description = data.get("description", "")
         character.position = tuple(data.get("position", (0, 0)))
-        
+
         # 职业
         if character_class := data.get("character_class"):
             try:
                 character.character_class = CharacterClass(character_class)
             except ValueError:
                 pass
-        
+
         # 生物类型
         if creature_type := data.get("creature_type"):
             try:
                 character.creature_type = CreatureType(creature_type)
             except ValueError:
                 pass
-        
+
         # 能力值
         if abilities_data := data.get("abilities"):
             character.abilities = Ability(**abilities_data)
-        
+
         # 属性
         if stats_data := data.get("stats"):
             character.stats = Stats(**stats_data)
-        
+
         # 物品
         if inventory_data := data.get("inventory"):
             character.inventory = [self._dict_to_item(item_data) for item_data in inventory_data]
-        
+
+        # 装备栏（兼容旧存档）
+        equipped_data = data.get("equipped_items", {}) or {}
+        equipped_slots = {
+            "weapon": None,
+            "armor": None,
+            "accessory_1": None,
+            "accessory_2": None,
+        }
+        for slot in equipped_slots.keys():
+            item_data = equipped_data.get(slot)
+            if isinstance(item_data, dict):
+                equipped_slots[slot] = self._dict_to_item(item_data)
+        character.equipped_items = equipped_slots
+
+        # 持续状态（兼容旧存档）
+        active_effects_data = data.get("active_effects", []) or []
+        active_effects = []
+        for effect_data in active_effects_data:
+            if isinstance(effect_data, dict):
+                active_effects.append(StatusEffect.from_dict(effect_data))
+        character.active_effects = active_effects
+
         # 法术
         if spells_data := data.get("spells"):
             character.spells = [self._dict_to_spell(spell_data) for spell_data in spells_data]
-        
+
         return character
     
     def _dict_to_monster(self, data: Dict[str, Any]) -> Monster:
@@ -234,6 +256,14 @@ class DataManager:
         item.usage_description = data.get("usage_description", "")
         item.llm_generated = data.get("llm_generated", False)
         item.generation_context = data.get("generation_context", "")
+        item.effect_payload = data.get("effect_payload", {}) or {}
+        item.use_mode = data.get("use_mode", "active")
+        item.is_equippable = bool(data.get("is_equippable", False))
+        item.equip_slot = data.get("equip_slot", "")
+        item.max_charges = int(data.get("max_charges", 0) or 0)
+        item.charges = int(data.get("charges", item.max_charges) or 0)
+        item.cooldown_turns = int(data.get("cooldown_turns", 0) or 0)
+        item.current_cooldown = int(data.get("current_cooldown", 0) or 0)
         return item
     
     def _dict_to_spell(self, data: Dict[str, Any]) -> Spell:

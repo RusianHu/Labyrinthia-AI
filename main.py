@@ -2699,6 +2699,121 @@ if config.game.debug_mode:
                 "message": f"物品系统测试失败: {str(e)}"
             }
 
+    @app.post("/api/test/item-effect-simulation")
+    async def test_item_effect_simulation(request: Request):
+        """模拟物品效果引擎（无需进入正式战斗流程）"""
+        try:
+            from data_models import GameState, Item
+            from effect_engine import effect_engine
+
+            body = await request.json()
+            base_state_data = body.get("game_state")
+            item_data = body.get("item") or {}
+            llm_response = body.get("llm_response") or {
+                "message": "模拟效果已应用",
+                "events": ["测试事件"],
+                "item_consumed": False,
+                "effects": {
+                    "stat_changes": {"hp": -5},
+                    "apply_status_effects": [
+                        {
+                            "name": "测试灼烧",
+                            "effect_type": "debuff",
+                            "duration_turns": 2,
+                            "stack_policy": "refresh",
+                            "tick_effects": {"hp": -2}
+                        }
+                    ]
+                }
+            }
+
+            if isinstance(base_state_data, dict):
+                game_state = data_manager._dict_to_game_state(base_state_data)
+            else:
+                game_state = GameState()
+
+            item = Item(
+                name=item_data.get("name", "测试道具"),
+                description=item_data.get("description", "用于模拟效果"),
+                item_type=item_data.get("item_type", "consumable"),
+                rarity=item_data.get("rarity", "common"),
+                usage_description=item_data.get("usage_description", "测试用途")
+            )
+            item.effect_payload = item_data.get("effect_payload", {}) or {}
+            item.max_charges = int(item_data.get("max_charges", 0) or 0)
+            item.charges = int(item_data.get("charges", item.max_charges) or 0)
+            item.cooldown_turns = int(item_data.get("cooldown_turns", 0) or 0)
+
+            simulation_payload = item.effect_payload if item.effect_payload else llm_response
+            result = effect_engine.apply_item_effects(game_state, item, simulation_payload)
+            tick_events = effect_engine.process_turn_effects(game_state, trigger="turn_end")
+
+            return {
+                "success": result.success,
+                "message": result.message,
+                "events": result.events,
+                "tick_events": tick_events,
+                "item_consumed": result.item_consumed,
+                "player_snapshot": game_state.player.to_dict(),
+            }
+        except Exception as e:
+            logger.error(f"Item effect simulation failed: {e}")
+            return {
+                "success": False,
+                "message": f"模拟失败: {str(e)}"
+            }
+
+    @app.post("/api/test/item-model-showcase")
+    async def test_item_model_showcase(request: Request):
+        """生成模型物品样例（用于 quick_test 演示）"""
+        try:
+            payload = await request.json()
+            count = max(1, min(6, int(payload.get("count", 3))))
+
+            demo_items = []
+            for idx in range(count):
+                demo_items.append({
+                    "name": f"演示物品-{idx + 1}",
+                    "description": "用于展示新物品系统字段与交互效果",
+                    "item_type": ["weapon", "armor", "consumable", "misc"][idx % 4],
+                    "rarity": ["common", "uncommon", "rare", "epic", "legendary"][idx % 5],
+                    "usage_description": "点击后可触发效果模拟",
+                    "is_equippable": idx % 2 == 0,
+                    "equip_slot": ["weapon", "armor", "accessory_1", "accessory_2"][idx % 4],
+                    "max_charges": 3 if idx % 3 == 0 else 0,
+                    "charges": 3 if idx % 3 == 0 else 0,
+                    "cooldown_turns": 2 if idx % 2 == 1 else 0,
+                    "current_cooldown": 0,
+                    "effect_payload": {
+                        "message": "演示效果触发",
+                        "events": ["你感到一股力量在体内涌动"],
+                        "item_consumed": False,
+                        "effects": {
+                            "stat_changes": {"hp": 5 - idx},
+                            "apply_status_effects": [
+                                {
+                                    "name": "演示状态",
+                                    "effect_type": "buff" if idx % 2 == 0 else "debuff",
+                                    "duration_turns": 2 + (idx % 3),
+                                    "stack_policy": "refresh",
+                                    "tick_effects": {"hp": 1 if idx % 2 == 0 else -1}
+                                }
+                            ]
+                        }
+                    }
+                })
+
+            return {
+                "success": True,
+                "items": demo_items
+            }
+        except Exception as e:
+            logger.error(f"Item model showcase failed: {e}")
+            return {
+                "success": False,
+                "message": f"生成演示失败: {str(e)}"
+            }
+
     @app.post("/api/test/data-saving")
     async def test_data_saving(request: Request):
         """测试数据保存功能"""

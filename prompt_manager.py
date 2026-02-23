@@ -239,7 +239,12 @@ class PromptManager:
                     "damage": {"type": "integer", "minimum": 0},
                     "armor_class": {"type": "integer", "minimum": 0},
                     "healing": {"type": "integer", "minimum": 0},
-                    "mana_restore": {"type": "integer", "minimum": 0}
+                    "mana_restore": {"type": "integer", "minimum": 0},
+                    "is_equippable": {"type": "boolean"},
+                    "equip_slot": {"type": "string", "enum": ["", "weapon", "armor", "accessory_1", "accessory_2"]},
+                    "max_charges": {"type": "integer", "minimum": 0},
+                    "cooldown_turns": {"type": "integer", "minimum": 0},
+                    "effect_payload": {"type": "object"}
                 },
                 "required": ["name", "description", "item_type", "rarity", "value", "weight", "usage_description"]
             },
@@ -274,17 +279,29 @@ class PromptManager:
 
 地图信息：{map_info}
 
-请根据物品的特性和当前情况，生成合理的使用效果。可以包括：
-- 属性变化（生命值、法力值、经验值等）
-- 传送效果
-- 地图变化
-- 特殊效果
+请生成结构化JSON效果，支持以下能力：
+1) 即时数值变化：stat_changes, ability_changes
+2) 位移和地图影响：teleport, map_changes
+3) 背包变化：inventory_changes(add_items/remove_items)
+4) 持续状态：apply_status_effects/remove_status_effects
+5) 特殊效果：special_effects（支持字符串code或对象{{"code":"..."}}）
 
-请返回JSON格式的效果数据。
+持续状态字段规范：
+- name: 状态名称（中文）
+- effect_type: buff/debuff/neutral
+- duration_turns: 持续回合数（>=1）
+- stacks/max_stacks/stack_policy: 叠加规则
+- tick_effects: 每回合生效的增减值（如{{"hp":-3}}）
+- modifiers/potency/tags/triggers/metadata: 可选扩展字段
+
+重要：
+- 只输出JSON，不要额外解释
+- 效果必须与物品设定和当前局势匹配
+- 避免过度超模（除非物品本身是高稀有强力道具）
             """.strip(),
             required_params=[
-                "item_name", "item_description", "item_type", "item_rarity", 
-                "item_usage_description", "item_properties", "player_name", 
+                "item_name", "item_description", "item_type", "item_rarity",
+                "item_usage_description", "item_properties", "player_name",
                 "player_class", "player_level", "player_hp", "player_max_hp",
                 "player_mp", "player_max_mp", "player_ac", "player_experience",
                 "player_position", "map_info"

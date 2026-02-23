@@ -194,6 +194,7 @@ Object.assign(LabyrinthiaGame.prototype, {
         const nameElement = document.getElementById('item-use-name');
         const descriptionElement = document.getElementById('item-use-description');
         const usageElement = document.getElementById('item-use-usage');
+        const metaElement = document.getElementById('item-use-meta');
         const confirmButton = document.getElementById('confirm-use-item');
         const dropButton = document.getElementById('drop-item');
         const cancelButton = document.getElementById('cancel-use-item');
@@ -202,6 +203,26 @@ Object.assign(LabyrinthiaGame.prototype, {
         nameElement.textContent = item.name;
         descriptionElement.textContent = item.description;
         usageElement.textContent = item.usage_description || '使用方法未知';
+
+        if (metaElement) {
+            const chips = [];
+            chips.push(`<span class="item-chip">类型: ${item.item_type || 'misc'}</span>`);
+            chips.push(`<span class="item-chip">稀有度: ${item.rarity || 'common'}</span>`);
+            if (item.is_equippable) {
+                chips.push(`<span class="item-chip">可装备: ${item.equip_slot || 'accessory_1'}</span>`);
+            }
+            if ((item.max_charges || 0) > 0) {
+                chips.push(`<span class="item-chip">充能: ${item.charges ?? 0}/${item.max_charges}</span>`);
+            }
+            if ((item.current_cooldown || 0) > 0) {
+                chips.push(`<span class="item-chip">冷却: ${item.current_cooldown}回合</span>`);
+            }
+            metaElement.innerHTML = chips.join('');
+        }
+
+        const isEquip = !!item.is_equippable;
+        const confirmText = isEquip ? '装备/卸下' : '确认使用';
+        confirmButton.textContent = confirmText;
 
         // 设置按钮事件
         confirmButton.onclick = () => {

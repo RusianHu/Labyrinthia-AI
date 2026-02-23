@@ -19,6 +19,7 @@ from llm_service import llm_service
 from data_manager import data_manager
 from progress_manager import progress_manager, ProgressEventType, ProgressContext
 from item_effect_processor import item_effect_processor
+from effect_engine import effect_engine
 from llm_interaction_manager import (
     llm_interaction_manager, InteractionType, InteractionContext
 )
@@ -327,6 +328,20 @@ class GameEngine:
             if result["success"]:
                 game_state.turn_count += 1
                 game_state.game_time += 1  # 每回合1分钟
+
+                # 回合推进：处理状态效果与物品冷却
+                try:
+                    tick_events = effect_engine.process_turn_effects(game_state, trigger="turn_end")
+                    if tick_events:
+                        if "events" not in result:
+                            result["events"] = []
+                        result["events"].extend(tick_events)
+                except Exception as e:
+                    logger.error(f"Failed to process turn effects: {e}")
+
+                for inv_item in game_state.player.inventory:
+                    if getattr(inv_item, "current_cooldown", 0) > 0:
+                        inv_item.current_cooldown = max(0, int(inv_item.current_cooldown) - 1)
 
                 # 处理怪物行动（如果游戏没有结束）
                 monster_events_occurred = False
@@ -759,9 +774,49 @@ class GameEngine:
         if not item:
             return {"success": False, "message": "物品未找到"}
 
+        # 冷却与充能检查
+        if getattr(item, "current_cooldown", 0) > 0:
+            return {"success": False, "message": f"{item.name} 冷却中，还需 {item.current_cooldown} 回合"}
+        if getattr(item, "max_charges", 0) > 0 and getattr(item, "charges", 0) <= 0:
+            return {"success": False, "message": f"{item.name} 充能不足"}
+
+        # 装备型物品：切换装备状态
+        if getattr(item, "is_equippable", False):
+            slot = getattr(item, "equip_slot", "") or "accessory_1"
+            if slot not in game_state.player.equipped_items:
+                slot = "accessory_1"
+
+            equipped = game_state.player.equipped_items.get(slot)
+            if equipped and equipped.id == item.id:
+                game_state.player.equipped_items[slot] = None
+                return {
+                    "success": True,
+                    "message": f"卸下了 {item.name}",
+                    "events": [f"{item.name} 已从 {slot} 卸下"],
+                    "llm_interaction_required": False,
+                    "item_name": item.name,
+                    "item_consumed": False,
+                    "effects": ["unequip"],
+                }
+
+            game_state.player.equipped_items[slot] = item
+            return {
+                "success": True,
+                "message": f"装备了 {item.name}",
+                "events": [f"{item.name} 已装备到 {slot}"],
+                "llm_interaction_required": False,
+                "item_name": item.name,
+                "item_consumed": False,
+                "effects": ["equip"],
+            }
+
         try:
-            # 使用LLM处理物品使用效果
-            llm_response = await llm_service.process_item_usage(game_state, item)
+            # 优先使用固定效果载荷（便于可测与可控）
+            if getattr(item, "effect_payload", None):
+                llm_response = item.effect_payload
+            else:
+                # 使用LLM处理物品使用效果
+                llm_response = await llm_service.process_item_usage(game_state, item)
 
             # 使用效果处理器处理LLM返回的结果
             effect_result = item_effect_processor.process_llm_response(
@@ -784,15 +839,25 @@ class GameEngine:
                     self._update_visibility(game_state, new_x, new_y)
                     effect_result.events.append(f"传送到了位置 ({new_x}, {new_y})")
 
+            # 消耗充能与设置冷却（仅在效果成功时）
+            if effect_result.success:
+                if getattr(item, "max_charges", 0) > 0:
+                    item.charges = max(0, int(item.charges) - 1)
+                if getattr(item, "cooldown_turns", 0) > 0:
+                    item.current_cooldown = int(item.cooldown_turns)
+
             # 移除消耗的物品
-            if effect_result.item_consumed:
+            if effect_result.item_consumed and item in game_state.player.inventory:
                 game_state.player.inventory.remove(item)
 
             return {
                 "success": effect_result.success,
                 "message": effect_result.message,
                 "events": effect_result.events,
-                "llm_interaction_required": True  # 物品使用总是需要LLM交互
+                "llm_interaction_required": True,  # 物品使用总是需要LLM交互
+                "item_name": item.name,
+                "item_consumed": effect_result.item_consumed,
+                "effects": effect_result.events,
             }
 
         except Exception as e:

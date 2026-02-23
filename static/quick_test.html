@@ -299,6 +299,99 @@
             transform: none !important;
         }
 
+        .item-sandbox {
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 12px;
+            padding: 16px;
+            margin-bottom: 20px;
+            border: 1px solid rgba(102, 126, 234, 0.25);
+            box-shadow: 0 6px 18px rgba(0, 0, 0, 0.08);
+        }
+
+        .item-sandbox-title {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 1.1rem;
+            font-weight: 600;
+            color: #334155;
+            margin-bottom: 10px;
+        }
+
+        .item-sandbox-title .material-icons {
+            color: #5b21b6;
+        }
+
+        .item-sandbox-controls {
+            display: flex;
+            align-items: end;
+            gap: 10px;
+            flex-wrap: wrap;
+            margin-bottom: 12px;
+        }
+
+        .item-sandbox-controls label {
+            display: flex;
+            flex-direction: column;
+            font-size: 0.8rem;
+            color: #475569;
+            gap: 4px;
+            min-width: 100px;
+        }
+
+        .item-sandbox-controls input {
+            border: 1px solid #cbd5e1;
+            border-radius: 8px;
+            padding: 8px 10px;
+            background: #fff;
+            font-size: 0.9rem;
+        }
+
+        .item-sandbox-view {
+            border: 1px dashed #c7d2fe;
+            background: linear-gradient(180deg, #faf5ff 0%, #eff6ff 100%);
+            border-radius: 10px;
+            padding: 12px;
+            min-height: 80px;
+            color: #1e293b;
+            font-size: 0.9rem;
+        }
+
+        .item-sandbox-card {
+            border: 1px solid rgba(99, 102, 241, 0.25);
+            border-radius: 8px;
+            background: white;
+            padding: 8px 10px;
+            margin-bottom: 8px;
+        }
+
+        .item-sandbox-card:last-child {
+            margin-bottom: 0;
+        }
+
+        .item-sandbox-badges {
+            display: flex;
+            gap: 6px;
+            flex-wrap: wrap;
+            margin-top: 6px;
+        }
+
+        .item-sandbox-badge {
+            font-size: 0.75rem;
+            padding: 2px 8px;
+            border-radius: 999px;
+            background: #ede9fe;
+            color: #5b21b6;
+            border: 1px solid #ddd6fe;
+        }
+
+        @media (max-width: 768px) {
+            .item-sandbox-controls {
+                flex-direction: column;
+                align-items: stretch;
+            }
+        }
+
         @media (max-width: 768px) {
             .header {
                 margin-bottom: 20px; /* 移除负边距，设置一个合适的正边距 */
@@ -331,7 +424,32 @@
                     打开本地地图算法实验室
                 </a>
             </div>
-            <!-- 测试分类 -->
+            <div class="item-sandbox">
+                <div class="item-sandbox-title">
+                    <span class="material-icons">precision_manufacturing</span>
+                    物品高仿真演示面板
+                </div>
+                <div class="item-sandbox-controls">
+                    <label>
+                        样例数量
+                        <input id="item-sandbox-count" type="number" min="1" max="6" value="4">
+                    </label>
+                    <label>
+                        持续回合
+                        <input id="item-sandbox-turns" type="number" min="1" max="8" value="3">
+                    </label>
+                    <button class="test-btn secondary" onclick="runItemSandboxDemo()">
+                        <span class="material-icons">play_circle</span>
+                        一键高仿真演示
+                    </button>
+                    <button class="test-btn" onclick="clearItemSandboxView()">
+                        <span class="material-icons">cleaning_services</span>
+                        清空演示视图
+                    </button>
+                </div>
+                <div id="item-sandbox-view" class="item-sandbox-view"></div>
+            </div>
+
             <div class="test-categories">
                 <!-- 基础功能测试 -->
                 <div class="test-category">
@@ -399,6 +517,14 @@
                         <button class="test-btn" onclick="testItemSystem()">
                             <span class="material-icons">inventory</span>
                             物品系统测试
+                        </button>
+                        <button class="test-btn secondary" onclick="testItemModelShowcase()">
+                            <span class="material-icons">style</span>
+                            模型物品展示测试
+                        </button>
+                        <button class="test-btn secondary" onclick="testItemEffectSimulation()">
+                            <span class="material-icons">science</span>
+                            物品效果模拟测试
                         </button>
                     </div>
                 </div>
@@ -545,6 +671,19 @@
         </div>
     </div>
 
+    <!-- quick_test 占位元素：避免调试脚本在本页反复报错 -->
+    <button id="debug-fab" class="hidden" style="display:none;" aria-hidden="true" tabindex="-1"></button>
+    <div id="debug-panel" style="display:none;" aria-hidden="true">
+        <pre id="debug-request"></pre>
+        <pre id="debug-response"></pre>
+        <pre id="debug-gamestate"></pre>
+    </div>
+    <div id="event-choice-dialog" style="display:none;" aria-hidden="true">
+        <div id="event-choice-title"></div>
+        <div id="event-choice-description"></div>
+        <div id="event-choice-options"></div>
+    </div>
+
     <!-- 加载游戏脚本 - 按依赖顺序加载 -->
     <script src="/static/GameCore.js"></script>
     <script src="/static/EventHandler.js"></script>
@@ -561,6 +700,63 @@
         // 全局变量
         let testGame = null;
         let testResults = [];
+        let itemSandboxItems = [];
+
+        function renderItemSandbox(items = [], simulation = null) {
+            const container = document.getElementById('item-sandbox-view');
+            if (!container) {
+                return;
+            }
+
+            if (!Array.isArray(items) || items.length === 0) {
+                container.innerHTML = '<div>暂无演示数据，点击“一键高仿真演示”开始。</div>';
+                return;
+            }
+
+            const cards = items.map((item, index) => {
+                const badges = [];
+                const chargeLabel = item.max_charges > 0
+                    ? String(item.charges) + '/' + String(item.max_charges)
+                    : '无限';
+                badges.push(`<span class="item-sandbox-badge">${item.item_type || 'misc'}</span>`);
+                badges.push(`<span class="item-sandbox-badge">${item.rarity || 'common'}</span>`);
+                badges.push(`<span class="item-sandbox-badge">装备:${item.is_equippable ? '是' : '否'}</span>`);
+                badges.push(`<span class="item-sandbox-badge">充能:${chargeLabel}</span>`);
+                badges.push(`<span class="item-sandbox-badge">冷却:${item.cooldown_turns || 0}</span>`);
+
+                return `
+                    <div class="item-sandbox-card">
+                        <div><strong>#${index + 1} ${item.name || '未命名物品'}</strong></div>
+                        <div>${item.description || '无描述'}</div>
+                        <div class="item-sandbox-badges">${badges.join('')}</div>
+                    </div>
+                `;
+            }).join('');
+
+            let simSection = '';
+            if (simulation) {
+                const hp = simulation.player_snapshot?.stats?.hp ?? 0;
+                const maxHp = simulation.player_snapshot?.stats?.max_hp ?? 0;
+                const activeEffects = simulation.player_snapshot?.active_effects?.length ?? 0;
+                simSection = `
+                    <div class="item-sandbox-card" style="border-color:#f59e0b;">
+                        <div><strong>模拟结果</strong></div>
+                        <div>消息: ${simulation.message || '无'}</div>
+                        <div>即时事件: ${(simulation.events || []).length} | Tick事件: ${(simulation.tick_events || []).length}</div>
+                        <div>玩家HP: ${hp}/${maxHp} | 持续效果: ${activeEffects}</div>
+                    </div>
+                `;
+            }
+
+            container.innerHTML = cards + simSection;
+        }
+
+        function clearItemSandboxView() {
+            itemSandboxItems = [];
+            renderItemSandbox([]);
+            log('已清空物品演示面板', 'info');
+        }
+
 
         // 工具函数
         function log(message, type = 'info') {
@@ -586,18 +782,36 @@
         }
 
         function setButtonLoading(button, loading = true) {
-            if (loading) {
-                button.disabled = true;
-                const originalText = button.innerHTML;
-                button.setAttribute('data-original-text', originalText);
-                button.innerHTML = '<span class="loading"></span>测试中...';
-            } else {
-                button.disabled = false;
-                const originalText = button.getAttribute('data-original-text');
-                if (originalText) {
-                    button.innerHTML = originalText;
-                }
+            if (!button) {
+                return;
             }
+
+            const depth = Number(button.getAttribute('data-loading-depth') || '0');
+
+            if (loading) {
+                if (depth === 0) {
+                    button.disabled = true;
+                    const originalText = button.innerHTML;
+                    button.setAttribute('data-original-text', originalText);
+                    button.innerHTML = '<span class="loading"></span>测试中...';
+                }
+                button.setAttribute('data-loading-depth', String(depth + 1));
+                return;
+            }
+
+            const nextDepth = Math.max(0, depth - 1);
+            if (nextDepth > 0) {
+                button.setAttribute('data-loading-depth', String(nextDepth));
+                return;
+            }
+
+            button.disabled = false;
+            const originalText = button.getAttribute('data-original-text');
+            if (originalText) {
+                button.innerHTML = originalText;
+            }
+            button.removeAttribute('data-loading-depth');
+            button.removeAttribute('data-original-text');
         }
 
         async function withLoadingButton(button, asyncFunction) {
@@ -1233,6 +1447,149 @@
             });
         }
 
+        async function testItemModelShowcase() {
+            const button = event.target;
+            await withLoadingButton(button, async () => {
+                log('开始模型物品展示测试...', 'info');
+
+                try {
+                    const countInput = document.getElementById('item-sandbox-count');
+                    const count = Math.max(1, Math.min(6, Number(countInput?.value || 4)));
+
+                    const response = await fetch('/api/test/item-model-showcase', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ count })
+                    });
+
+                    if (!response.ok) {
+                        log(`❌ 模型物品展示请求失败: HTTP ${response.status}`, 'error');
+                        return;
+                    }
+
+                    const result = await response.json();
+                    if (!result.success) {
+                        log(`❌ 模型物品展示失败: ${result.message || '未知错误'}`, 'error');
+                        return;
+                    }
+
+                    const items = Array.isArray(result.items) ? result.items : [];
+                    itemSandboxItems = items;
+                    renderItemSandbox(itemSandboxItems);
+                    log(`✅ 生成模型物品成功: ${items.length} 个`, 'success');
+
+                    items.forEach((item, index) => {
+                        const chargeText = item.max_charges > 0 ? `${item.charges}/${item.max_charges}` : '无限';
+                        log(`📦 #${index + 1} ${item.name} | ${item.item_type} | ${item.rarity}`, 'info');
+                        log(`   ⚙️ 装备:${item.is_equippable ? '是' : '否'} 槽位:${item.equip_slot || '无'} 充能:${chargeText} 冷却:${item.cooldown_turns || 0}`, 'info');
+                    });
+                } catch (error) {
+                    log(`❌ 模型物品展示测试异常: ${error.message}`, 'error');
+                }
+            });
+        }
+
+        async function testItemEffectSimulation() {
+            const button = event.target;
+            await withLoadingButton(button, async () => {
+                log('开始物品效果模拟测试...', 'info');
+
+                try {
+                    const turnsInput = document.getElementById('item-sandbox-turns');
+                    const turns = Math.max(1, Math.min(8, Number(turnsInput?.value || 3)));
+
+                    const payload = {
+                        item: {
+                            name: '演示灼烧瓶',
+                            description: '用于测试持续减益',
+                            item_type: 'consumable',
+                            rarity: 'rare',
+                            usage_description: '抛向目标后产生灼烧',
+                            max_charges: 2,
+                            charges: 2,
+                            cooldown_turns: 1,
+                            effect_payload: {
+                                message: '灼烧瓶命中目标',
+                                events: ['目标陷入灼烧状态'],
+                                item_consumed: false,
+                                effects: {
+                                    stat_changes: { hp: -3 },
+                                    apply_status_effects: [
+                                        {
+                                            name: '灼烧',
+                                            effect_type: 'debuff',
+                                            duration_turns: turns,
+                                            stack_policy: 'refresh',
+                                            triggers: { on: 'turn_end' },
+                                            tick_effects: { hp: -2 }
+                                        }
+                                    ]
+                                }
+                            }
+                        },
+                        llm_response: {
+                            message: '模拟施放完成',
+                            events: ['你闻到焦糊味'],
+                            item_consumed: false,
+                            effects: {
+                                stat_changes: { hp: -1 }
+                            }
+                        }
+                    };
+
+                    const response = await fetch('/api/test/item-effect-simulation', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+
+                    if (!response.ok) {
+                        log(`❌ 物品效果模拟请求失败: HTTP ${response.status}`, 'error');
+                        return;
+                    }
+
+                    const result = await response.json();
+                    if (!result.success) {
+                        log(`❌ 物品效果模拟失败: ${result.message || '未知错误'}`, 'error');
+                        return;
+                    }
+
+                    renderItemSandbox(itemSandboxItems, result);
+                    log('✅ 物品效果模拟成功', 'success');
+                    log(`📝 结果消息: ${result.message || '无'}`, 'info');
+                    log(`🎯 即时事件数量: ${(result.events || []).length}`, 'info');
+                    log(`⏱️ Tick事件数量: ${(result.tick_events || []).length}`, 'info');
+
+                    const player = result.player_snapshot || {};
+                    const stats = player.stats || {};
+                    const effects = player.active_effects || [];
+                    log(`❤️ 玩家HP: ${stats.hp || 0}/${stats.max_hp || 0}`, 'info');
+                    log(`🧬 持续效果数量: ${effects.length}`, effects.length > 0 ? 'success' : 'warning');
+                } catch (error) {
+                    log(`❌ 物品效果模拟测试异常: ${error.message}`, 'error');
+                }
+            });
+        }
+
+        async function runItemSandboxDemo() {
+            const button = event.target;
+            await withLoadingButton(button, async () => {
+                log('开始一键高仿真物品演示...', 'info');
+                const mockEvent = { target: button };
+                window.event = mockEvent;
+
+                await testItemModelShowcase();
+                await new Promise(resolve => setTimeout(resolve, 200));
+                await testItemEffectSimulation();
+
+                if (itemSandboxItems.length > 0) {
+                    log('✅ 高仿真物品演示完成，可在上方面板查看结果', 'success');
+                } else {
+                    log('⚠️ 演示完成但未获取到模型物品，请检查后端接口', 'warning');
+                }
+            });
+        }
+
         // 页面加载完成后初始化测试环境（不自动运行测试）
         window.addEventListener('load', () => {
             initializeTestEnvironment();
@@ -1296,7 +1653,7 @@
 
         // ==================== 调试功能集成 ====================
 
-        //  调试模式门控函数
+        //  调试模式门控函数
         function gateByDebugMode() {
             try {
                 fetch('/api/config')
@@ -1307,14 +1664,14 @@
                         if (!debug) {
                             document.querySelectorAll('.test-btn, .clear-btn').forEach(btn => btn.disabled = true);
 
-                            log(' 调试模式未启用：快速测试功能已禁用', 'warning');
+                            log(' 调试模式未启用：快速测试功能已禁用', 'warning');
                         }
                     })
                     .catch(err => {
-                        log(` 调试模式检测失败: ${err.message}`, 'warning');
+                        log(` 调试模式检测失败: ${err.message}`, 'warning');
                     });
             } catch (e) {
-                log(` 调试模式检测异常: ${e.message}`, 'warning');
+                log(` 调试模式检测异常: ${e.message}`, 'warning');
             }
         }
 
@@ -1877,6 +2234,8 @@
                     { name: '角色系统测试', func: () => testCharacterSystem() },
                     { name: '任务系统测试', func: () => testQuestSystem() },
                     { name: '物品系统测试', func: () => testItemSystem() },
+                    { name: '模型物品展示测试', func: () => testItemModelShowcase() },
+                    { name: '物品效果模拟测试', func: () => testItemEffectSimulation() },
                     { name: '数据保存测试', func: () => testDataSaving() },
                     { name: '数据加载测试', func: () => testDataLoading() }
                 ];
@@ -2082,5 +2441,6 @@
                 log(`调试模式检测异常: ${e.message}`, 'warning');
             }
         }
+    </script>
 </body>
 </html>

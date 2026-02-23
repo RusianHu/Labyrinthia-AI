@@ -172,6 +172,78 @@ class Stats:
 
 
 @dataclass
+class StatusEffect:
+    """持续状态效果（buff/debuff）"""
+    id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    name: str = ""
+    effect_type: str = "buff"  # buff, debuff, neutral
+    duration_turns: int = 1
+    stacks: int = 1
+    max_stacks: int = 1
+    stack_policy: str = "replace"  # replace, stack, refresh, keep_highest
+    source: str = ""
+    tags: List[str] = field(default_factory=list)
+    potency: Dict[str, Any] = field(default_factory=dict)
+    modifiers: Dict[str, Any] = field(default_factory=dict)
+    tick_effects: Dict[str, Any] = field(default_factory=dict)
+    triggers: Dict[str, Any] = field(default_factory=dict)
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "id": self.id,
+            "name": self.name,
+            "effect_type": self.effect_type,
+            "duration_turns": self.duration_turns,
+            "stacks": self.stacks,
+            "max_stacks": self.max_stacks,
+            "stack_policy": self.stack_policy,
+            "source": self.source,
+            "tags": self.tags,
+            "potency": self.potency,
+            "modifiers": self.modifiers,
+            "tick_effects": self.tick_effects,
+            "triggers": self.triggers,
+            "metadata": self.metadata,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "StatusEffect":
+        effect = cls()
+
+        def _safe_int(value: Any, default: int) -> int:
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                return default
+
+        effect.id = data.get("id", effect.id)
+        effect.name = data.get("name", "")
+        effect.effect_type = data.get("effect_type", "buff")
+        effect.duration_turns = _safe_int(data.get("duration_turns", 1), 1)
+        effect.stacks = _safe_int(data.get("stacks", 1), 1)
+        effect.max_stacks = _safe_int(data.get("max_stacks", max(effect.stacks, 1)), max(effect.stacks, 1))
+        effect.stack_policy = data.get("stack_policy", "replace")
+        effect.source = data.get("source", "")
+        effect.tags = data.get("tags", []) or []
+        effect.potency = data.get("potency", {}) or {}
+        effect.modifiers = data.get("modifiers", {}) or {}
+        effect.tick_effects = data.get("tick_effects", {}) or {}
+
+        triggers = data.get("triggers")
+        if not isinstance(triggers, dict):
+            trigger = data.get("trigger")
+            if trigger:
+                triggers = {"on": trigger}
+            else:
+                triggers = {}
+        effect.triggers = triggers
+
+        effect.metadata = data.get("metadata", {}) or {}
+        return effect
+
+
+@dataclass
 class Item:
     """物品"""
     id: str = field(default_factory=lambda: str(uuid.uuid4()))
@@ -186,6 +258,14 @@ class Item:
     usage_description: str = ""  # 使用说明
     llm_generated: bool = False  # 是否由LLM生成
     generation_context: str = ""  # 生成时的上下文
+    effect_payload: Dict[str, Any] = field(default_factory=dict)  # 可选：固定效果载荷
+    use_mode: str = "active"  # active, passive, toggle
+    is_equippable: bool = False
+    equip_slot: str = ""  # weapon, armor, accessory_1, accessory_2
+    max_charges: int = 0
+    charges: int = 0
+    cooldown_turns: int = 0
+    current_cooldown: int = 0
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -199,7 +279,15 @@ class Item:
             "properties": self.properties,
             "usage_description": self.usage_description,
             "llm_generated": self.llm_generated,
-            "generation_context": self.generation_context
+            "generation_context": self.generation_context,
+            "effect_payload": self.effect_payload,
+            "use_mode": self.use_mode,
+            "is_equippable": self.is_equippable,
+            "equip_slot": self.equip_slot,
+            "max_charges": self.max_charges,
+            "charges": self.charges,
+            "cooldown_turns": self.cooldown_turns,
+            "current_cooldown": self.current_cooldown
         }
 
 
@@ -245,6 +333,13 @@ class Character:
     abilities: Ability = field(default_factory=Ability)
     stats: Stats = field(default_factory=Stats)
     inventory: List[Item] = field(default_factory=list)
+    equipped_items: Dict[str, Optional[Item]] = field(default_factory=lambda: {
+        "weapon": None,
+        "armor": None,
+        "accessory_1": None,
+        "accessory_2": None,
+    })
+    active_effects: List[StatusEffect] = field(default_factory=list)
     spells: List[Spell] = field(default_factory=list)
     position: tuple = (0, 0)
     # DND技能系统
@@ -304,6 +399,14 @@ class Character:
             "abilities": self.abilities.__dict__,
             "stats": self.stats.__dict__,
             "inventory": [item.to_dict() for item in self.inventory],
+            "equipped_items": {
+                slot: item.to_dict() if item else None
+                for slot, item in self.equipped_items.items()
+            },
+            "active_effects": [
+                effect.to_dict() if hasattr(effect, "to_dict") else effect
+                for effect in self.active_effects
+            ],
             "spells": [spell.to_dict() for spell in self.spells],
             "position": self.position,
             "proficiency_bonus": self.proficiency_bonus,
@@ -654,7 +757,7 @@ class GameState:
 # 导出所有模型
 __all__ = [
     "CharacterClass", "CreatureType", "DamageType", "TerrainType",
-    "Ability", "Stats", "Item", "Spell", "Character", "Monster",
+    "Ability", "Stats", "StatusEffect", "Item", "Spell", "Character", "Monster",
     "MapTile", "GameMap", "QuestEvent", "QuestMonster", "Quest",
     "EventChoice", "EventChoiceContext", "GameState"
 ]

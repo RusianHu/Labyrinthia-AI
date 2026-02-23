@@ -21,6 +21,13 @@ class EventChoiceManager {
         this.optionsContainer = document.getElementById('event-choice-options');
 
         if (!this.dialog || !this.title || !this.description || !this.optionsContainer) {
+            const path = window.location?.pathname || '';
+            const isQuickTest = path.endsWith('/quick_test.html') || path === '/quick_test.html';
+            if (isQuickTest) {
+                console.info('[EventChoiceManager] quick_test 页面未提供事件选择对话框，跳过初始化');
+                return;
+            }
+
             console.error('[EventChoiceManager] Event choice dialog elements not found:', {
                 dialog: !!this.dialog,
                 title: !!this.title,

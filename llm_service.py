@@ -771,6 +771,13 @@ class LLMService:
                 item.value = result.get("value", 10)
                 item.weight = result.get("weight", 1.0)
                 item.usage_description = result.get("usage_description", "使用方法未知")
+                item.is_equippable = bool(result.get("is_equippable", False))
+                item.equip_slot = result.get("equip_slot", "")
+                item.max_charges = int(result.get("max_charges", 0) or 0)
+                item.charges = item.max_charges
+                item.cooldown_turns = int(result.get("cooldown_turns", 0) or 0)
+                item.current_cooldown = 0
+                item.effect_payload = result.get("effect_payload", {}) or {}
                 # 构建properties字典
                 properties = {}
                 if result.get("damage"):
@@ -814,7 +821,7 @@ class LLMService:
 
         prompt = prompt_manager.format_prompt("item_usage_effect", **context)
 
-        # 定义物品使用效果的JSON schema
+        # 定义物品使用效果的JSON schema（扩展版）
         schema = {
             "type": "object",
             "properties": {
@@ -834,7 +841,20 @@ class LLMService:
                                 "mp": {"type": "integer"},
                                 "experience": {"type": "integer"},
                                 "max_hp": {"type": "integer"},
-                                "max_mp": {"type": "integer"}
+                                "max_mp": {"type": "integer"},
+                                "ac": {"type": "integer"},
+                                "speed": {"type": "integer"}
+                            }
+                        },
+                        "ability_changes": {
+                            "type": "object",
+                            "properties": {
+                                "strength": {"type": "integer"},
+                                "dexterity": {"type": "integer"},
+                                "constitution": {"type": "integer"},
+                                "intelligence": {"type": "integer"},
+                                "wisdom": {"type": "integer"},
+                                "charisma": {"type": "integer"}
                             }
                         },
                         "teleport": {
@@ -852,13 +872,64 @@ class LLMService:
                                 "properties": {
                                     "x": {"type": "integer"},
                                     "y": {"type": "integer"},
-                                    "terrain": {"type": "string"}
+                                    "terrain": {"type": "string"},
+                                    "add_items": {"type": "array", "items": {"type": "object"}}
+                                }
+                            }
+                        },
+                        "inventory_changes": {
+                            "type": "object",
+                            "properties": {
+                                "add_items": {"type": "array", "items": {"type": "object"}},
+                                "remove_items": {"type": "array", "items": {"type": "string"}}
+                            }
+                        },
+                        "apply_status_effects": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "name": {"type": "string"},
+                                    "effect_type": {"type": "string"},
+                                    "duration_turns": {"type": "integer"},
+                                    "stacks": {"type": "integer"},
+                                    "max_stacks": {"type": "integer"},
+                                    "stack_policy": {"type": "string"},
+                                    "tags": {"type": "array", "items": {"type": "string"}},
+                                    "potency": {"type": "object"},
+                                    "modifiers": {"type": "object"},
+                                    "tick_effects": {"type": "object"},
+                                    "triggers": {"type": "object"},
+                                    "metadata": {"type": "object"}
+                                },
+                                "required": ["name", "effect_type", "duration_turns"]
+                            }
+                        },
+                        "remove_status_effects": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "name": {"type": "string"},
+                                    "effect_type": {"type": "string"},
+                                    "tag": {"type": "string"}
                                 }
                             }
                         },
                         "special_effects": {
                             "type": "array",
-                            "items": {"type": "string"}
+                            "items": {
+                                "anyOf": [
+                                    {"type": "string"},
+                                    {
+                                        "type": "object",
+                                        "properties": {
+                                            "code": {"type": "string"}
+                                        },
+                                        "required": ["code"]
+                                    }
+                                ]
+                            }
                         }
                     }
                 }

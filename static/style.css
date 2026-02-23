@@ -1058,6 +1058,26 @@ body {
     line-height: 1.5;
 }
 
+.item-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 10px;
+}
+
+.item-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 8px;
+    border-radius: 999px;
+    font-size: 0.78rem;
+    font-weight: 600;
+    background: rgba(94, 53, 177, 0.12);
+    color: #4527a0;
+    border: 1px solid rgba(94, 53, 177, 0.25);
+}
+
 .item-usage {
     background: rgba(94, 53, 177, 0.1);
     padding: 12px;
@@ -1065,6 +1085,7 @@ body {
     margin-bottom: 20px;
     border-left: 4px solid #5e35b1;
 }
+
 
 .dialog-buttons {
     display: flex;

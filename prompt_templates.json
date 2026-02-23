@@ -10,9 +10,9 @@
       "version": "1.3"
     },
     "item_pickup_generation": {
-      "name": "item_pickup_generation", 
+      "name": "item_pickup_generation",
       "category": "item_system",
-      "template": "为一个DnD风格的冒险游戏生成一个物品，玩家刚刚在地图上发现了它。\n\n玩家信息：\n- 名称：{player_name}\n- 职业：{player_class}\n- 等级：{player_level}\n- 当前位置：{player_position}\n\n地图信息：\n- 地图名称：{map_name}\n- 地图描述：{map_description}\n- 地图深度：{map_depth}层\n\n拾取上下文：{pickup_context}\n\n请生成一个适合当前情况的物品，要求：\n1. 必须有中文名称\n2. 详细的功能和使用场景介绍\n3. 物品类型要合理（weapon/armor/consumable/misc）\n4. 稀有度要符合地图深度和玩家等级\n5. 使用说明要清晰明确\n\n请返回JSON格式的物品数据。",
+      "template": "为一个DnD风格的冒险游戏生成一个物品，玩家刚刚在地图上发现了它。\n\n玩家信息：\n- 名称：{player_name}\n- 职业：{player_class}\n- 等级：{player_level}\n- 当前位置：{player_position}\n\n地图信息：\n- 地图名称：{map_name}\n- 地图描述：{map_description}\n- 地图深度：{map_depth}层\n\n拾取上下文：{pickup_context}\n\n请生成一个适合当前情况的物品，要求：\n1. 必须有中文名称\n2. 详细的功能和使用场景介绍\n3. 物品类型要合理（weapon/armor/consumable/misc）\n4. 稀有度要符合地图深度和玩家等级\n5. 使用说明要清晰明确\n6. 可以生成可装备物品（含槽位）、有充能/冷却的道具、或包含固定效果载荷(effect_payload)的特殊物品\n\n请返回JSON格式的物品数据。",
       "required_params": ["player_name", "player_class", "player_level", "player_position", "map_name", "map_description", "map_depth", "pickup_context"],
       "optional_params": {},
       "schema": {
@@ -28,12 +28,17 @@
           "damage": {"type": "integer", "minimum": 0},
           "armor_class": {"type": "integer", "minimum": 0},
           "healing": {"type": "integer", "minimum": 0},
-          "mana_restore": {"type": "integer", "minimum": 0}
+          "mana_restore": {"type": "integer", "minimum": 0},
+          "is_equippable": {"type": "boolean"},
+          "equip_slot": {"type": "string", "enum": ["", "weapon", "armor", "accessory_1", "accessory_2"]},
+          "max_charges": {"type": "integer", "minimum": 0},
+          "cooldown_turns": {"type": "integer", "minimum": 0},
+          "effect_payload": {"type": "object"}
         },
         "required": ["name", "description", "item_type", "rarity", "value", "weight", "usage_description"]
       },
       "description": "生成玩家拾取的物品",
-      "version": "1.0"
+      "version": "2.0"
     },
     "quest_generation": {
       "name": "quest_generation",
@@ -87,11 +92,11 @@
     "item_usage_effect": {
       "name": "item_usage_effect",
       "category": "item_system",
-      "template": "玩家正在使用一个物品，请根据物品属性和当前游戏状态，生成使用效果。\n\n物品信息：\n- 名称：{item_name}\n- 描述：{item_description}\n- 类型：{item_type}\n- 稀有度：{item_rarity}\n- 使用说明：{item_usage_description}\n- 属性：{item_properties}\n\n玩家信息：\n- 名称：{player_name}\n- 职业：{player_class}\n- 等级：{player_level}\n- 生命值：{player_hp}/{player_max_hp}\n- 法力值：{player_mp}/{player_max_mp}\n- 护甲等级：{player_ac}\n- 经验值：{player_experience}\n- 当前位置：{player_position}\n\n地图信息：{map_info}\n\n请根据物品的特性和当前情况，生成合理的使用效果。可以包括：\n- 属性变化（生命值、法力值、经验值等）\n- 传送效果\n- 地图变化\n- 特殊效果\n\n请返回JSON格式的效果数据。",
+      "template": "玩家正在使用一个物品，请根据物品属性和当前游戏状态，生成使用效果。\n\n物品信息：\n- 名称：{item_name}\n- 描述：{item_description}\n- 类型：{item_type}\n- 稀有度：{item_rarity}\n- 使用说明：{item_usage_description}\n- 属性：{item_properties}\n\n玩家信息：\n- 名称：{player_name}\n- 职业：{player_class}\n- 等级：{player_level}\n- 生命值：{player_hp}/{player_max_hp}\n- 法力值：{player_mp}/{player_max_mp}\n- 护甲等级：{player_ac}\n- 经验值：{player_experience}\n- 当前位置：{player_position}\n\n地图信息：{map_info}\n\n请生成结构化JSON效果，支持以下能力：\n1) 即时数值变化：stat_changes, ability_changes\n2) 位移和地图影响：teleport, map_changes\n3) 背包变化：inventory_changes(add_items/remove_items)\n4) 持续状态：apply_status_effects/remove_status_effects\n5) 特殊效果：special_effects（支持字符串code或对象{{\"code\":\"...\"}}）\n\n持续状态字段规范：\n- name: 状态名称（中文）\n- effect_type: buff/debuff/neutral\n- duration_turns: 持续回合数（>=1）\n- stacks/max_stacks/stack_policy: 叠加规则\n- tick_effects: 每回合生效的增减值（如{{\"hp\":-3}}）\n- modifiers/potency/tags/triggers/metadata: 可选扩展字段\n\n重要：\n- 只输出JSON，不要额外解释\n- 效果必须与物品设定和当前局势匹配\n- 避免过度超模（除非物品本身是高稀有强力道具）",
       "required_params": ["item_name", "item_description", "item_type", "item_rarity", "item_usage_description", "item_properties", "player_name", "player_class", "player_level", "player_hp", "player_max_hp", "player_mp", "player_max_mp", "player_ac", "player_experience", "player_position", "map_info"],
       "optional_params": {},
       "description": "生成物品使用的效果",
-      "version": "1.0"
+      "version": "2.0"
     },
     "map_description": {
       "name": "map_description",

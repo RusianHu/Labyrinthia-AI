@@ -655,6 +655,24 @@ class GameStateModifier:
             item.value = item_data["value"]
         if "weight" in item_data:
             item.weight = item_data["weight"]
+        if "effect_payload" in item_data:
+            item.effect_payload = item_data.get("effect_payload", {}) or {}
+        if "use_mode" in item_data:
+            item.use_mode = item_data.get("use_mode", "active")
+        if "is_equippable" in item_data:
+            item.is_equippable = bool(item_data.get("is_equippable", False))
+        if "equip_slot" in item_data:
+            item.equip_slot = item_data.get("equip_slot", "")
+        if "max_charges" in item_data:
+            item.max_charges = int(item_data.get("max_charges", 0) or 0)
+        if "charges" in item_data:
+            item.charges = int(item_data.get("charges", item.max_charges) or 0)
+        else:
+            item.charges = item.max_charges
+        if "cooldown_turns" in item_data:
+            item.cooldown_turns = int(item_data.get("cooldown_turns", 0) or 0)
+        if "current_cooldown" in item_data:
+            item.current_cooldown = int(item_data.get("current_cooldown", 0) or 0)
 
         return item
 
