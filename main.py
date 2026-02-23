@@ -972,9 +972,29 @@ async def process_combat_result(game_id: str, request: Request, response: Respon
 
         logger.info(f"Processing combat result for user {user_id}, game: {game_id}")
 
-        request_data = await request.json()
+        try:
+            request_data = await request.json()
+        except (json.JSONDecodeError, UnicodeDecodeError, ValueError):
+            raise HTTPException(status_code=400, detail="请求体不是合法JSON")
+
+        if not isinstance(request_data, dict):
+            raise HTTPException(status_code=400, detail="请求体格式错误")
+
         monster_id = request_data.get("monster_id")
-        damage_dealt = request_data.get("damage_dealt", 0)
+        damage_raw = request_data.get("damage_dealt", 0)
+
+        # 防御性处理：兼容前端/调试场景下的非标准数值输入，避免战斗结算500
+        try:
+            if damage_raw is None:
+                damage_dealt = 0
+            else:
+                damage_dealt = int(float(damage_raw))
+        except (TypeError, ValueError, OverflowError):
+            logger.warning(f"Invalid damage_dealt received: {damage_raw}, fallback to 0")
+            damage_dealt = 0
+
+        # 伤害值安全边界（防异常输入与极端值）
+        damage_dealt = max(0, min(damage_dealt, 1_000_000))
 
         if not monster_id:
             raise HTTPException(status_code=400, detail="缺少怪物ID")
@@ -1084,8 +1104,8 @@ async def process_combat_result(game_id: str, request: Request, response: Respon
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Failed to process combat result: {e}")
-        raise HTTPException(status_code=500, detail=f"处理战斗结果失败: {str(e)}")
+        logger.exception("Failed to process combat result")
+        raise HTTPException(status_code=500, detail="处理战斗结果失败")
 
 
 @app.post("/api/event-choice")
