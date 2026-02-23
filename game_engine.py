@@ -6,6 +6,7 @@ Game engine for the Labyrinthia AI game
 import asyncio
 import random
 import logging
+import copy
 from typing import Dict, List, Optional, Tuple, Any
 from datetime import datetime, timedelta
 
@@ -41,6 +42,71 @@ class GameEngine:
         self.auto_save_tasks: Dict[Tuple[str, str], asyncio.Task] = {}
         self.last_access_time: Dict[Tuple[str, str], float] = {}  # 记录最后访问时间
         self.cleanup_task_started = False  # 标记清理任务是否已启动
+        # 幂等结果缓存：key=(user_id, game_id) -> {"{action}:{idempotency_key}": result}
+        self.action_idempotency_cache: Dict[Tuple[str, str], Dict[str, Dict[str, Any]]] = {}
+
+    def _make_action_result(
+        self,
+        success: bool,
+        message: str,
+        *,
+        events: Optional[List[str]] = None,
+        error_code: Optional[str] = None,
+        retryable: bool = False,
+        **extra: Any,
+    ) -> Dict[str, Any]:
+        result = {
+            "success": success,
+            "message": message,
+            "events": events if isinstance(events, list) else ([] if events is None else [str(events)]),
+            "error_code": error_code,
+            "retryable": retryable,
+        }
+        for key, value in extra.items():
+            result[key] = value
+        return result
+
+    def _get_idempotency_cache(self, game_key: Tuple[str, str]) -> Dict[str, Dict[str, Any]]:
+        if game_key not in self.action_idempotency_cache:
+            self.action_idempotency_cache[game_key] = {}
+        return self.action_idempotency_cache[game_key]
+
+    def _get_cached_action_result(
+        self,
+        game_key: Tuple[str, str],
+        action: str,
+        parameters: Dict[str, Any],
+    ) -> Optional[Dict[str, Any]]:
+        idempotency_key = str(parameters.get("idempotency_key", "") or "").strip()
+        if not idempotency_key:
+            return None
+        cache_key = f"{action}:{idempotency_key}"
+        cached = self._get_idempotency_cache(game_key).get(cache_key)
+        if not cached:
+            return None
+
+        replay = copy.deepcopy(cached)
+        replay["idempotent_replay"] = True
+        if "events" not in replay or not isinstance(replay["events"], list):
+            replay["events"] = []
+        replay["events"] = [f"幂等重放：复用动作结果（{action}）"] + replay["events"]
+        logger.info(f"Idempotent replay hit for {game_key}, action={action}")
+        return replay
+
+    def _store_action_result(
+        self,
+        game_key: Tuple[str, str],
+        action: str,
+        parameters: Dict[str, Any],
+        result: Dict[str, Any],
+    ):
+        idempotency_key = str(parameters.get("idempotency_key", "") or "").strip()
+        if not idempotency_key:
+            return
+        cache_key = f"{action}:{idempotency_key}"
+        cached = copy.deepcopy(result)
+        cached.pop("idempotent_replay", None)
+        self._get_idempotency_cache(game_key)[cache_key] = cached
 
     async def create_new_game(self, user_id: str, player_name: str, character_class: str = "fighter") -> GameState:
         """创建新游戏
@@ -299,12 +365,22 @@ class GameEngine:
         """
         game_key = (user_id, game_id)
         if game_key not in self.active_games:
-            return {"success": False, "message": "游戏未找到"}
+            return self._make_action_result(
+                False,
+                "游戏未找到",
+                error_code="GAME_NOT_FOUND",
+                retryable=False,
+            )
 
         game_state = self.active_games[game_key]
         parameters = parameters or {}
 
-        result = {"success": True, "message": "", "events": []}
+        result = self._make_action_result(True, "", events=[])
+
+        if action in {"use_item", "drop_item"}:
+            replay = self._get_cached_action_result(game_key, action, parameters)
+            if replay is not None:
+                return replay
 
         try:
             if action == "move":
@@ -322,7 +398,12 @@ class GameEngine:
             elif action == "rest":
                 result = await self._handle_rest(game_state)
             else:
-                result = {"success": False, "message": f"未知行动: {action}"}
+                result = self._make_action_result(
+                    False,
+                    f"未知行动: {action}",
+                    error_code="UNKNOWN_ACTION",
+                    retryable=False,
+                )
 
             # 增加回合数
             if result["success"]:
@@ -430,7 +511,16 @@ class GameEngine:
 
         except Exception as e:
             logger.error(f"Error processing action {action}: {e}")
-            result = {"success": False, "message": f"处理行动时发生错误: {str(e)}"}
+            result = self._make_action_result(
+                False,
+                f"处理行动时发生错误: {str(e)}",
+                events=[f"处理行动时发生错误: {str(e)}"],
+                error_code="ACTION_PROCESS_ERROR",
+                retryable=True,
+            )
+
+        if action in {"use_item", "drop_item"} and bool(result.get("success", False)):
+            self._store_action_result(game_key, action, parameters, result)
 
         return result
 
@@ -772,13 +862,28 @@ class GameEngine:
                 break
 
         if not item:
-            return {"success": False, "message": "物品未找到"}
+            return self._make_action_result(
+                False,
+                "物品未找到",
+                error_code="ITEM_NOT_FOUND",
+                retryable=False,
+            )
 
         # 冷却与充能检查
         if getattr(item, "current_cooldown", 0) > 0:
-            return {"success": False, "message": f"{item.name} 冷却中，还需 {item.current_cooldown} 回合"}
+            return self._make_action_result(
+                False,
+                f"{item.name} 冷却中，还需 {item.current_cooldown} 回合",
+                error_code="ITEM_ON_COOLDOWN",
+                retryable=False,
+            )
         if getattr(item, "max_charges", 0) > 0 and getattr(item, "charges", 0) <= 0:
-            return {"success": False, "message": f"{item.name} 充能不足"}
+            return self._make_action_result(
+                False,
+                f"{item.name} 充能不足",
+                error_code="ITEM_NO_CHARGES",
+                retryable=False,
+            )
 
         # 装备型物品：切换装备状态
         if getattr(item, "is_equippable", False):
@@ -789,26 +894,26 @@ class GameEngine:
             equipped = game_state.player.equipped_items.get(slot)
             if equipped and equipped.id == item.id:
                 game_state.player.equipped_items[slot] = None
-                return {
-                    "success": True,
-                    "message": f"卸下了 {item.name}",
-                    "events": [f"{item.name} 已从 {slot} 卸下"],
-                    "llm_interaction_required": False,
-                    "item_name": item.name,
-                    "item_consumed": False,
-                    "effects": ["unequip"],
-                }
+                return self._make_action_result(
+                    True,
+                    f"卸下了 {item.name}",
+                    events=[f"{item.name} 已从 {slot} 卸下"],
+                    llm_interaction_required=False,
+                    item_name=item.name,
+                    item_consumed=False,
+                    effects=["unequip"],
+                )
 
             game_state.player.equipped_items[slot] = item
-            return {
-                "success": True,
-                "message": f"装备了 {item.name}",
-                "events": [f"{item.name} 已装备到 {slot}"],
-                "llm_interaction_required": False,
-                "item_name": item.name,
-                "item_consumed": False,
-                "effects": ["equip"],
-            }
+            return self._make_action_result(
+                True,
+                f"装备了 {item.name}",
+                events=[f"{item.name} 已装备到 {slot}"],
+                llm_interaction_required=False,
+                item_name=item.name,
+                item_consumed=False,
+                effects=["equip"],
+            )
 
         try:
             # 优先使用固定效果载荷（便于可测与可控）
@@ -850,23 +955,38 @@ class GameEngine:
             if effect_result.item_consumed and item in game_state.player.inventory:
                 game_state.player.inventory.remove(item)
 
-            return {
-                "success": effect_result.success,
-                "message": effect_result.message,
-                "events": effect_result.events,
-                "llm_interaction_required": True,  # 物品使用总是需要LLM交互
-                "item_name": item.name,
-                "item_consumed": effect_result.item_consumed,
-                "effects": effect_result.events,
-            }
+            if not effect_result.success:
+                return self._make_action_result(
+                    False,
+                    effect_result.message,
+                    events=effect_result.events,
+                    error_code="ITEM_EFFECT_FAILED",
+                    retryable=True,
+                    llm_interaction_required=True,
+                    item_name=item.name,
+                    item_consumed=effect_result.item_consumed,
+                    effects=effect_result.events,
+                )
+
+            return self._make_action_result(
+                True,
+                effect_result.message,
+                events=effect_result.events,
+                llm_interaction_required=True,
+                item_name=item.name,
+                item_consumed=effect_result.item_consumed,
+                effects=effect_result.events,
+            )
 
         except Exception as e:
             logger.error(f"处理物品使用时出错: {e}")
-            return {
-                "success": False,
-                "message": f"使用{item.name}时发生错误",
-                "events": [f"物品使用失败: {str(e)}"]
-            }
+            return self._make_action_result(
+                False,
+                f"使用{item.name}时发生错误",
+                events=[f"物品使用失败: {str(e)}"],
+                error_code="ITEM_USE_EXCEPTION",
+                retryable=True,
+            )
 
     async def _handle_drop_item(self, game_state: GameState, parameters: Dict[str, Any]) -> Dict[str, Any]:
         """处理丢弃物品行动"""
@@ -880,7 +1000,22 @@ class GameEngine:
                 break
 
         if not item:
-            return {"success": False, "message": "物品未找到"}
+            return self._make_action_result(
+                False,
+                "物品未找到",
+                error_code="ITEM_NOT_FOUND",
+                retryable=False,
+            )
+
+        if getattr(item, "is_quest_item", False) and not bool(parameters.get("force", False)):
+            return self._make_action_result(
+                False,
+                f"{item.name} 是任务物品，无法直接丢弃",
+                error_code="QUEST_ITEM_LOCKED",
+                retryable=False,
+                requires_confirmation=True,
+                confirmation_token=f"drop:{item.id}",
+            )
 
         try:
             # 从玩家背包中移除物品
@@ -898,26 +1033,28 @@ class GameEngine:
                 # 将物品添加到地图瓦片
                 current_tile.items.append(item)
 
-                return {
-                    "success": True,
-                    "message": f"丢弃了 {item.name}",
-                    "events": [f"你将 {item.name} 丢弃在了地上"]
-                }
+                return self._make_action_result(
+                    True,
+                    f"丢弃了 {item.name}",
+                    events=[f"你将 {item.name} 丢弃在了地上"],
+                )
             else:
                 # 如果无法获取当前瓦片，直接移除物品
-                return {
-                    "success": True,
-                    "message": f"丢弃了 {item.name}",
-                    "events": [f"你丢弃了 {item.name}"]
-                }
+                return self._make_action_result(
+                    True,
+                    f"丢弃了 {item.name}",
+                    events=[f"你丢弃了 {item.name}"],
+                )
 
         except Exception as e:
             logger.error(f"处理物品丢弃时出错: {e}")
-            return {
-                "success": False,
-                "message": f"丢弃{item.name}时发生错误",
-                "events": [f"物品丢弃失败: {str(e)}"]
-            }
+            return self._make_action_result(
+                False,
+                f"丢弃{item.name}时发生错误",
+                events=[f"物品丢弃失败: {str(e)}"],
+                error_code="ITEM_DROP_EXCEPTION",
+                retryable=True,
+            )
 
     async def _handle_cast_spell(self, game_state: GameState, parameters: Dict[str, Any]) -> Dict[str, Any]:
         """处理施法行动"""

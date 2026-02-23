@@ -264,6 +264,8 @@ class DataManager:
         item.charges = int(data.get("charges", item.max_charges) or 0)
         item.cooldown_turns = int(data.get("cooldown_turns", 0) or 0)
         item.current_cooldown = int(data.get("current_cooldown", 0) or 0)
+        item.is_quest_item = bool(data.get("is_quest_item", False))
+        item.quest_lock_reason = str(data.get("quest_lock_reason", "") or "")
         return item
     
     def _dict_to_spell(self, data: Dict[str, Any]) -> Spell:

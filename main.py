@@ -9,6 +9,7 @@ import random
 import time
 import json
 import tempfile
+import uuid
 from datetime import datetime
 from typing import Dict, List, Optional, Any
 from contextlib import asynccontextmanager
@@ -69,6 +70,56 @@ class LLMEventRequest(BaseModel):
     event_type: str
     event_data: Dict[str, Any]
     game_state: Dict[str, Any]
+
+
+def _normalize_action_response(
+    action: str,
+    trace_id: str,
+    raw: Dict[str, Any],
+) -> Dict[str, Any]:
+    """统一 `/api/action` 返回协议，兼容历史字段。"""
+    result = dict(raw or {})
+
+    success = bool(result.get("success", False))
+    message = str(result.get("message", "") or "")
+    events = result.get("events")
+    if not isinstance(events, list):
+        events = [str(events)] if events else []
+
+    normalized = {
+        "success": success,
+        "action": action,
+        "trace_id": trace_id,
+        "message": message,
+        "events": events,
+        "effects": result.get("effects", []),
+        "error_code": result.get("error_code"),
+        "retryable": bool(result.get("retryable", False)),
+        "llm_interaction_required": bool(result.get("llm_interaction_required", False)),
+    }
+
+    passthrough_keys = [
+        "item_name",
+        "item_consumed",
+        "pending_choice_context",
+        "game_over",
+        "game_over_reason",
+        "narrative",
+        "new_position",
+        "damage",
+        "idempotent_replay",
+        "requires_confirmation",
+        "confirmation_token",
+        "debug_info",
+    ]
+    for key in passthrough_keys:
+        if key in result:
+            normalized[key] = result[key]
+
+    if not success and not normalized["error_code"]:
+        normalized["error_code"] = "ACTION_FAILED"
+
+    return normalized
 
 
 class SyncStateRequest(BaseModel):
@@ -426,6 +477,7 @@ async def get_game_quests(game_id: str, request: Request, response: Response):
 @app.post("/api/action")
 async def perform_action(request: ActionRequest, http_request: Request, response: Response):
     """执行游戏行动"""
+    trace_id = str(uuid.uuid4())
     try:
         # 获取用户ID
         user_id = user_session_manager.get_or_create_user_id(http_request, response)
@@ -463,25 +515,48 @@ async def perform_action(request: ActionRequest, http_request: Request, response
             # 其他参数直接传递（如坐标等）
             sanitized_params = request.parameters
 
-        logger.info(f"Processing action: {request.action} for user {user_id}, game: {request.game_id}")
+        if not isinstance(sanitized_params, dict):
+            sanitized_params = {}
+
+        if request.action in {"use_item", "drop_item"}:
+            idempotency_key = sanitized_params.get("idempotency_key")
+            if not idempotency_key:
+                idempotency_key = str(uuid.uuid4())
+            sanitized_params["idempotency_key"] = str(idempotency_key)
+
+        logger.info(
+            f"Processing action: {request.action} for user {user_id}, "
+            f"game: {request.game_id}, trace_id={trace_id}"
+        )
 
         # 更新访问时间
         game_engine.update_access_time(user_id, request.game_id)
 
-        result = await game_engine.process_player_action(
-            user_id=user_id,
-            game_id=request.game_id,
-            action=request.action,
-            parameters=sanitized_params
-        )
+        async with game_state_lock_manager.lock_game_state(user_id, request.game_id, f"action:{request.action}"):
+            result = await game_engine.process_player_action(
+                user_id=user_id,
+                game_id=request.game_id,
+                action=request.action,
+                parameters=sanitized_params
+            )
 
-        return result
+        return _normalize_action_response(request.action, trace_id, result)
 
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Failed to process action: {e}")
-        raise HTTPException(status_code=500, detail=f"处理行动失败: {str(e)}")
+        logger.error(f"Failed to process action, trace_id={trace_id}: {e}")
+        return _normalize_action_response(
+            request.action,
+            trace_id,
+            {
+                "success": False,
+                "message": "处理行动失败",
+                "events": [f"处理行动失败: {str(e)}"],
+                "error_code": "INTERNAL_ERROR",
+                "retryable": True,
+            },
+        )
 
 
 @app.post("/api/llm-event")

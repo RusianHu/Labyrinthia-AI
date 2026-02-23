@@ -673,6 +673,10 @@ class GameStateModifier:
             item.cooldown_turns = int(item_data.get("cooldown_turns", 0) or 0)
         if "current_cooldown" in item_data:
             item.current_cooldown = int(item_data.get("current_cooldown", 0) or 0)
+        if "is_quest_item" in item_data:
+            item.is_quest_item = bool(item_data.get("is_quest_item", False))
+        if "quest_lock_reason" in item_data:
+            item.quest_lock_reason = str(item_data.get("quest_lock_reason", "") or "")
 
         return item
 

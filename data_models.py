@@ -266,6 +266,8 @@ class Item:
     charges: int = 0
     cooldown_turns: int = 0
     current_cooldown: int = 0
+    is_quest_item: bool = False
+    quest_lock_reason: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -287,7 +289,9 @@ class Item:
             "max_charges": self.max_charges,
             "charges": self.charges,
             "cooldown_turns": self.cooldown_turns,
-            "current_cooldown": self.current_cooldown
+            "current_cooldown": self.current_cooldown,
+            "is_quest_item": self.is_quest_item,
+            "quest_lock_reason": self.quest_lock_reason
         }
 
 

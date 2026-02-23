@@ -45,10 +45,15 @@ Object.assign(LabyrinthiaGame.prototype, {
         let hasPendingChoiceContext = false;
 
         try {
+            const params = { ...(parameters || {}) };
+            if ((action === 'use_item' || action === 'drop_item') && !params.idempotency_key) {
+                params.idempotency_key = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+            }
+
             const requestData = {
                 game_id: this.gameId,
                 action: action,
-                parameters: parameters
+                parameters: params
             };
 
             // 记录调试信息
@@ -145,7 +150,7 @@ Object.assign(LabyrinthiaGame.prototype, {
                     this.hideLLMOverlay();
                 }
             } else {
-                this.addMessage(result.message || '行动失败', 'error');
+                this.handleActionErrorResult(result, action, params);
             }
         } catch (error) {
             console.error('Action error:', error);
@@ -212,6 +217,33 @@ Object.assign(LabyrinthiaGame.prototype, {
             await this.localEngine.syncToBackend();
         }
         await this.performAction('drop_item', { item_id: itemId });
+    },
+
+    handleActionErrorResult(result, action, params = {}) {
+        const errorCode = result?.error_code || 'ACTION_FAILED';
+        const message = result?.message || '行动失败';
+
+        if (errorCode === 'QUEST_ITEM_LOCKED') {
+            const confirmMessage = `${message}\n\n该操作可能影响任务进度，是否强制丢弃？`;
+            const confirmed = window.confirm(confirmMessage);
+            if (confirmed) {
+                const nextParams = { ...params, force: true };
+                this.performAction(action, nextParams);
+                return;
+            }
+        }
+
+        if (errorCode === 'ITEM_ON_COOLDOWN' || errorCode === 'ITEM_NO_CHARGES') {
+            this.addMessage(message, 'system');
+            return;
+        }
+
+        if (result?.retryable) {
+            this.addMessage(`${message}（可重试）`, 'error');
+            return;
+        }
+
+        this.addMessage(message, 'error');
     },
 
     shouldShowLLMOverlay(action, parameters) {
