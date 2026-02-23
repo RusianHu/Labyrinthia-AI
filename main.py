@@ -2355,29 +2355,43 @@ if config.game.debug_mode:
 
     @app.post("/api/test/map-generation")
     async def test_map_generation(request: Request):
-        """测试地图生成功能"""
+        """测试地图生成功能（支持任务上下文模拟）"""
         try:
             request_data = await request.json()
             width = request_data.get("width", 10)
             height = request_data.get("height", 10)
             depth = request_data.get("depth", 1)
             theme = request_data.get("theme", "测试区域")
+            quest_context = request_data.get("quest_context")
 
             from content_generator import content_generator
 
             game_map = await content_generator.generate_dungeon_map(
-                width=width, height=height, depth=depth, theme=theme
+                width=width,
+                height=height,
+                depth=depth,
+                theme=theme,
+                quest_context=quest_context,
             )
 
             # 统计地图信息
-            room_count = 0
+            room_positions = set()
             event_count = 0
 
-            for tile in game_map.tiles.values():
-                if tile.terrain.value in ["room", "chamber"]:
-                    room_count += 1
+            for pos, tile in game_map.tiles.items():
+                terrain_value = tile.terrain.value if hasattr(tile.terrain, "value") else str(tile.terrain)
+                if terrain_value in ["room", "chamber"] or bool(getattr(tile, "room_type", None)):
+                    room_positions.add(pos)
                 if tile.has_event:
                     event_count += 1
+
+            metadata = game_map.generation_metadata if isinstance(game_map.generation_metadata, dict) else {}
+            blueprint_report = metadata.get("blueprint_report") if isinstance(metadata.get("blueprint_report"), dict) else {}
+            monster_hints = metadata.get("monster_hints") if isinstance(metadata.get("monster_hints"), dict) else {}
+
+            room_count = len(room_positions)
+            if room_count == 0:
+                room_count = int(blueprint_report.get("room_nodes", 0) or 0)
 
             return {
                 "success": True,
@@ -2385,7 +2399,25 @@ if config.game.debug_mode:
                 "map_size": f"{width}x{height}",
                 "room_count": room_count,
                 "event_count": event_count,
-                "description": game_map.description[:100] + "..." if len(game_map.description) > 100 else game_map.description
+                "floor_theme": getattr(game_map, "floor_theme", "normal"),
+                "description": game_map.description[:100] + "..." if len(game_map.description) > 100 else game_map.description,
+                "quest_context_applied": isinstance(quest_context, dict),
+                "blueprint": {
+                    "used": bool(metadata.get("blueprint_used", False)),
+                    "fallback_reason": metadata.get("blueprint_fallback_reason", ""),
+                    "report": {
+                        "room_nodes": blueprint_report.get("room_nodes", 0),
+                        "corridor_edges": blueprint_report.get("corridor_edges", 0),
+                        "event_intents": blueprint_report.get("event_intents", 0),
+                        "monster_intents": blueprint_report.get("monster_intents", 0),
+                        "issues": blueprint_report.get("issues", []),
+                    },
+                },
+                "monster_hints": {
+                    "encounter_count": monster_hints.get("encounter_count", 0),
+                    "encounter_difficulty": monster_hints.get("encounter_difficulty", ""),
+                    "spawn_points": monster_hints.get("spawn_points", []),
+                },
             }
 
         except Exception as e:

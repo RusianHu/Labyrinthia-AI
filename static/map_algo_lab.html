@@ -233,7 +233,7 @@
 
         .stat-cards {
             display: grid;
-            grid-template-columns: repeat(5, minmax(0, 1fr));
+            grid-template-columns: repeat(8, minmax(0, 1fr));
             gap: 8px;
         }
 
@@ -504,25 +504,42 @@
 
                 <div class="inline-fields">
                     <div class="field">
-                        <label for="seed-input">种子（同seed应同结果）</label>
+                        <label for="generation-mode">生成模式</label>
+                        <select id="generation-mode">
+                            <option value="backend">后端地图生成（推荐）</option>
+                            <option value="local">本地算法生成</option>
+                        </select>
+                    </div>
+                    <div class="field">
+                        <label for="seed-input">种子（本地模式使用）</label>
                         <input id="seed-input" type="text" value="demo-seed-001">
                     </div>
+                </div>
+
+                <div class="inline-fields">
                     <div class="field">
                         <label for="runs-input">稳定性回归次数/场景</label>
                         <input id="runs-input" type="number" min="1" max="500" value="30">
+                    </div>
+                    <div class="field">
+                        <label for="random-scenario-count">随机场景数</label>
+                        <input id="random-scenario-count" class="mini-input" type="number" min="0" max="300" value="12">
                     </div>
                 </div>
 
                 <div class="row">
                     <input type="checkbox" id="auto-patch" checked>
-                    <label for="auto-patch">生成后自动模拟LLM补丁并做校验</label>
+                    <label for="auto-patch">本地模式：生成后自动模拟LLM补丁并做校验</label>
+                </div>
+
+                <div class="row">
+                    <input type="checkbox" id="backend-monster-preview" checked>
+                    <label for="backend-monster-preview">后端模式：请求怪物生成预览（基于monster_hints）</label>
                 </div>
 
                 <div class="row tight">
                     <input type="checkbox" id="reliability-with-patch">
-                    <label for="reliability-with-patch">稳定性回归包含补丁流程</label>
-                    <label for="random-scenario-count">随机场景数</label>
-                    <input id="random-scenario-count" class="mini-input" type="number" min="0" max="300" value="12">
+                    <label for="reliability-with-patch">稳定性回归包含补丁流程（仅本地模式）</label>
                 </div>
 
                 <div class="field">
@@ -532,12 +549,13 @@
 
                 <div class="btn-group">
                     <button class="btn" id="btn-generate">生成地图</button>
+                    <button class="btn secondary" id="btn-generate-backend">后端蓝图生成</button>
                     <button class="btn secondary" id="btn-apply-patch">仅应用LLM补丁</button>
                     <button class="btn ghost" id="btn-check-determinism">确定性检查</button>
                     <button class="btn warn" id="btn-reliability">稳定性回归</button>
                 </div>
 
-                <div class="hint">说明：地图拓扑由浏览器端算法创建；事件补丁与初始怪物预览仍可调用后端LLM能力，便于验证“本地地图+LLM怪物”组合链路。</div>
+                <div class="hint">说明：后端模式直接请求 /api/test/map-generation，传递任务上下文并展示 blueprint_used/fallback/monster_hints；本地模式保留确定性与补丁实验能力。</div>
             </div>
         </section>
 
@@ -546,10 +564,12 @@
             <div class="panel-body output-wrap">
                 <div class="stat-cards">
                     <div class="stat"><div class="k">生成状态</div><div class="v" id="stat-status">-</div></div>
+                    <div class="stat"><div class="k">模式</div><div class="v" id="stat-mode">-</div></div>
                     <div class="stat"><div class="k">地图哈希</div><div class="v" id="stat-hash">-</div></div>
                     <div class="stat"><div class="k">房间数量</div><div class="v" id="stat-rooms">-</div></div>
                     <div class="stat"><div class="k">可行走占比</div><div class="v" id="stat-walk">-</div></div>
                     <div class="stat"><div class="k">补丁结果</div><div class="v" id="stat-patch">-</div></div>
+                    <div class="stat"><div class="k">蓝图状态</div><div class="v" id="stat-blueprint">-</div></div>
                     <div class="stat"><div class="k">地形覆盖</div><div class="v" id="stat-cap">-</div></div>
                 </div>
 
@@ -609,9 +629,11 @@
 
         const els = {
             scenarioSelect: document.getElementById('scenario-select'),
+            generationMode: document.getElementById('generation-mode'),
             seedInput: document.getElementById('seed-input'),
             runsInput: document.getElementById('runs-input'),
             autoPatch: document.getElementById('auto-patch'),
+            backendMonsterPreview: document.getElementById('backend-monster-preview'),
             reliabilityWithPatch: document.getElementById('reliability-with-patch'),
             randomScenarioCount: document.getElementById('random-scenario-count'),
             requestJson: document.getElementById('request-json'),
@@ -621,12 +643,15 @@
             logBody: document.getElementById('log-body'),
             failureList: document.getElementById('failure-list'),
             statStatus: document.getElementById('stat-status'),
+            statMode: document.getElementById('stat-mode'),
             statHash: document.getElementById('stat-hash'),
             statRooms: document.getElementById('stat-rooms'),
             statWalk: document.getElementById('stat-walk'),
             statPatch: document.getElementById('stat-patch'),
+            statBlueprint: document.getElementById('stat-blueprint'),
             statCap: document.getElementById('stat-cap'),
             btnGenerate: document.getElementById('btn-generate'),
+            btnGenerateBackend: document.getElementById('btn-generate-backend'),
             btnApplyPatch: document.getElementById('btn-apply-patch'),
             btnCheckDeterminism: document.getElementById('btn-check-determinism'),
             btnReliability: document.getElementById('btn-reliability')
@@ -669,14 +694,114 @@
             return JSON.parse(text);
         }
 
+        function deepClone(value) {
+            return JSON.parse(JSON.stringify(value));
+        }
+
+        function mergeDeep(base, override) {
+            if (Array.isArray(base)) {
+                return Array.isArray(override) ? override : base;
+            }
+            if (base && typeof base === 'object') {
+                const result = { ...base };
+                const source = override && typeof override === 'object' ? override : {};
+                Object.keys(source).forEach((key) => {
+                    if (key in base) {
+                        result[key] = mergeDeep(base[key], source[key]);
+                    } else {
+                        result[key] = source[key];
+                    }
+                });
+                return result;
+            }
+            return override !== undefined ? override : base;
+        }
+
+        function getFixedTemplateRequest() {
+            return {
+                width: 24,
+                height: 24,
+                depth: 2,
+                theme: '模板任务区域-失落圣堂回廊',
+                quest_context: {
+                    id: 'lab_fixed_template_quest_001',
+                    title: '失落圣堂回廊净化',
+                    description: '清理被扭曲能量污染的圣堂回廊，并恢复核心圣坛。',
+                    quest_type: 'exploration',
+                    objectives: ['探索全部关键房间', '清理回廊巡逻敌人', '激活圣坛'],
+                    target_floors: [1, 2, 3],
+                    map_themes: ['abandoned', 'magic'],
+                    story_context: '圣堂封印逐渐松动，回廊中出现异变生物与危险事件。',
+                    special_events: [
+                        {
+                            event_id: 'evt_corridor_echo',
+                            name: '回廊回声',
+                            description: '通道中回声会诱导错误路径，触发剧情选择。',
+                            location_hint: '2层-通道',
+                            floor_number: 2,
+                            progress_value: 10,
+                            is_mandatory: false
+                        },
+                        {
+                            event_id: 'evt_sanctum_altar',
+                            name: '圣坛共鸣',
+                            description: '核心圣坛会根据玩家抉择改变地图局部状态。',
+                            location_hint: '2层-核心房间',
+                            floor_number: 2,
+                            progress_value: 14,
+                            is_mandatory: true
+                        }
+                    ],
+                    special_monsters: [
+                        {
+                            monster_id: 'mon_corridor_patrol',
+                            name: '回廊巡逻者',
+                            location_hint: '2层-通道',
+                            floor_number: 2,
+                            is_boss: false,
+                            progress_value: 12
+                        },
+                        {
+                            monster_id: 'mon_sanctum_keeper',
+                            name: '圣堂看守者',
+                            location_hint: '2层-核心房间',
+                            floor_number: 2,
+                            is_boss: true,
+                            progress_value: 18
+                        }
+                    ],
+                    difficulty: 'normal',
+                    tags: ['圣堂', '回廊', '净化']
+                }
+            };
+        }
+
         function loadScenario(index) {
             const scenario = state.scenarios[index];
+            const fixed = getFixedTemplateRequest();
             if (!scenario) {
+                els.requestJson.value = pretty(fixed);
                 return;
             }
-            els.requestJson.value = pretty(scenario.request);
+
+            const merged = mergeDeep(deepClone(fixed), {
+                width: scenario.request.width,
+                height: scenario.request.height,
+                depth: scenario.request.depth,
+                theme: scenario.request.theme,
+                quest_context: {
+                    title: scenario.request.title || scenario.name,
+                    description: scenario.request.description || fixed.quest_context.description,
+                    quest_type: scenario.request.quest_type || fixed.quest_context.quest_type,
+                    map_themes: scenario.request.map_themes || fixed.quest_context.map_themes,
+                    special_events: scenario.request.special_events || fixed.quest_context.special_events,
+                    special_monsters: scenario.request.special_monsters || fixed.quest_context.special_monsters
+                }
+            });
+
+            els.requestJson.value = pretty(merged);
             els.seedInput.value = `${scenario.id}-seed-001`;
-            log(`已载入场景: ${scenario.name}`, 'info');
+            log(`已载入场景并套用完整模板: ${scenario.name}`, 'info');
         }
 
         function renderMap(map, spawn) {
@@ -736,16 +861,47 @@
             const valid = result.validation && result.validation.ok;
             els.statStatus.textContent = valid ? 'PASS' : 'FAIL';
             els.statStatus.className = `v ${valid ? 'status-ok' : 'status-err'}`;
+            els.statMode.textContent = 'local';
+            els.statMode.className = 'v status-warn';
             els.statHash.textContent = result.hash || '-';
             els.statRooms.textContent = String(result.metrics.room_count);
             els.statWalk.textContent = `${(result.metrics.walkable_ratio * 100).toFixed(1)}%`;
             els.statPatch.textContent = '-';
             els.statPatch.className = 'v';
+            els.statBlueprint.textContent = 'local-only';
+            els.statBlueprint.className = 'v status-warn';
 
             const coverage = LocalMapAlgo.collectCapabilityCoverage(result.map);
             const capText = `D:${coverage.has_door ? 'Y' : 'N'} T:${coverage.has_trap_terrain ? 'Y' : 'N'} $:${coverage.has_treasure_terrain ? 'Y' : 'N'}`;
             els.statCap.textContent = capText;
             els.statCap.className = `v ${(coverage.has_door && coverage.has_trap_terrain && coverage.has_treasure_terrain) ? 'status-ok' : 'status-warn'}`;
+        }
+
+        function updateStatsFromBackendResult(responseData, localPreview) {
+            const success = Boolean(responseData && responseData.success);
+            els.statStatus.textContent = success ? 'PASS' : 'FAIL';
+            els.statStatus.className = `v ${success ? 'status-ok' : 'status-err'}`;
+            els.statMode.textContent = 'backend';
+            els.statMode.className = 'v status-ok';
+            els.statHash.textContent = localPreview && localPreview.hash ? localPreview.hash : '-';
+            els.statRooms.textContent = String(responseData && responseData.room_count ? responseData.room_count : 0);
+            els.statWalk.textContent = localPreview && localPreview.metrics ? `${(localPreview.metrics.walkable_ratio * 100).toFixed(1)}%` : '-';
+            els.statPatch.textContent = 'n/a';
+            els.statPatch.className = 'v status-warn';
+
+            const used = Boolean(responseData && responseData.blueprint && responseData.blueprint.used);
+            els.statBlueprint.textContent = used ? 'used' : 'fallback';
+            els.statBlueprint.className = `v ${used ? 'status-ok' : 'status-warn'}`;
+
+            if (localPreview) {
+                const coverage = LocalMapAlgo.collectCapabilityCoverage(localPreview.map);
+                const capText = `D:${coverage.has_door ? 'Y' : 'N'} T:${coverage.has_trap_terrain ? 'Y' : 'N'} $:${coverage.has_treasure_terrain ? 'Y' : 'N'}`;
+                els.statCap.textContent = capText;
+                els.statCap.className = `v ${(coverage.has_door && coverage.has_trap_terrain && coverage.has_treasure_terrain) ? 'status-ok' : 'status-warn'}`;
+            } else {
+                els.statCap.textContent = '-';
+                els.statCap.className = 'v';
+            }
         }
 
         function showResultInfo(title, payload) {
@@ -778,7 +934,7 @@
             });
         }
 
-        async function generateMap(autoPatch) {
+        async function generateMapLocal(autoPatch) {
             const request = parseRequest();
             const seed = els.seedInput.value.trim() || 'default-demo-seed';
             const spec = LocalMapAlgo.buildMapSpecFromQuestRequest(request);
@@ -792,7 +948,8 @@
             updateStatsFromResult(result);
             const capability = LocalMapAlgo.collectCapabilityCoverage(result.map);
 
-            showResultInfo('原始生成结果', {
+            showResultInfo('原始生成结果（本地）', {
+                mode: 'local',
                 seed: result.seed,
                 hash: result.hash,
                 spec: result.spec,
@@ -804,13 +961,13 @@
             });
 
             if (result.validation.ok) {
-                log(`地图生成成功，hash=${result.hash}，房间=${result.metrics.room_count}，可行走占比=${(result.metrics.walkable_ratio * 100).toFixed(1)}%`, 'ok');
+                log(`本地地图生成成功，hash=${result.hash}，房间=${result.metrics.room_count}，可行走占比=${(result.metrics.walkable_ratio * 100).toFixed(1)}%`, 'ok');
                 log(`能力覆盖: door=${capability.has_door} trapTerrain=${capability.has_trap_terrain} treasureTerrain=${capability.has_treasure_terrain}`, 'info');
                 if (result.monster_hints) {
                     log(`怪物参数建议: difficulty=${result.monster_hints.encounter_difficulty}, encounters=${result.monster_hints.encounter_count}, boss=${result.monster_hints.boss_count}`, 'info');
                 }
             } else {
-                log(`地图生成失败：${result.validation.errors.join(' | ')}`, 'err');
+                log(`本地地图生成失败：${result.validation.errors.join(' | ')}`, 'err');
             }
 
             if (autoPatch) {
@@ -818,7 +975,8 @@
             }
             const monsterPreview = await fetchMonsterPreview(result);
             if (monsterPreview && monsterPreview.ok) {
-                showResultInfo('原始生成结果 + 怪物初始化预览', {
+                showResultInfo('原始生成结果 + 怪物初始化预览（本地）', {
+                    mode: 'local',
                     seed: result.seed,
                     hash: result.hash,
                     spec: result.spec,
@@ -830,6 +988,101 @@
                     events: result.events
                 });
             }
+        }
+
+        function toBackendMapRequest(request) {
+            const width = Number(request.width || 20);
+            const height = Number(request.height || 20);
+            const depth = Number(request.depth || 1);
+            const theme = request.theme || request.title || '实验室任务地图';
+
+            if (request.quest_context && typeof request.quest_context === 'object') {
+                return {
+                    width,
+                    height,
+                    depth,
+                    theme,
+                    quest_context: request.quest_context
+                };
+            }
+
+            return {
+                width,
+                height,
+                depth,
+                theme,
+                quest_context: {
+                    title: request.title || request.quest_title || '实验室模拟任务',
+                    description: request.description || '用于测试后端蓝图地图生成能力',
+                    quest_type: request.quest_type || 'exploration',
+                    target_floors: request.target_floors || [depth],
+                    map_themes: request.map_themes || [request.floor_theme || 'normal'],
+                    story_context: request.story_context || request.description || '',
+                    special_events: Array.isArray(request.special_events) ? request.special_events : [],
+                    special_monsters: Array.isArray(request.special_monsters) ? request.special_monsters : []
+                }
+            };
+        }
+
+        async function generateMapBackend(payloadOverride) {
+            const request = payloadOverride || parseRequest();
+            const backendPayload = toBackendMapRequest(request);
+
+            const localPreviewSpec = LocalMapAlgo.buildMapSpecFromQuestRequest(request);
+            const localPreview = new LocalMapAlgo.LocalMapGenerator(els.seedInput.value.trim() || 'default-demo-seed').generate(localPreviewSpec);
+            renderMap(localPreview.map, localPreview.spawn);
+            state.currentResult = localPreview;
+            state.currentPatched = null;
+
+            log(`后端地图生成请求开始: ${backendPayload.width}x${backendPayload.height}, depth=${backendPayload.depth}`, 'info');
+            const resp = await fetch('/api/test/map-generation', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(backendPayload)
+            });
+            const data = await resp.json();
+            updateStatsFromBackendResult(data, localPreview);
+
+            if (!data || !data.success) {
+                log(`后端地图生成失败: ${data && data.message ? data.message : 'unknown error'}`, 'err');
+                showResultInfo('后端地图生成失败', {
+                    mode: 'backend',
+                    request: backendPayload,
+                    response: data
+                });
+                return;
+            }
+
+            log(`后端地图生成成功: map=${data.map_name}, rooms=${data.room_count}, events=${data.event_count}`, 'ok');
+            log(`蓝图状态: used=${Boolean(data.blueprint && data.blueprint.used)} fallback=${(data.blueprint && data.blueprint.fallback_reason) || 'none'}`, 'info');
+
+            let monsterPreview = null;
+            if (els.backendMonsterPreview.checked && data.monster_hints && Array.isArray(data.monster_hints.spawn_points)) {
+                const fakeResult = {
+                    monster_hints: {
+                        encounter_difficulty: data.monster_hints.encounter_difficulty,
+                        encounter_count: data.monster_hints.encounter_count,
+                        boss_count: 1,
+                        spawn_points: data.monster_hints.spawn_points,
+                        llm_context: {
+                            quest_title: backendPayload.quest_context && backendPayload.quest_context.title ? backendPayload.quest_context.title : ''
+                        }
+                    }
+                };
+                monsterPreview = await fetchMonsterPreview(fakeResult);
+            }
+
+            showResultInfo('后端地图生成结果（含蓝图信息）', {
+                mode: 'backend',
+                request: backendPayload,
+                response: data,
+                local_preview: {
+                    hash: localPreview.hash,
+                    metrics: localPreview.metrics,
+                    validation: localPreview.validation
+                },
+                monster_preview: monsterPreview && monsterPreview.ok ? monsterPreview.data : null
+            });
         }
 
         function applyPatch() {
@@ -890,6 +1143,11 @@
         }
 
         function checkDeterminism() {
+            if (els.generationMode.value !== 'local') {
+                log('确定性检查仅适用于本地模式，请切换到本地模式后执行', 'warn');
+                return;
+            }
+
             const request = parseRequest();
             const seed = els.seedInput.value.trim() || 'default-demo-seed';
             const spec = LocalMapAlgo.buildMapSpecFromQuestRequest(request);
@@ -902,6 +1160,7 @@
             log(same ? '同seed结果一致' : '同seed结果不一致，需要修复随机路径', same ? 'ok' : 'err');
 
             showResultInfo('确定性检查详情', {
+                mode: 'local',
                 seed,
                 hash_a: runA.hash,
                 hash_b: runB.hash,
@@ -912,6 +1171,11 @@
         }
 
         function runReliability() {
+            if (els.generationMode.value !== 'local') {
+                log('稳定性回归当前仅支持本地模式', 'warn');
+                return;
+            }
+
             const runs = Number(els.runsInput.value || 30);
             const randomScenarioCount = Number(els.randomScenarioCount.value || 0);
             const includePatches = Boolean(els.reliabilityWithPatch.checked);
@@ -1058,7 +1322,8 @@
 
             withBusy(els.btnGenerate, '回放中...', async () => {
                 try {
-                    await generateMap(els.autoPatch.checked);
+                    els.generationMode.value = 'local';
+                    await generateMapLocal(els.autoPatch.checked);
                     showResultInfo('失败样本回放详情', {
                         selected_case: item,
                         current_result_hash: state.currentResult ? state.currentResult.hash : null,
@@ -1102,10 +1367,28 @@
 
         function bindEvents() {
             els.btnGenerate.addEventListener('click', () => {
-                withBusy(els.btnGenerate, '生成中...', async () => generateMap(els.autoPatch.checked));
+                withBusy(els.btnGenerate, '生成中...', async () => {
+                    let override = {};
+                    try {
+                        override = parseRequest();
+                    } catch (parseError) {
+                        log(`请求JSON解析失败，将仅使用固定模板: ${parseError.message}`, 'warn');
+                    }
+                    const payload = mergeDeep(getFixedTemplateRequest(), override);
+                    els.requestJson.value = pretty(payload);
+                    await generateMapBackend(payload);
+                });
+            });
+
+            els.btnGenerateBackend.addEventListener('click', () => {
+                withBusy(els.btnGenerateBackend, '请求中...', async () => generateMapBackend());
             });
 
             els.btnApplyPatch.addEventListener('click', () => {
+                if (els.generationMode.value !== 'local') {
+                    log('补丁实验仅支持本地模式', 'warn');
+                    return;
+                }
                 withBusy(els.btnApplyPatch, '应用中...', () => applyPatch());
             });
 
@@ -1116,14 +1399,25 @@
             els.btnReliability.addEventListener('click', () => {
                 withBusy(els.btnReliability, '回归中...', () => runReliability());
             });
+
+            els.generationMode.addEventListener('change', () => {
+                const mode = els.generationMode.value;
+                els.statMode.textContent = mode;
+                els.statMode.className = `v ${mode === 'backend' ? 'status-ok' : 'status-warn'}`;
+                log(`切换生成模式: ${mode}`, 'info');
+            });
         }
 
         function init() {
             initScenarios();
             bindEvents();
             showFailureList([]);
+            els.statMode.textContent = els.generationMode.value;
+            els.statMode.className = `v ${els.generationMode.value === 'backend' ? 'status-ok' : 'status-warn'}`;
+            els.statBlueprint.textContent = '-';
             log(`LocalMapAlgo v${LocalMapAlgo.version} 已加载`, 'ok');
-            log('先点击“生成地图”，再看补丁与回归结果', 'info');
+            log('btn-generate 已固定为“完整模板参数 -> 后端地图生成”流程，可在JSON中覆盖字段', 'info');
+            log('若需确定性/补丁/回归实验，请切换到本地模式并使用对应按钮', 'info');
         }
 
         init();

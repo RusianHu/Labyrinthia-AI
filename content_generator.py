@@ -6,7 +6,9 @@ Content generator for the Labyrinthia AI game
 import random
 import asyncio
 import logging
+import re
 import uuid
+from collections import deque
 from typing import List, Dict, Optional, Tuple, Any
 from dataclasses import asdict
 from enum import Enum
@@ -219,42 +221,747 @@ class ContentGenerator:
             game_map.floor_theme = inferred_theme if inferred_theme in ["normal", "magic", "abandoned", "cave", "combat", "grassland", "desert", "farmland", "snowfield", "town"] else "normal"
             logger.info(f"Using fallback floor_theme: {game_map.floor_theme}")
         
-        # 生成基础地图结构
-        await self._generate_map_layout(game_map, quest_context)
+        # 生成基础地图结构（优先蓝图驱动，失败自动回退）
+        layout_metadata = await self._generate_map_layout(game_map, quest_context)
+
+        if not isinstance(game_map.generation_metadata, dict):
+            game_map.generation_metadata = {}
+        if isinstance(layout_metadata, dict):
+            game_map.generation_metadata.update(layout_metadata)
 
         return game_map
     
-    async def _generate_map_layout(self, game_map: GameMap, quest_context: Optional[Dict[str, Any]] = None):
-        """生成地图布局"""
-        # 初始化所有瓦片为墙壁
-        for x in range(game_map.width):
-            for y in range(game_map.height):
-                tile = MapTile(x=x, y=y, terrain=TerrainType.WALL)
-                game_map.tiles[(x, y)] = tile
+    async def _generate_map_layout(self, game_map: GameMap, quest_context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """生成地图布局（蓝图驱动优先，稳定算法回退）"""
+        self._reset_map_tiles_to_walls(game_map)
 
         # 根据任务需求调整房间生成策略
         room_requirements = self._analyze_quest_requirements(quest_context, game_map.depth)
 
-        # 生成房间和走廊
+        layout_meta: Dict[str, Any] = {
+            "blueprint_enabled": True,
+            "blueprint_used": False,
+            "blueprint_fallback_reason": "",
+        }
+
+        blueprint: Optional[Dict[str, Any]] = None
+        try:
+            blueprint = await self._generate_map_blueprint(game_map, room_requirements, quest_context)
+            validated_blueprint, blueprint_report = self._validate_and_fix_blueprint(
+                blueprint=blueprint,
+                room_requirements=room_requirements,
+                depth=game_map.depth,
+            )
+
+            rooms = self._realize_rooms_from_blueprint(
+                width=game_map.width,
+                height=game_map.height,
+                room_requirements=room_requirements,
+                blueprint=validated_blueprint,
+            )
+
+            for room in rooms:
+                self._carve_room(game_map, room)
+
+            self._connect_rooms_from_blueprint(
+                game_map=game_map,
+                rooms=rooms,
+                blueprint=validated_blueprint,
+                requirements=room_requirements,
+            )
+
+            rooms = await self._validate_and_adjust_room_types(game_map, rooms, quest_context)
+            await self._place_special_terrain(game_map, rooms)
+            await self._generate_map_events(game_map, rooms, quest_context, blueprint=validated_blueprint)
+
+            monster_hints = self._build_monster_hints_from_blueprint(game_map, rooms, validated_blueprint, quest_context)
+            layout_meta.update(
+                {
+                    "blueprint_used": True,
+                    "blueprint_report": blueprint_report,
+                    "monster_hints": monster_hints,
+                }
+            )
+            return layout_meta
+        except Exception as e:
+            logger.exception(f"Blueprint pipeline failed, fallback to stable algorithm: {e}")
+            layout_meta["blueprint_fallback_reason"] = str(e)
+            # 防止蓝图流程中途失败留下半成品地图，回退前重置
+            self._reset_map_tiles_to_walls(game_map)
+
+        # 稳定算法回退路径
         rooms = self._generate_rooms_with_quest_context(
             game_map.width, game_map.height, room_requirements
         )
 
-        # 在地图上放置房间
         for room in rooms:
             self._carve_room(game_map, room)
 
-        # 连接房间（考虑任务路径需求）
         self._connect_rooms_strategically(game_map, rooms, room_requirements)
-
-        # 验证和调整房间类型配置
         rooms = await self._validate_and_adjust_room_types(game_map, rooms, quest_context)
-
-        # 放置特殊地形
         await self._place_special_terrain(game_map, rooms)
-
-        # 生成地图事件
         await self._generate_map_events(game_map, rooms, quest_context)
+
+        layout_meta["blueprint_used"] = False
+        return layout_meta
+
+    def _get_map_blueprint_schema(self) -> Dict[str, Any]:
+        """地图蓝图Schema：LLM只输出结构约束，不输出绝对坐标。"""
+        return {
+            "type": "object",
+            "properties": {
+                "room_nodes": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "id": {"type": "string"},
+                            "role": {
+                                "type": "string",
+                                "enum": ["entrance", "normal", "treasure", "boss", "special", "exit"],
+                            },
+                            "size": {"type": "string", "enum": ["small", "medium", "large"]},
+                            "event_intents": {"type": "array", "items": {"type": "string"}},
+                            "monster_intents": {
+                                "type": "object",
+                                "properties": {
+                                    "difficulty": {"type": "string", "enum": ["easy", "medium", "hard", "boss"]},
+                                    "count": {"type": "integer", "minimum": 0, "maximum": 8},
+                                },
+                            },
+                        },
+                        "required": ["id", "role"],
+                    },
+                },
+                "corridor_edges": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "from": {"type": "string"},
+                            "to": {"type": "string"},
+                            "kind": {"type": "string", "enum": ["direct", "branch", "loop"]},
+                            "locked": {"type": "boolean"},
+                            "event_intents": {"type": "array", "items": {"type": "string"}},
+                            "monster_intents": {
+                                "type": "object",
+                                "properties": {
+                                    "difficulty": {"type": "string", "enum": ["easy", "medium", "hard", "boss"]},
+                                    "count": {"type": "integer", "minimum": 0, "maximum": 6},
+                                },
+                            },
+                        },
+                        "required": ["from", "to"],
+                    },
+                },
+                "key_path": {"type": "array", "items": {"type": "string"}},
+                "difficulty": {"type": "string", "enum": ["easy", "medium", "hard", "boss"]},
+                "trap_density_cap": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+            },
+            "required": ["room_nodes", "corridor_edges"],
+        }
+
+    def _build_map_blueprint_prompt(
+        self,
+        game_map: GameMap,
+        room_requirements: Dict[str, Any],
+        quest_context: Optional[Dict[str, Any]],
+    ) -> str:
+        """构建蓝图提示词：明确禁止输出坐标。"""
+        quest_text = ""
+        if quest_context:
+            quest_text = (
+                f"任务类型: {quest_context.get('quest_type', 'exploration')}\n"
+                f"任务标题: {quest_context.get('title', '未知任务')}\n"
+                f"任务描述: {quest_context.get('description', '无')}\n"
+            )
+
+        return (
+            "你是地下城结构规划器。请只输出结构化蓝图JSON，不要输出任何精确坐标。\n"
+            "蓝图必须包含: room_nodes(房间节点), corridor_edges(通道边), 可选的room/corridor意图。\n"
+            "每个房间用id+role表示，不得包含x/y坐标。\n"
+            "\n"
+            f"地图尺寸: {game_map.width}x{game_map.height}, 深度: {game_map.depth}\n"
+            f"房间需求: {room_requirements}\n"
+            f"{quest_text}\n"
+            "约束: \n"
+            "1) 至少一个entrance。\n"
+            "2) 最终层建议包含boss。\n"
+            "3) corridor_edges确保整体连通。\n"
+            "4) trap_density_cap不超过0.35。\n"
+            "5) 事件/怪物意图使用短标签，如combat/treasure/trap/story/mystery。\n"
+            "6) 严禁输出坐标、像素、绝对位置。"
+        )
+
+    async def _generate_map_blueprint(
+        self,
+        game_map: GameMap,
+        room_requirements: Dict[str, Any],
+        quest_context: Optional[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        """调用LLM生成地图蓝图（结构约束层）。"""
+        schema = self._get_map_blueprint_schema()
+        prompt = self._build_map_blueprint_prompt(game_map, room_requirements, quest_context)
+        blueprint = await llm_service._async_generate_json(prompt, schema=schema)
+        if not isinstance(blueprint, dict) or not blueprint:
+            raise ValueError("empty blueprint from llm")
+        if "room_nodes" not in blueprint:
+            raise ValueError("blueprint missing room_nodes")
+        return blueprint
+
+    def _sanitize_blueprint(self, blueprint: Dict[str, Any]) -> Tuple[Dict[str, Any], int]:
+        """白名单过滤蓝图字段，防止非法字段进入后续逻辑。"""
+        allowed_top = {"room_nodes", "corridor_edges", "key_path", "difficulty", "trap_density_cap"}
+        valid_event_types = {"combat", "treasure", "story", "trap", "mystery"}
+        valid_room_roles = {"entrance", "normal", "treasure", "boss", "special", "exit"}
+        valid_difficulty = {"easy", "medium", "hard", "boss"}
+        valid_edge_kinds = {"direct", "branch", "loop"}
+
+        max_nodes = 32
+        max_edges = 96
+        max_intents_per_item = 6
+        max_key_path_len = 64
+        max_id_len = 48
+
+        sanitized: Dict[str, Any] = {}
+        filtered_count = 0
+
+        def normalize_node_id(raw: Any) -> Optional[str]:
+            if not isinstance(raw, str):
+                return None
+            candidate = raw.strip()
+            if not candidate:
+                return None
+            candidate = re.sub(r"[^A-Za-z0-9_-]", "_", candidate)
+            candidate = candidate[:max_id_len].strip("_")
+            return candidate or None
+
+        for k, v in blueprint.items():
+            if k in allowed_top:
+                sanitized[k] = v
+            else:
+                filtered_count += 1
+
+        room_nodes: List[Dict[str, Any]] = []
+        raw_nodes = sanitized.get("room_nodes") if isinstance(sanitized.get("room_nodes"), list) else []
+        if len(raw_nodes) > max_nodes:
+            filtered_count += len(raw_nodes) - max_nodes
+            raw_nodes = raw_nodes[:max_nodes]
+
+        for node in raw_nodes:
+            if not isinstance(node, dict):
+                filtered_count += 1
+                continue
+            nn: Dict[str, Any] = {}
+            nid = normalize_node_id(node.get("id"))
+            role = node.get("role")
+            if nid:
+                nn["id"] = nid
+            if isinstance(role, str) and role in valid_room_roles:
+                nn["role"] = role
+            size = node.get("size")
+            if isinstance(size, str) and size in {"small", "medium", "large"}:
+                nn["size"] = size
+            event_intents = node.get("event_intents")
+            if isinstance(event_intents, list):
+                validated_intents = [
+                    e for e in event_intents if isinstance(e, str) and e in valid_event_types
+                ]
+                if len(validated_intents) > max_intents_per_item:
+                    filtered_count += len(validated_intents) - max_intents_per_item
+                    validated_intents = validated_intents[:max_intents_per_item]
+                nn["event_intents"] = validated_intents
+            monster_intents = node.get("monster_intents")
+            if isinstance(monster_intents, dict):
+                mi: Dict[str, Any] = {}
+                mdiff = monster_intents.get("difficulty")
+                if isinstance(mdiff, str) and mdiff in valid_difficulty:
+                    mi["difficulty"] = mdiff
+                mcount = monster_intents.get("count")
+                if isinstance(mcount, int):
+                    mi["count"] = max(0, min(8, mcount))
+                if mi:
+                    nn["monster_intents"] = mi
+            if "id" in nn and "role" in nn:
+                room_nodes.append(nn)
+            else:
+                filtered_count += 1
+
+        corridor_edges: List[Dict[str, Any]] = []
+        raw_edges = sanitized.get("corridor_edges") if isinstance(sanitized.get("corridor_edges"), list) else []
+        if len(raw_edges) > max_edges:
+            filtered_count += len(raw_edges) - max_edges
+            raw_edges = raw_edges[:max_edges]
+
+        for edge in raw_edges:
+            if not isinstance(edge, dict):
+                filtered_count += 1
+                continue
+            ee: Dict[str, Any] = {}
+            frm = normalize_node_id(edge.get("from"))
+            to = normalize_node_id(edge.get("to"))
+            if frm and to:
+                ee["from"] = frm
+                ee["to"] = to
+            else:
+                filtered_count += 1
+                continue
+            kind = edge.get("kind")
+            if isinstance(kind, str) and kind in valid_edge_kinds:
+                ee["kind"] = kind
+            locked = edge.get("locked")
+            if isinstance(locked, bool):
+                ee["locked"] = locked
+            event_intents = edge.get("event_intents")
+            if isinstance(event_intents, list):
+                validated_intents = [
+                    e for e in event_intents if isinstance(e, str) and e in valid_event_types
+                ]
+                if len(validated_intents) > max_intents_per_item:
+                    filtered_count += len(validated_intents) - max_intents_per_item
+                    validated_intents = validated_intents[:max_intents_per_item]
+                ee["event_intents"] = validated_intents
+            monster_intents = edge.get("monster_intents")
+            if isinstance(monster_intents, dict):
+                mi = {}
+                mdiff = monster_intents.get("difficulty")
+                if isinstance(mdiff, str) and mdiff in valid_difficulty:
+                    mi["difficulty"] = mdiff
+                mcount = monster_intents.get("count")
+                if isinstance(mcount, int):
+                    mi["count"] = max(0, min(6, mcount))
+                if mi:
+                    ee["monster_intents"] = mi
+            corridor_edges.append(ee)
+
+        sanitized["room_nodes"] = room_nodes
+        sanitized["corridor_edges"] = corridor_edges
+
+        key_path = sanitized.get("key_path")
+        if not isinstance(key_path, list):
+            sanitized["key_path"] = []
+        else:
+            validated_path = [
+                normalize_node_id(k)
+                for k in key_path
+                if normalize_node_id(k)
+            ]
+            if len(validated_path) > max_key_path_len:
+                filtered_count += len(validated_path) - max_key_path_len
+                validated_path = validated_path[:max_key_path_len]
+            sanitized["key_path"] = validated_path
+
+        difficulty = sanitized.get("difficulty")
+        if not isinstance(difficulty, str) or difficulty not in valid_difficulty:
+            sanitized["difficulty"] = "medium"
+
+        cap = sanitized.get("trap_density_cap")
+        if isinstance(cap, (float, int)):
+            sanitized["trap_density_cap"] = max(0.0, min(0.35, float(cap)))
+        else:
+            sanitized["trap_density_cap"] = 0.2
+
+        return sanitized, filtered_count
+
+    def _validate_and_fix_blueprint(
+        self,
+        blueprint: Dict[str, Any],
+        room_requirements: Dict[str, Any],
+        depth: int,
+    ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+        """本地校验与修正：连通性、关键路径、难度/陷阱上限、非法字段过滤。"""
+        fixed, filtered_count = self._sanitize_blueprint(blueprint)
+        report: Dict[str, Any] = {
+            "illegal_fields_filtered": filtered_count,
+            "fixes": [],
+        }
+
+        min_rooms = max(1, int(room_requirements.get("min_rooms", 3)))
+        max_rooms = max(min_rooms, int(room_requirements.get("max_rooms", 8)))
+
+        nodes = fixed.get("room_nodes", [])
+        if len(nodes) < min_rooms:
+            for i in range(min_rooms - len(nodes)):
+                nodes.append({"id": f"auto_room_{i}", "role": "normal"})
+            report["fixes"].append("补齐最小房间数量")
+        if len(nodes) > max_rooms:
+            nodes = nodes[:max_rooms]
+            report["fixes"].append("截断超额房间数量")
+
+        # 保证id唯一
+        seen = set()
+        for idx, node in enumerate(nodes):
+            nid = node.get("id", f"room_{idx}")
+            if nid in seen:
+                nid = f"{nid}_{idx}"
+                node["id"] = nid
+                report["fixes"].append("修复重复房间ID")
+            seen.add(nid)
+
+        role_set = {n.get("role") for n in nodes}
+        if "entrance" not in role_set and nodes:
+            nodes[0]["role"] = "entrance"
+            report["fixes"].append("补充入口房间")
+
+        needs_boss = bool(room_requirements.get("needs_boss_room", False)) or depth == config.game.max_quest_floors
+        if needs_boss and "boss" not in role_set and nodes:
+            nodes[-1]["role"] = "boss"
+            report["fixes"].append("补充Boss房间")
+
+        valid_ids = {n.get("id") for n in nodes if isinstance(n.get("id"), str)}
+        edges = fixed.get("corridor_edges", [])
+        dedup = set()
+        filtered_edges = []
+        for edge in edges:
+            frm = edge.get("from")
+            to = edge.get("to")
+            if frm not in valid_ids or to not in valid_ids or frm == to:
+                continue
+            key = tuple(sorted([frm, to]))
+            if key in dedup:
+                continue
+            dedup.add(key)
+            filtered_edges.append(edge)
+
+        if not filtered_edges and len(nodes) > 1:
+            for i in range(len(nodes) - 1):
+                filtered_edges.append({"from": nodes[i]["id"], "to": nodes[i + 1]["id"], "kind": "direct"})
+            report["fixes"].append("补充基础连通边")
+
+        adjacency: Dict[str, List[str]] = {nid: [] for nid in valid_ids}
+        for edge in filtered_edges:
+            a = edge["from"]
+            b = edge["to"]
+            adjacency[a].append(b)
+            adjacency[b].append(a)
+
+        # 连通性修复：将不连通分量串接
+        if nodes:
+            visited = set()
+            components: List[List[str]] = []
+            for node in nodes:
+                nid = node["id"]
+                if nid in visited:
+                    continue
+                comp = []
+                dq = deque([nid])
+                visited.add(nid)
+                while dq:
+                    cur = dq.popleft()
+                    comp.append(cur)
+                    for nxt in adjacency.get(cur, []):
+                        if nxt not in visited:
+                            visited.add(nxt)
+                            dq.append(nxt)
+                components.append(comp)
+
+            if len(components) > 1:
+                for i in range(len(components) - 1):
+                    a = components[i][0]
+                    b = components[i + 1][0]
+                    filtered_edges.append({"from": a, "to": b, "kind": "direct"})
+                    adjacency[a].append(b)
+                    adjacency[b].append(a)
+                report["fixes"].append("修复图连通性")
+
+        # 关键路径可达修复
+        entrance_id = next((n["id"] for n in nodes if n.get("role") == "entrance"), nodes[0]["id"] if nodes else "")
+        target_id = next((n["id"] for n in nodes if n.get("role") == "boss"), "")
+        if not target_id and nodes:
+            target_id = nodes[-1]["id"]
+
+        def is_reachable(src: str, dst: str) -> bool:
+            if not src or not dst:
+                return False
+            q = deque([src])
+            vis = {src}
+            while q:
+                cur = q.popleft()
+                if cur == dst:
+                    return True
+                for nxt in adjacency.get(cur, []):
+                    if nxt not in vis:
+                        vis.add(nxt)
+                        q.append(nxt)
+            return False
+
+        if entrance_id and target_id and not is_reachable(entrance_id, target_id):
+            filtered_edges.append({"from": entrance_id, "to": target_id, "kind": "direct"})
+            report["fixes"].append("修复关键路径可达")
+
+        key_path = [k for k in fixed.get("key_path", []) if k in valid_ids]
+        if len(key_path) < 2 and entrance_id and target_id and entrance_id != target_id:
+            key_path = [entrance_id, target_id]
+            report["fixes"].append("补充关键路径")
+
+        fixed["room_nodes"] = nodes
+        fixed["corridor_edges"] = filtered_edges
+        fixed["key_path"] = key_path
+
+        # 难度与陷阱密度上限
+        cap = fixed.get("trap_density_cap", 0.2)
+        fixed["trap_density_cap"] = max(0.0, min(0.35, float(cap)))
+
+        return fixed, report
+
+    def _realize_rooms_from_blueprint(
+        self,
+        width: int,
+        height: int,
+        room_requirements: Dict[str, Any],
+        blueprint: Dict[str, Any],
+    ) -> List[Dict[str, int]]:
+        """将蓝图房间节点映射到现有房间生成函数（坐标本地落地）。"""
+        nodes = blueprint.get("room_nodes", []) if isinstance(blueprint.get("room_nodes"), list) else []
+        target_rooms = len(nodes)
+        if target_rooms <= 0:
+            return self._generate_rooms_with_quest_context(width, height, room_requirements)
+
+        # 极小地图仅保留单房间，避免补房间时出现边界/连通异常
+        if width < 6 or height < 6:
+            rooms = self._generate_rooms_with_quest_context(width, height, room_requirements)
+            if not rooms:
+                return rooms
+            mapped_node = next((n for n in nodes if n.get("role") == "entrance"), nodes[0])
+            room = rooms[0]
+            room["id"] = mapped_node.get("id", room.get("id", str(uuid.uuid4())))
+            room["type"] = mapped_node.get("role", room.get("type", "entrance"))
+            room["blueprint_intents"] = {
+                "event_intents": mapped_node.get("event_intents", []),
+                "monster_intents": mapped_node.get("monster_intents", {}),
+                "size": mapped_node.get("size", "small"),
+            }
+            return rooms
+
+        req = dict(room_requirements)
+        req["min_rooms"] = target_rooms
+        req["max_rooms"] = max(target_rooms, room_requirements.get("max_rooms", target_rooms))
+        rooms = self._generate_rooms_with_quest_context(width, height, req)
+
+        # 地图容量不足时不强行补齐，避免生成越界/重叠房间
+        if len(rooms) > target_rooms:
+            rooms = rooms[:target_rooms]
+
+        mapped_count = min(len(rooms), target_rooms)
+        for i in range(mapped_count):
+            room = rooms[i]
+            node = nodes[i]
+            room["id"] = node.get("id", room.get("id", str(uuid.uuid4())))
+            room["type"] = node.get("role", room.get("type", "normal"))
+            room["blueprint_intents"] = {
+                "event_intents": node.get("event_intents", []),
+                "monster_intents": node.get("monster_intents", {}),
+                "size": node.get("size", "medium"),
+            }
+
+        return rooms
+
+    def _connect_rooms_from_blueprint(
+        self,
+        game_map: GameMap,
+        rooms: List[Dict[str, int]],
+        blueprint: Dict[str, Any],
+        requirements: Dict[str, Any],
+    ) -> None:
+        """将蓝图通道边映射到现有通道雕刻函数。"""
+        edges = blueprint.get("corridor_edges", []) if isinstance(blueprint.get("corridor_edges"), list) else []
+        room_by_id = {r.get("id"): r for r in rooms if r.get("id")}
+
+        connected = 0
+        for edge in edges:
+            frm = edge.get("from")
+            to = edge.get("to")
+            r1 = room_by_id.get(frm)
+            r2 = room_by_id.get(to)
+            if not r1 or not r2:
+                continue
+            self._connect_two_rooms(game_map, r1, r2)
+            connected += 1
+
+        required_min_connections = max(0, len(rooms) - 1)
+        if connected < required_min_connections:
+            # 蓝图边不足或部分边在本地落地时失效，补一轮稳定连通策略
+            self._connect_rooms_strategically(game_map, rooms, requirements)
+
+    def _build_monster_hints_from_blueprint(
+        self,
+        game_map: GameMap,
+        rooms: List[Dict[str, int]],
+        blueprint: Dict[str, Any],
+        quest_context: Optional[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        """根据房间/通道级怪物意图构建monster_hints，兼容现有GameEngine消费逻辑。"""
+        room_by_id = {r.get("id"): r for r in rooms if r.get("id")}
+        spawn_points: List[Dict[str, Any]] = []
+        encounter_count = 0
+        difficulty_order = {"easy": 1, "medium": 2, "hard": 3, "boss": 4}
+        chosen_difficulty = "medium"
+
+        for node in blueprint.get("room_nodes", []):
+            if not isinstance(node, dict):
+                continue
+            room = room_by_id.get(node.get("id"))
+            if not room:
+                continue
+            intents = node.get("monster_intents") if isinstance(node.get("monster_intents"), dict) else {}
+            count = int(intents.get("count", 0)) if isinstance(intents.get("count", 0), int) else 0
+            diff = intents.get("difficulty", "medium") if isinstance(intents.get("difficulty", "medium"), str) else "medium"
+            if difficulty_order.get(diff, 2) > difficulty_order.get(chosen_difficulty, 2):
+                chosen_difficulty = diff
+            if count <= 0:
+                continue
+            cx = room["x"] + room["width"] // 2
+            cy = room["y"] + room["height"] // 2
+            tile = game_map.get_tile(cx, cy)
+            if tile and tile.terrain in {TerrainType.FLOOR, TerrainType.DOOR, TerrainType.TRAP, TerrainType.TREASURE}:
+                spawn_points.append({"x": cx, "y": cy, "source": "room", "room_id": room.get("id")})
+                encounter_count += count
+
+        for edge in blueprint.get("corridor_edges", []):
+            if not isinstance(edge, dict):
+                continue
+            intents = edge.get("monster_intents") if isinstance(edge.get("monster_intents"), dict) else {}
+            count = int(intents.get("count", 0)) if isinstance(intents.get("count", 0), int) else 0
+            if count <= 0:
+                continue
+            r1 = room_by_id.get(edge.get("from"))
+            r2 = room_by_id.get(edge.get("to"))
+            if not r1 or not r2:
+                continue
+            x1 = r1["x"] + r1["width"] // 2
+            y1 = r1["y"] + r1["height"] // 2
+            x2 = r2["x"] + r2["width"] // 2
+            y2 = r2["y"] + r2["height"] // 2
+            mx = (x1 + x2) // 2
+            my = (y1 + y2) // 2
+            tile = game_map.get_tile(mx, my)
+            if tile and tile.terrain in {TerrainType.FLOOR, TerrainType.DOOR, TerrainType.TRAP, TerrainType.TREASURE}:
+                spawn_points.append({"x": mx, "y": my, "source": "corridor", "edge": [edge.get("from"), edge.get("to")]})
+                encounter_count += count
+
+        encounter_count = max(0, min(encounter_count, max(4, len(spawn_points))))
+
+        return {
+            "source": "llm_blueprint",
+            "spawn_strategy": "llm_generate_by_positions",
+            "recommended_player_level": max(1, min(30, 1 + game_map.depth * 2)),
+            "encounter_difficulty": blueprint.get("difficulty", chosen_difficulty),
+            "encounter_count": encounter_count,
+            "boss_count": 1 if any(n.get("role") == "boss" for n in blueprint.get("room_nodes", [])) else 0,
+            "spawn_points": spawn_points,
+            "llm_context": {
+                "quest_type": (quest_context or {}).get("quest_type", "exploration"),
+                "map_title": game_map.name,
+                "map_depth": game_map.depth,
+                "floor_theme": game_map.floor_theme,
+                "width": game_map.width,
+                "height": game_map.height,
+                "blueprint_mode": True,
+            },
+            "room_intents": [n for n in blueprint.get("room_nodes", []) if isinstance(n, dict)],
+            "corridor_intents": [e for e in blueprint.get("corridor_edges", []) if isinstance(e, dict)],
+        }
+
+    def _build_default_event_payload(self, event_type: str) -> Dict[str, Any]:
+        """构建默认事件payload，保持与既有逻辑兼容。"""
+        if event_type == "combat":
+            return {
+                "monster_count": random.randint(1, 3),
+                "difficulty": random.choice(["easy", "medium", "hard"]),
+            }
+        if event_type == "treasure":
+            return {
+                "treasure_type": random.choice(["gold", "item", "magic_item"]),
+                "value": random.randint(50, 500),
+            }
+        if event_type == "story":
+            return {"story_type": random.choice(["discovery", "memory", "vision", "encounter"])}
+        if event_type == "trap":
+            from trap_schema import trap_validator
+
+            trap_type = random.choice(["damage", "debuff", "teleport"])
+            return trap_validator.validate_and_normalize(
+                {
+                    "trap_type": trap_type,
+                    "trap_name": f"{trap_type.capitalize()} Trap",
+                    "trap_description": "你发现了一个陷阱！",
+                    "detect_dc": random.randint(12, 18),
+                    "disarm_dc": random.randint(15, 20),
+                    "save_dc": random.randint(12, 16),
+                    "damage": random.randint(10, 30) if trap_type == "damage" else 0,
+                }
+            )
+        return {"mystery_type": random.choice(["puzzle", "riddle", "choice"]) }
+
+    def _apply_blueprint_event_intents(
+        self,
+        game_map: GameMap,
+        rooms: List[Dict[str, int]],
+        blueprint: Dict[str, Any],
+        available_tiles: List[Tuple[int, int]],
+    ) -> int:
+        """应用蓝图中的房间/通道事件意图，返回已放置数量。"""
+        placed = 0
+        room_by_id = {r.get("id"): r for r in rooms if r.get("id")}
+        corridor_tiles = [
+            (x, y)
+            for (x, y), tile in game_map.tiles.items()
+            if tile.terrain == TerrainType.FLOOR and tile.room_type == "corridor" and not tile.character_id
+        ]
+
+        for node in blueprint.get("room_nodes", []):
+            if not isinstance(node, dict):
+                continue
+            intents = node.get("event_intents") if isinstance(node.get("event_intents"), list) else []
+            if not intents:
+                continue
+            room = room_by_id.get(node.get("id"))
+            if not room:
+                continue
+            room_tiles = [
+                (x, y)
+                for x in range(room["x"], room["x"] + room["width"])
+                for y in range(room["y"], room["y"] + room["height"])
+                if (x, y) in available_tiles
+            ]
+            if not room_tiles:
+                continue
+            x, y = random.choice(room_tiles)
+            tile = game_map.get_tile(x, y)
+            if not tile:
+                continue
+            event_type = random.choice(intents)
+            tile.has_event = True
+            tile.event_type = event_type
+            tile.is_event_hidden = True
+            tile.event_triggered = False
+            tile.event_data = self._build_default_event_payload(event_type)
+            available_tiles.remove((x, y))
+            placed += 1
+
+        for edge in blueprint.get("corridor_edges", []):
+            if not isinstance(edge, dict):
+                continue
+            intents = edge.get("event_intents") if isinstance(edge.get("event_intents"), list) else []
+            if not intents:
+                continue
+            candidates = [p for p in corridor_tiles if p in available_tiles]
+            if not candidates:
+                continue
+            x, y = random.choice(candidates)
+            tile = game_map.get_tile(x, y)
+            if not tile:
+                continue
+            event_type = random.choice(intents)
+            tile.has_event = True
+            tile.event_type = event_type
+            tile.is_event_hidden = True
+            tile.event_triggered = False
+            tile.event_data = self._build_default_event_payload(event_type)
+            available_tiles.remove((x, y))
+            placed += 1
+
+        return placed
 
     def _analyze_quest_requirements(self, quest_context: Optional[Dict[str, Any]], depth: int) -> Dict[str, Any]:
         """分析任务需求，确定地图生成策略"""
@@ -1605,16 +2312,29 @@ class ContentGenerator:
         # 如果楼梯周围没有空位，返回楼梯位置本身
         return stairs_pos
 
-    async def _generate_map_events(self, game_map: GameMap, rooms: List[Dict[str, int]], quest_context: Optional[Dict[str, Any]] = None):
-        """为地图生成事件"""
+    async def _generate_map_events(
+        self,
+        game_map: GameMap,
+        rooms: List[Dict[str, int]],
+        quest_context: Optional[Dict[str, Any]] = None,
+        blueprint: Optional[Dict[str, Any]] = None,
+    ):
+        """为地图生成事件（支持蓝图房间/通道级意图）"""
+        safe_blueprint = blueprint if isinstance(blueprint, dict) else None
         floor_tiles = [(x, y) for (x, y), tile in game_map.tiles.items()
                       if tile.terrain == TerrainType.FLOOR and not tile.character_id]
 
         if not floor_tiles:
             return
 
-        # 首先放置任务专属事件
+        initial_floor_count = len(floor_tiles)
+
+        # 优先放置蓝图事件意图
         quest_events_placed = 0
+        if isinstance(safe_blueprint, dict):
+            quest_events_placed += self._apply_blueprint_event_intents(game_map, rooms, safe_blueprint, floor_tiles)
+
+        # 再放置任务专属事件
         if quest_context and quest_context.get('special_events'):
             special_events = quest_context['special_events']
             current_depth = game_map.depth
@@ -1646,9 +2366,36 @@ class ContentGenerator:
                         }
                         quest_events_placed += 1
 
-        # 计算普通事件数量（基于地图大小，减去已放置的任务事件）
+        # 计算普通事件数量（以初始可用地板为基数，避免双重扣减）
         total_tiles = len(floor_tiles)
-        normal_event_count = max(2, total_tiles // 20) - quest_events_placed
+        normal_event_count = max(2, initial_floor_count // 20) - quest_events_placed
+
+        # 蓝图陷阱密度安全上限
+        trap_cap = 0.35
+        if isinstance(safe_blueprint, dict):
+            cap_value = safe_blueprint.get("trap_density_cap", 0.2)
+            if isinstance(cap_value, (float, int)):
+                trap_cap = max(0.0, min(0.35, float(cap_value)))
+
+        max_trap_events = max(1, int(total_tiles * trap_cap))
+        current_trap_events = sum(
+            1
+            for _, t in game_map.tiles.items()
+            if t.has_event and t.event_type == "trap"
+        )
+
+        if current_trap_events > max_trap_events:
+            overflow = current_trap_events - max_trap_events
+            trap_tiles = [
+                tile
+                for tile in game_map.tiles.values()
+                if tile.has_event and tile.event_type == "trap"
+            ]
+            random.shuffle(trap_tiles)
+            for tile in trap_tiles[:overflow]:
+                tile.event_type = "mystery"
+                tile.event_data = self._build_default_event_payload("mystery")
+            current_trap_events = max_trap_events
 
         if normal_event_count > 0 and floor_tiles:
             # 随机选择普通事件位置
@@ -1656,50 +2403,32 @@ class ContentGenerator:
 
             for x, y in event_positions:
                 tile = game_map.get_tile(x, y)
-                if tile:
-                    # 随机选择事件类型
-                    event_types = ["combat", "treasure", "story", "trap", "mystery"]
-                    event_type = random.choice(event_types)
+                if not tile:
+                    continue
 
-                    # 设置事件属性
-                    tile.has_event = True
-                    tile.event_type = event_type
-                    tile.is_event_hidden = random.choice([True, True, False])  # 2/3概率隐藏
-                    tile.event_triggered = False
+                # 随机选择事件类型
+                event_types = ["combat", "treasure", "story", "trap", "mystery"]
+                if current_trap_events >= max_trap_events:
+                    event_types = [et for et in event_types if et != "trap"]
+                event_type = random.choice(event_types)
+                if event_type == "trap":
+                    current_trap_events += 1
+
+                # 设置事件属性
+                tile.has_event = True
+                tile.event_type = event_type
+                tile.is_event_hidden = random.choice([True, True, False])  # 2/3概率隐藏
+                tile.event_triggered = False
 
                 # 根据事件类型设置事件数据
-                if event_type == "combat":
-                    tile.event_data = {
-                        "monster_count": random.randint(1, 3),
-                        "difficulty": random.choice(["easy", "medium", "hard"])
-                    }
-                elif event_type == "treasure":
-                    tile.event_data = {
-                        "treasure_type": random.choice(["gold", "item", "magic_item"]),
-                        "value": random.randint(50, 500)
-                    }
-                elif event_type == "story":
-                    tile.event_data = {
-                        "story_type": random.choice(["discovery", "memory", "vision", "encounter"])
-                    }
-                elif event_type == "trap":
-                    # 【P0修复】使用 trap_schema 创建规范的陷阱数据
-                    from trap_schema import trap_validator
-                    trap_type = random.choice(["damage", "debuff", "teleport"])
-                    base_trap_data = {
-                        "trap_type": trap_type,
-                        "trap_name": f"{trap_type.capitalize()} Trap",
-                        "trap_description": "你发现了一个陷阱！",
-                        "detect_dc": random.randint(12, 18),
-                        "disarm_dc": random.randint(15, 20),
-                        "save_dc": random.randint(12, 16),
-                        "damage": random.randint(10, 30) if trap_type == "damage" else 0
-                    }
-                    tile.event_data = trap_validator.validate_and_normalize(base_trap_data)
-                elif event_type == "mystery":
-                    tile.event_data = {
-                        "mystery_type": random.choice(["puzzle", "riddle", "choice"])
-                    }
+                tile.event_data = self._build_default_event_payload(event_type)
+
+    def _reset_map_tiles_to_walls(self, game_map: GameMap) -> None:
+        """将地图重置为全墙，确保失败回退路径从干净状态开始。"""
+        game_map.tiles.clear()
+        for x in range(game_map.width):
+            for y in range(game_map.height):
+                game_map.tiles[(x, y)] = MapTile(x=x, y=y, terrain=TerrainType.WALL)
 
     async def _validate_and_adjust_room_types(self, game_map: GameMap, rooms: List[Dict[str, int]],
                                             quest_context: Optional[Dict[str, Any]] = None) -> List[Dict[str, int]]:

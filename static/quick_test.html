@@ -388,6 +388,14 @@
                             <span class="material-icons">map</span>
                             地图生成测试
                         </button>
+                        <button class="test-btn" onclick="runMapGenerationSimulation(false)">
+                            <span class="material-icons">science</span>
+                            地图任务模拟（预设）
+                        </button>
+                        <button class="test-btn" onclick="runMapGenerationSimulation(true)">
+                            <span class="material-icons">tune</span>
+                            地图任务模拟（自定义JSON）
+                        </button>
                         <button class="test-btn" onclick="testCharacterSystem()">
                             <span class="material-icons">person</span>
                             角色系统测试
@@ -518,6 +526,18 @@
                         </button>
                     </div>
                 </div>
+            </div>
+
+            <div class="results-section" style="margin-bottom: 20px;">
+                <div class="results-title">
+                    <span class="material-icons">schema</span>
+                    地图生成任务模拟参数
+                </div>
+                <div class="result info" style="margin-bottom: 12px;">
+                    可在下方直接修改请求体，点击“地图任务模拟（自定义JSON）”后将按该参数调用 <code>/api/test/map-generation</code>。
+                </div>
+                <textarea id="map-sim-request" style="width: 100%; min-height: 280px; border: 1px solid #d9dee7; border-radius: 10px; padding: 12px; font-family: 'Roboto Mono', monospace; font-size: 0.85rem; line-height: 1.45;"></textarea>
+                <div id="map-sim-summary" class="result info" style="margin-top: 12px; white-space: pre-wrap;">等待执行地图模拟...</div>
             </div>
 
             <!-- 测试结果显示区域 -->
@@ -1092,6 +1112,148 @@
 
         // ==================== 游戏核心功能测试 ====================
 
+        function createDefaultMapSimulationPayload() {
+            return {
+                width: 20,
+                height: 20,
+                depth: 2,
+                theme: '任务模拟区域-失落圣堂',
+                quest_context: {
+                    id: 'demo_quest_map_001',
+                    title: '失落圣堂的回响',
+                    description: '深入失落圣堂，激活信标并清理通道中的异变敌人。',
+                    quest_type: 'exploration',
+                    target_floors: [1, 2, 3],
+                    map_themes: ['abandoned', 'magic'],
+                    story_context: '圣堂封印开始松动，异常能量从长廊扩散。',
+                    special_events: [
+                        {
+                            event_id: 'evt_corridor_whisper',
+                            name: '回响长廊',
+                            description: '通道回声会诱发短事件，影响后续路线。',
+                            location_hint: '2层-通道',
+                            floor_number: 2,
+                            progress_value: 10,
+                            is_mandatory: false
+                        },
+                        {
+                            event_id: 'evt_altar_choice',
+                            name: '圣坛抉择',
+                            description: '激活圣坛时将触发选项事件并改变区域压力。',
+                            location_hint: '2层-核心房间',
+                            floor_number: 2,
+                            progress_value: 12,
+                            is_mandatory: true
+                        }
+                    ],
+                    special_monsters: [
+                        {
+                            monster_id: 'mon_patrol_001',
+                            name: '回廊巡逻者',
+                            location_hint: '2层-通道',
+                            floor_number: 2,
+                            is_boss: false,
+                            progress_value: 12
+                        },
+                        {
+                            monster_id: 'mon_keeper_001',
+                            name: '圣堂看守者',
+                            location_hint: '2层-核心房间',
+                            floor_number: 2,
+                            is_boss: true,
+                            progress_value: 18
+                        }
+                    ]
+                }
+            };
+        }
+
+        function ensureMapSimulationEditorInitialized() {
+            const editor = document.getElementById('map-sim-request');
+            if (!editor) return;
+            if (!editor.value || !editor.value.trim()) {
+                editor.value = JSON.stringify(createDefaultMapSimulationPayload(), null, 2);
+            }
+        }
+
+        function updateMapSimulationSummary(result, requestPayload) {
+            const summary = document.getElementById('map-sim-summary');
+            if (!summary) return;
+
+            if (!result || !result.success) {
+                summary.textContent = `地图生成失败\n消息: ${result?.message || '未知错误'}`;
+                return;
+            }
+
+            const blueprint = result.blueprint || {};
+            const report = blueprint.report || {};
+            const hints = result.monster_hints || {};
+            const lines = [
+                `地图: ${result.map_name || '未知'} | 尺寸: ${result.map_size || `${requestPayload.width}x${requestPayload.height}`}`,
+                `房间数: ${result.room_count || 0} | 事件数: ${result.event_count || 0}`,
+                `floor_theme: ${result.floor_theme || 'unknown'}`,
+                `blueprint_used: ${String(blueprint.used)}`,
+                `fallback_reason: ${blueprint.fallback_reason || 'none'}`,
+                `blueprint rooms/edges/intents: ${report.room_nodes || 0}/${report.corridor_edges || 0}/${report.event_intents || 0}`,
+                `monster_hints spawn_points: ${Array.isArray(hints.spawn_points) ? hints.spawn_points.length : 0}`,
+                `请求任务标题: ${requestPayload?.quest_context?.title || '未提供'}`
+            ];
+            summary.textContent = lines.join('\n');
+        }
+
+        async function runMapGenerationSimulation(useCustomPayload) {
+            const button = event.currentTarget || event.target;
+            await withLoadingButton(button, async () => {
+                ensureMapSimulationEditorInitialized();
+                const editor = document.getElementById('map-sim-request');
+
+                let payload;
+                if (useCustomPayload) {
+                    try {
+                        payload = JSON.parse(editor.value);
+                    } catch (parseError) {
+                        log(`❌ 自定义JSON解析失败: ${parseError.message}`, 'error');
+                        return;
+                    }
+                } else {
+                    payload = createDefaultMapSimulationPayload();
+                    editor.value = JSON.stringify(payload, null, 2);
+                }
+
+                log(`开始地图任务模拟（${useCustomPayload ? '自定义参数' : '预设参数'}）...`, 'info');
+                log(`📤 请求参数: ${JSON.stringify(payload).substring(0, 240)}...`, 'info');
+
+                try {
+                    const response = await fetch('/api/test/map-generation', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+
+                    if (response.ok) {
+                        const result = await response.json();
+                        updateMapSimulationSummary(result, payload);
+
+                        if (result.success) {
+                            log('✅ 地图任务模拟成功', 'success');
+                            log(`🧭 blueprint_used: ${result.blueprint?.used ? 'true' : 'false'}`, 'info');
+                            log(`🗺️ 地图: ${result.map_name || '未知'} | 房间: ${result.room_count || 0} | 事件: ${result.event_count || 0}`, 'info');
+                            if (result.blueprint?.fallback_reason) {
+                                log(`⚠️ 蓝图回退原因: ${result.blueprint.fallback_reason}`, 'warning');
+                            }
+                        } else {
+                            log(`❌ 地图任务模拟失败: ${result.message}`, 'error');
+                        }
+                    } else {
+                        const errorText = await response.text();
+                        log(`❌ 地图任务模拟请求失败: HTTP ${response.status} ${errorText}`, 'error');
+                    }
+                } catch (error) {
+                    log(`❌ 地图任务模拟异常: ${error.message}`, 'error');
+                }
+            });
+        }
+
         async function testMapGeneration() {
             const button = event.target;
             await withLoadingButton(button, async () => {
@@ -1243,6 +1405,7 @@
             log('💡 提示：不同颜色的按钮代表不同类型的测试', 'info');
             log('⌨️ 快捷键：Ctrl+R=生成报告, Ctrl+E=导出结果, Ctrl+L=清空', 'info');
             log('🖱️ 右键点击结果区域可显示更多选项', 'info');
+            ensureMapSimulationEditorInitialized();
 
             // 检查是否有现有的游戏实例
             if (window.game) {
