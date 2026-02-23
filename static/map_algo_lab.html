@@ -883,15 +883,42 @@
             els.statStatus.className = `v ${success ? 'status-ok' : 'status-err'}`;
             els.statMode.textContent = 'backend';
             els.statMode.className = 'v status-ok';
-            els.statHash.textContent = localPreview && localPreview.hash ? localPreview.hash : '-';
-            els.statRooms.textContent = String(responseData && responseData.room_count ? responseData.room_count : 0);
-            els.statWalk.textContent = localPreview && localPreview.metrics ? `${(localPreview.metrics.walkable_ratio * 100).toFixed(1)}%` : '-';
             els.statPatch.textContent = 'n/a';
             els.statPatch.className = 'v status-warn';
 
-            const used = Boolean(responseData && responseData.blueprint && responseData.blueprint.used);
-            els.statBlueprint.textContent = used ? 'used' : 'fallback';
-            els.statBlueprint.className = `v ${used ? 'status-ok' : 'status-warn'}`;
+            const isCompare = Boolean(responseData && responseData.mode === 'compare' && responseData.results);
+            const singleResult = responseData && responseData.result ? responseData.result : null;
+            const localResult = isCompare ? responseData.results.local : null;
+            const llmResult = isCompare ? responseData.results.llm : null;
+            const displayResult = singleResult || localResult || llmResult;
+
+            if (responseData && responseData.success && !displayResult) {
+                log('后端返回 success=true 但缺少 result/results，有契约漂移风险', 'warn');
+            }
+
+            els.statHash.textContent = localPreview && localPreview.hash ? localPreview.hash : '-';
+            els.statRooms.textContent = String(displayResult && Number.isFinite(displayResult.room_count) ? displayResult.room_count : 0);
+
+            if (displayResult && displayResult.walkable && Number.isFinite(displayResult.walkable.ratio)) {
+                els.statWalk.textContent = `${(displayResult.walkable.ratio * 100).toFixed(1)}%`;
+            } else if (localPreview && localPreview.metrics) {
+                els.statWalk.textContent = `${(localPreview.metrics.walkable_ratio * 100).toFixed(1)}%`;
+            } else {
+                els.statWalk.textContent = '-';
+            }
+
+            const used = Boolean(displayResult && displayResult.blueprint && displayResult.blueprint.used);
+            els.statBlueprint.textContent = used ? 'used' : (displayResult ? 'fallback' : '-');
+            els.statBlueprint.className = `v ${used ? 'status-ok' : (displayResult ? 'status-warn' : '')}`;
+
+            if (isCompare && localResult && llmResult) {
+                const localMs = Number(localResult.generation_time_ms || 0);
+                const llmMs = Number(llmResult.generation_time_ms || 0);
+                const faster = localMs <= llmMs ? 'L' : 'R';
+                els.statCap.textContent = `L:${localMs.toFixed(1)}ms R:${llmMs.toFixed(1)}ms F:${faster}`;
+                els.statCap.className = 'v status-ok';
+                return;
+            }
 
             if (localPreview) {
                 const coverage = LocalMapAlgo.collectCapabilityCoverage(localPreview.map);
@@ -995,6 +1022,19 @@
             const height = Number(request.height || 20);
             const depth = Number(request.depth || 1);
             const theme = request.theme || request.title || '实验室任务地图';
+            const providerRaw = typeof request.provider === 'string' ? request.provider : 'llm';
+            const provider = providerRaw.toLowerCase() === 'local' ? 'local' : 'llm';
+
+            let compare = false;
+            if (typeof request.compare === 'string') {
+                compare = ['true', '1', 'yes', 'y', 'on'].includes(request.compare.trim().toLowerCase());
+            } else {
+                compare = Boolean(request.compare);
+            }
+
+            if (Number.isNaN(width) || Number.isNaN(height) || Number.isNaN(depth)) {
+                log('请求中的 width/height/depth 包含 NaN，后端将回退默认值', 'warn');
+            }
 
             if (request.quest_context && typeof request.quest_context === 'object') {
                 return {
@@ -1002,6 +1042,8 @@
                     height,
                     depth,
                     theme,
+                    provider,
+                    compare,
                     quest_context: request.quest_context
                 };
             }
@@ -1011,6 +1053,8 @@
                 height,
                 depth,
                 theme,
+                provider,
+                compare,
                 quest_context: {
                     title: request.title || request.quest_title || '实验室模拟任务',
                     description: request.description || '用于测试后端蓝图地图生成能力',
@@ -1034,7 +1078,7 @@
             state.currentResult = localPreview;
             state.currentPatched = null;
 
-            log(`后端地图生成请求开始: ${backendPayload.width}x${backendPayload.height}, depth=${backendPayload.depth}`, 'info');
+            log(`后端地图生成请求开始: ${backendPayload.width}x${backendPayload.height}, depth=${backendPayload.depth}, provider=${backendPayload.provider || 'llm'}, compare=${Boolean(backendPayload.compare)}`, 'info');
             const resp = await fetch('/api/test/map-generation', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -1053,17 +1097,35 @@
                 return;
             }
 
-            log(`后端地图生成成功: map=${data.map_name}, rooms=${data.room_count}, events=${data.event_count}`, 'ok');
-            log(`蓝图状态: used=${Boolean(data.blueprint && data.blueprint.used)} fallback=${(data.blueprint && data.blueprint.fallback_reason) || 'none'}`, 'info');
+            const isCompare = data.mode === 'compare' && data.results;
+            const singleResult = data.result || null;
+            const localResult = isCompare ? data.results.local : null;
+            const llmResult = isCompare ? data.results.llm : null;
+
+            if (!singleResult && !localResult && !llmResult) {
+                log('后端响应缺少 result/results，有契约异常风险', 'warn');
+            }
+
+            if (isCompare && localResult && llmResult) {
+                log(`后端对比成功: local=${localResult.generation_time_ms}ms, llm=${llmResult.generation_time_ms}ms, faster=${data.performance ? data.performance.faster_provider : 'unknown'}`, 'ok');
+                log(`覆盖快照: ${pretty(data.coverage_gap_snapshot || {})}`, 'info');
+                if (!data.performance || typeof data.performance.local_ms !== 'number' || typeof data.performance.llm_ms !== 'number') {
+                    log('compare 模式缺少 performance 关键字段，存在契约漂移风险', 'warn');
+                }
+            } else if (singleResult) {
+                log(`后端地图生成成功: provider=${singleResult.provider}, map=${singleResult.map_name}, rooms=${singleResult.room_count}, events=${singleResult.event_count}`, 'ok');
+                log(`蓝图状态: used=${Boolean(singleResult.blueprint && singleResult.blueprint.used)} fallback=${(singleResult.blueprint && singleResult.blueprint.fallback_reason) || 'none'}`, 'info');
+            }
 
             let monsterPreview = null;
-            if (els.backendMonsterPreview.checked && data.monster_hints && Array.isArray(data.monster_hints.spawn_points)) {
+            const hintSource = singleResult ? singleResult.monster_hints : (localResult ? localResult.monster_hints : null);
+            if (els.backendMonsterPreview.checked && hintSource && Array.isArray(hintSource.spawn_points)) {
                 const fakeResult = {
                     monster_hints: {
-                        encounter_difficulty: data.monster_hints.encounter_difficulty,
-                        encounter_count: data.monster_hints.encounter_count,
+                        encounter_difficulty: hintSource.encounter_difficulty,
+                        encounter_count: hintSource.encounter_count,
                         boss_count: 1,
-                        spawn_points: data.monster_hints.spawn_points,
+                        spawn_points: hintSource.spawn_points,
                         llm_context: {
                             quest_title: backendPayload.quest_context && backendPayload.quest_context.title ? backendPayload.quest_context.title : ''
                         }
@@ -1072,7 +1134,7 @@
                 monsterPreview = await fetchMonsterPreview(fakeResult);
             }
 
-            showResultInfo('后端地图生成结果（含蓝图信息）', {
+            showResultInfo(isCompare ? '后端地图生成对比结果（local vs llm）' : '后端地图生成结果（单提供方）', {
                 mode: 'backend',
                 request: backendPayload,
                 response: data,

@@ -2355,69 +2355,216 @@ if config.game.debug_mode:
 
     @app.post("/api/test/map-generation")
     async def test_map_generation(request: Request):
-        """测试地图生成功能（支持任务上下文模拟）"""
+        """测试地图生成功能（支持 local/llm provider 对比）"""
         try:
             request_data = await request.json()
-            width = request_data.get("width", 10)
-            height = request_data.get("height", 10)
-            depth = request_data.get("depth", 1)
+
+            def _coerce_int(value: Any, default_value: int, min_value: int, max_value: int) -> int:
+                try:
+                    parsed = int(value)
+                except (TypeError, ValueError):
+                    parsed = default_value
+                return max(min_value, min(max_value, parsed))
+
+            width = _coerce_int(request_data.get("width", 10), 10, 5, 80)
+            height = _coerce_int(request_data.get("height", 10), 10, 5, 80)
+            depth = _coerce_int(request_data.get("depth", 1), 1, 1, 20)
             theme = request_data.get("theme", "测试区域")
             quest_context = request_data.get("quest_context")
 
+            provider = str(request_data.get("provider", "llm") or "llm").lower()
+
+            compare_raw = request_data.get("compare", False)
+            if isinstance(compare_raw, str):
+                compare = compare_raw.strip().lower() in {"true", "1", "yes", "y", "on"}
+            else:
+                compare = bool(compare_raw)
+
+            if provider not in {"llm", "local"}:
+                provider = "llm"
+
             from content_generator import content_generator
+            from local_map_provider import local_map_provider
 
-            game_map = await content_generator.generate_dungeon_map(
-                width=width,
-                height=height,
-                depth=depth,
-                theme=theme,
-                quest_context=quest_context,
-            )
+            def build_summary(game_map, effective_provider: str, elapsed_ms: float) -> Dict[str, Any]:
+                room_ids = set()
+                event_count = 0
+                walkable_count = 0
+                trap_event_count = 0
+                trap_terrain_count = 0
+                mandatory_event_count = 0
+                stairs_up_count = 0
+                stairs_down_count = 0
 
-            # 统计地图信息
-            room_positions = set()
-            event_count = 0
+                map_width = int(getattr(game_map, "width", width) or width)
+                map_height = int(getattr(game_map, "height", height) or height)
 
-            for pos, tile in game_map.tiles.items():
-                terrain_value = tile.terrain.value if hasattr(tile.terrain, "value") else str(tile.terrain)
-                if terrain_value in ["room", "chamber"] or bool(getattr(tile, "room_type", None)):
-                    room_positions.add(pos)
-                if tile.has_event:
-                    event_count += 1
+                tiles_obj = getattr(game_map, "tiles", {})
+                tile_items = tiles_obj.items() if isinstance(tiles_obj, dict) else []
 
-            metadata = game_map.generation_metadata if isinstance(game_map.generation_metadata, dict) else {}
-            blueprint_report = metadata.get("blueprint_report") if isinstance(metadata.get("blueprint_report"), dict) else {}
-            monster_hints = metadata.get("monster_hints") if isinstance(metadata.get("monster_hints"), dict) else {}
+                for _, tile in tile_items:
+                    if not tile:
+                        continue
 
-            room_count = len(room_positions)
-            if room_count == 0:
-                room_count = int(blueprint_report.get("room_nodes", 0) or 0)
+                    terrain_attr = getattr(tile, "terrain", None)
+                    terrain_value = terrain_attr.value if hasattr(terrain_attr, "value") else str(terrain_attr)
+                    room_id = getattr(tile, "room_id", None)
+                    if isinstance(room_id, str) and room_id:
+                        room_ids.add(room_id)
 
+                    if getattr(tile, "has_event", False):
+                        event_count += 1
+                        if getattr(tile, "event_type", "") == "trap":
+                            trap_event_count += 1
+                        event_data = tile.event_data if isinstance(getattr(tile, "event_data", None), dict) else {}
+                        if event_data.get("is_mandatory") is True:
+                            mandatory_event_count += 1
+
+                    if terrain_value == "trap":
+                        trap_terrain_count += 1
+
+                    if terrain_value in {"floor", "door", "trap", "treasure", "stairs_up", "stairs_down"}:
+                        walkable_count += 1
+                    if terrain_value == "stairs_up":
+                        stairs_up_count += 1
+                    if terrain_value == "stairs_down":
+                        stairs_down_count += 1
+
+                metadata = game_map.generation_metadata if isinstance(game_map.generation_metadata, dict) else {}
+                blueprint_report = metadata.get("blueprint_report") if isinstance(metadata.get("blueprint_report"), dict) else {}
+                monster_hints = metadata.get("monster_hints") if isinstance(metadata.get("monster_hints"), dict) else {}
+                local_validation = metadata.get("local_validation") if isinstance(metadata.get("local_validation"), dict) else {}
+
+                room_count = len(room_ids)
+                if room_count == 0:
+                    room_count = int(blueprint_report.get("room_nodes", 0) or 0)
+
+                map_size = max(1, map_width * map_height)
+                walkable_ratio = round(walkable_count / map_size, 4)
+
+                return {
+                    "provider": effective_provider,
+                    "generation_time_ms": round(elapsed_ms, 2),
+                    "map_name": str(getattr(game_map, "name", "") or ""),
+                    "map_size": f"{map_width}x{map_height}",
+                    "room_count": room_count,
+                    "event_count": event_count,
+                    "trap_event_count": trap_event_count,
+                    "trap_terrain_count": trap_terrain_count,
+                    "mandatory_event_count": mandatory_event_count,
+                    "stairs": {
+                        "up": stairs_up_count,
+                        "down": stairs_down_count,
+                    },
+                    "walkable": {
+                        "count": walkable_count,
+                        "ratio": walkable_ratio,
+                    },
+                    "floor_theme": getattr(game_map, "floor_theme", "normal"),
+                    "description": (
+                        str(getattr(game_map, "description", "") or "")[:100] + "..."
+                        if len(str(getattr(game_map, "description", "") or "")) > 100
+                        else str(getattr(game_map, "description", "") or "")
+                    ),
+                    "quest_context_applied": isinstance(quest_context, dict),
+                    "blueprint": {
+                        "used": bool(metadata.get("blueprint_used", False)),
+                        "fallback_reason": metadata.get("blueprint_fallback_reason", ""),
+                        "report": {
+                            "room_nodes": blueprint_report.get("room_nodes", 0),
+                            "corridor_edges": blueprint_report.get("corridor_edges", 0),
+                            "event_intents": blueprint_report.get("event_intents", 0),
+                            "monster_intents": blueprint_report.get("monster_intents", 0),
+                            "issues": blueprint_report.get("issues", []),
+                        },
+                    },
+                    "local_validation": local_validation,
+                    "monster_hints": {
+                        "recommended_player_level": monster_hints.get("recommended_player_level", 1),
+                        "encounter_count": monster_hints.get("encounter_count", 0),
+                        "boss_count": monster_hints.get("boss_count", 0),
+                        "encounter_difficulty": monster_hints.get("encounter_difficulty", ""),
+                        "spawn_points": monster_hints.get("spawn_points", []),
+                        "llm_context": monster_hints.get("llm_context", {}),
+                        "room_intents_count": len(monster_hints.get("room_intents", [])) if isinstance(monster_hints.get("room_intents"), list) else 0,
+                        "corridor_intents_count": len(monster_hints.get("corridor_intents", [])) if isinstance(monster_hints.get("corridor_intents"), list) else 0,
+                    },
+                    "contract_warnings": [] if isinstance(tiles_obj, dict) else ["tiles_not_dict"],
+                }
+
+            async def generate_by_provider(selected_provider: str):
+                start_time = time.perf_counter()
+                if selected_provider == "local":
+                    game_map, hints = await asyncio.to_thread(
+                        local_map_provider.generate_map,
+                        width,
+                        height,
+                        depth,
+                        theme,
+                        quest_context,
+                    )
+                    if not isinstance(game_map.generation_metadata, dict):
+                        game_map.generation_metadata = {}
+                    game_map.generation_metadata.update(
+                        {
+                            "map_provider": "local",
+                            "monster_hints": hints,
+                            "source": "test_api",
+                        }
+                    )
+                else:
+                    game_map = await content_generator.generate_dungeon_map(
+                        width=width,
+                        height=height,
+                        depth=depth,
+                        theme=theme,
+                        quest_context=quest_context,
+                    )
+                    if not isinstance(game_map.generation_metadata, dict):
+                        game_map.generation_metadata = {}
+                    game_map.generation_metadata.setdefault("map_provider", "llm")
+                    game_map.generation_metadata.setdefault("source", "test_api")
+
+                elapsed_ms = (time.perf_counter() - start_time) * 1000.0
+                return build_summary(game_map, selected_provider, elapsed_ms)
+
+            if compare:
+                local_result = await generate_by_provider("local")
+                llm_result = await generate_by_provider("llm")
+
+                local_gap = {
+                    "supports_room_intents": local_result["monster_hints"]["room_intents_count"] > 0,
+                    "supports_local_connectivity_report": bool(local_result.get("local_validation")),
+                    "has_blueprint_intents": bool(local_result["blueprint"]["used"]),
+                    "mandatory_event_reachability_ok": bool(
+                        local_result.get("local_validation", {}).get("connectivity_ok", False)
+                    ),
+                }
+
+                return {
+                    "success": True,
+                    "mode": "compare",
+                    "requested_provider": provider,
+                    "results": {
+                        "local": local_result,
+                        "llm": llm_result,
+                    },
+                    "performance": {
+                        "local_ms": local_result["generation_time_ms"],
+                        "llm_ms": llm_result["generation_time_ms"],
+                        "faster_provider": "local"
+                        if local_result["generation_time_ms"] <= llm_result["generation_time_ms"]
+                        else "llm",
+                    },
+                    "coverage_gap_snapshot": local_gap,
+                }
+
+            single = await generate_by_provider(provider)
             return {
                 "success": True,
-                "map_name": game_map.name,
-                "map_size": f"{width}x{height}",
-                "room_count": room_count,
-                "event_count": event_count,
-                "floor_theme": getattr(game_map, "floor_theme", "normal"),
-                "description": game_map.description[:100] + "..." if len(game_map.description) > 100 else game_map.description,
-                "quest_context_applied": isinstance(quest_context, dict),
-                "blueprint": {
-                    "used": bool(metadata.get("blueprint_used", False)),
-                    "fallback_reason": metadata.get("blueprint_fallback_reason", ""),
-                    "report": {
-                        "room_nodes": blueprint_report.get("room_nodes", 0),
-                        "corridor_edges": blueprint_report.get("corridor_edges", 0),
-                        "event_intents": blueprint_report.get("event_intents", 0),
-                        "monster_intents": blueprint_report.get("monster_intents", 0),
-                        "issues": blueprint_report.get("issues", []),
-                    },
-                },
-                "monster_hints": {
-                    "encounter_count": monster_hints.get("encounter_count", 0),
-                    "encounter_difficulty": monster_hints.get("encounter_difficulty", ""),
-                    "spawn_points": monster_hints.get("spawn_points", []),
-                },
+                "mode": "single",
+                "requested_provider": provider,
+                "result": single,
             }
 
         except Exception as e:
