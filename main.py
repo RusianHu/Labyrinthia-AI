@@ -556,18 +556,17 @@ async def handle_llm_event(request: LLMEventRequest, http_request: Request, resp
             }
 
         elif event_type == 'trap_narrative':
-            # 处理陷阱叙述生成 - 前端已计算效果，后端生成描述性文本
+            # 处理陷阱叙述生成 - 前端已计算效果，后端按配置生成描述性文本
             position = event_data.get('position', [0, 0])
             trap_result = event_data.get('trap_result', {})
 
-            # 使用LLM生成陷阱触发的描述性文本
             narrative = await game_engine._generate_trap_narrative(game_state, trap_result)
 
             # 写入 LLM 上下文：陷阱事件与叙述（可由配置开关控制）
             try:
                 from llm_context_manager import llm_context_manager
                 if getattr(config.llm, "record_trap_to_context", True):
-                    trap_type = trap_result.get('type', 'unknown') if isinstance(trap_result, dict) else 'unknown'
+                    trap_type = trap_result.get('trap_type', trap_result.get('type', 'unknown')) if isinstance(trap_result, dict) else 'unknown'
                     llm_context_manager.add_event(
                         event_type="trap",
                         description=f"触发陷阱：{trap_type}",
@@ -829,31 +828,15 @@ async def trigger_trap(request: Request, response: Response):
         # 触发陷阱（传入豁免结果，如果有的话）
         trigger_result = trap_manager.trigger_trap(game_state, tile, save_result=save_result)
 
-        # 调用 LLM 生成叙述文本
-        narrative = ""
-        try:
-            from llm_service import llm_service
-
-            # 构建上下文
-            trap_context = {
-                "trap_name": trap_data.get("trap_name", "未知陷阱"),
-                "trap_type": trap_data.get("trap_type", "damage"),
-                "damage": trigger_result.get("damage", 0),
-                "damage_type": trap_data.get("damage_type", "physical"),
-                "save_attempted": save_attempted,
-                "save_success": save_result['success'] if save_result else False,
-                "player_name": game_state.player.name,
-                "player_hp": game_state.player.stats.hp,
-                "player_max_hp": game_state.player.stats.max_hp
-            }
-
-            # 生成叙述
-            narrative = await llm_service.generate_trap_narrative(game_state, trap_context)
-
-        except Exception as e:
-            logger.warning(f"Failed to generate trap narrative: {e}")
-            # 如果 LLM 生成失败，使用默认描述
-            narrative = trigger_result.get("description", "触发了陷阱！")
+        # 生成陷阱叙述（根据配置使用 local 或 llm）
+        from trap_narrative_service import trap_narrative_service
+        narrative = await trap_narrative_service.generate_narrative(
+            game_state=game_state,
+            trap_data=trap_data,
+            trigger_result=trigger_result,
+            save_attempted=save_attempted,
+            save_result=save_result,
+        )
 
         # 返回结果
         return {
@@ -869,6 +852,8 @@ async def trigger_trap(request: Request, response: Response):
             "game_over": game_state.is_game_over
         }
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Failed to trigger trap: {e}")
         raise HTTPException(status_code=500, detail=f"触发陷阱失败: {str(e)}")

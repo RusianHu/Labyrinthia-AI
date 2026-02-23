@@ -195,6 +195,10 @@ class GameConfig:
     quest_monster_full_context: bool = True        # 任务怪物击败使用完整上下文
     normal_monster_full_context: bool = False      # 普通怪物击败使用简化上下文
 
+    # 陷阱叙述设置
+    trap_narrative_mode: str = "local"            # local | llm
+    trap_narrative_fallback_to_local: bool = True  # llm失败时是否回退到本地叙述
+
     # DND判定系统设置
     use_new_roll_resolver: bool = True             # 使用新的统一判定引擎（支持豁免熟练、详细breakdown等）
     show_detailed_rolls: bool = True               # 显示详细的投掷过程（调试模式）
@@ -395,6 +399,14 @@ class Config:
 
         if local_hints := os.getenv("LOCAL_MAP_MONSTER_HINTS_ENABLED"):
             self.game.local_map_monster_hints_enabled = local_hints.lower() in ("true", "1", "yes")
+
+        if trap_narrative_mode := os.getenv("TRAP_NARRATIVE_MODE"):
+            mode = trap_narrative_mode.strip().lower()
+            if mode in ("local", "llm"):
+                self.game.trap_narrative_mode = mode
+
+        if trap_fallback := os.getenv("TRAP_NARRATIVE_FALLBACK_TO_LOCAL"):
+            self.game.trap_narrative_fallback_to_local = trap_fallback.lower() in ("true", "1", "yes")
 
         # 调试配置
         if debug_enabled := os.getenv("DEBUG_ENABLED"):

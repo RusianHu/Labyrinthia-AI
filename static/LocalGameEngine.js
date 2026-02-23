@@ -543,16 +543,19 @@ class LocalGameEngine {
                     this.addMessage(result.save_message, 'system');
                 }
 
-                // 显示触发结果（优先使用后端描述，避免重复）
                 const triggerResult = result.trigger_result;
-                if (triggerResult.description) {
-                    this.addMessage(triggerResult.description, 'combat');
-                } else if (triggerResult.damage > 0) {
-                    this.addMessage(`触发了陷阱！受到了 ${triggerResult.damage} 点伤害！`, 'combat');
+                const hasNarrative = !!(result.narrative && String(result.narrative).trim());
+
+                // 有 narrative 时优先展示 narrative，避免与 description 重复刷屏
+                if (!hasNarrative) {
+                    if (triggerResult.description) {
+                        this.addMessage(triggerResult.description, 'combat');
+                    } else if (triggerResult.damage > 0) {
+                        this.addMessage(`触发了陷阱！受到了 ${triggerResult.damage} 点伤害！`, 'combat');
+                    }
                 }
 
-                // 显示LLM生成的叙述（避免与描述重复）
-                if (result.narrative && result.narrative !== (triggerResult.description || '')) {
+                if (hasNarrative) {
                     this.addMessage(result.narrative, 'narrative');
                 }
 

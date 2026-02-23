@@ -1104,52 +1104,26 @@ class GameEngine:
         return trigger_result.get("description", "触发了陷阱！")
 
     async def _generate_trap_narrative(self, game_state: GameState, trap_result: Dict[str, Any]) -> str:
-        """生成陷阱触发的叙述文本
+        """生成陷阱触发叙述（由 TrapNarrativeService 按配置路由）
 
-        此方法包装 llm_service.generate_trap_narrative，为 /api/llm-event 接口提供支持。
-
-        Args:
-            game_state: 游戏状态
-            trap_result: 陷阱触发结果，包含以下字段：
-                - trap_name: 陷阱名称
-                - trap_type: 陷阱类型
-                - damage: 造成的伤害
-                - damage_type: 伤害类型
-                - save_attempted: 是否尝试了豁免
-                - save_success: 豁免是否成功
-
-        Returns:
-            LLM生成的叙述文本
+        说明：
+        - 叙述来源由配置决定（local 或 llm）。
+        - 回退策略由 TrapNarrativeService 统一控制，避免多层兜底导致语义不一致。
         """
-        try:
-            # 构建上下文 - 【修复】确保 trap_name 正确获取
-            trap_context = {
-                "trap_name": trap_result.get("trap_name", trap_result.get("name", "未知陷阱")),
-                "trap_type": trap_result.get("trap_type", trap_result.get("type", "damage")),
-                "damage": trap_result.get("damage", 0),
-                "damage_type": trap_result.get("damage_type", "physical"),
-                "save_attempted": trap_result.get("save_attempted", False),
-                "save_success": trap_result.get("save_success", False),
-                "player_name": game_state.player.name,
-                "player_hp": game_state.player.stats.hp,
-                "player_max_hp": game_state.player.stats.max_hp
-            }
+        from trap_narrative_service import trap_narrative_service
 
-            # 调用 LLM 服务生成叙述
-            narrative = await llm_service.generate_trap_narrative(game_state, trap_context)
-            return narrative
-
-        except Exception as e:
-            logger.error(f"Failed to generate trap narrative: {e}")
-            # 如果 LLM 生成失败，返回默认描述
-            description = trap_result.get("description", "")
-            if description:
-                return description
-            trap_name = trap_result.get("trap_name", trap_result.get("name", "陷阱"))
-            damage = trap_result.get("damage", 0)
-            if damage > 0:
-                return f"你触发了{trap_name}，受到了 {damage} 点伤害！"
-            return f"你触发了{trap_name}！"
+        trap_data = {
+            "trap_name": trap_result.get("trap_name", trap_result.get("name", "未知陷阱")),
+            "trap_type": trap_result.get("trap_type", trap_result.get("type", "damage")),
+            "damage_type": trap_result.get("damage_type", "physical"),
+        }
+        return await trap_narrative_service.generate_narrative(
+            game_state=game_state,
+            trap_data=trap_data,
+            trigger_result=trap_result,
+            save_attempted=trap_result.get("save_attempted", False),
+            save_result={"success": trap_result.get("save_success", False)} if trap_result.get("save_attempted", False) else None,
+        )
 
     async def _trigger_tile_event(self, game_state: GameState, tile: MapTile) -> str:
         """触发瓦片事件"""
