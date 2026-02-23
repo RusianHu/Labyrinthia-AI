@@ -568,19 +568,73 @@ Object.assign(LabyrinthiaGame.prototype, {
     
     updateInventory() {
         const inventoryGrid = document.getElementById('inventory-grid');
-        const inventory = this.gameState.player.inventory;
+        const inventory = this.gameState.player.inventory || [];
+        const filterSelect = document.getElementById('inventory-filter');
+        const sortSelect = document.getElementById('inventory-sort');
+
+        if (!inventoryGrid) {
+            return;
+        }
+
+        const filterValue = (filterSelect && filterSelect.value) ? filterSelect.value : 'all';
+        const sortValue = (sortSelect && sortSelect.value) ? sortSelect.value : 'recent';
+
+        const rarityOrder = {
+            common: 1,
+            uncommon: 2,
+            rare: 3,
+            epic: 4,
+            legendary: 5
+        };
+
+        const filtered = inventory.filter(item => {
+            if (filterValue === 'all') return true;
+            if (filterValue === 'equippable') return !!item.is_equippable;
+            if (filterValue === 'cooldown') return Number(item.current_cooldown || 0) > 0;
+            if (filterValue === 'quest_locked') return !!item.is_quest_item;
+            return (item.item_type || 'misc') === filterValue;
+        });
+
+        filtered.sort((a, b) => {
+            if (sortValue === 'name') {
+                return String(a.name || '').localeCompare(String(b.name || ''), 'zh-CN');
+            }
+            if (sortValue === 'value') {
+                return Number(b.value || 0) - Number(a.value || 0);
+            }
+            if (sortValue === 'rarity') {
+                const ra = rarityOrder[a.rarity || 'common'] || 0;
+                const rb = rarityOrder[b.rarity || 'common'] || 0;
+                return rb - ra;
+            }
+            return 0;
+        });
+
+        const selectedId = this._inventorySelectedItemId || '';
+        const gridItems = filtered.slice(0, 16);
 
         inventoryGrid.innerHTML = '';
 
-        // 创建物品栏格子（4x4）
         for (let i = 0; i < 16; i++) {
             const slot = document.createElement('div');
             slot.className = 'inventory-slot';
             slot.dataset.slot = i;
 
-            if (i < inventory.length) {
-                const item = inventory[i];
+            const item = gridItems[i];
+            if (item) {
                 slot.classList.add('has-item');
+                if (item.id === selectedId) {
+                    slot.classList.add('selected');
+                }
+                if (item.is_quest_item) {
+                    slot.classList.add('state-locked');
+                }
+                if (Number(item.current_cooldown || 0) > 0) {
+                    slot.classList.add('state-cooldown');
+                }
+                if (Object.values(this.gameState.player.equipped_items || {}).some(e => e && e.id === item.id)) {
+                    slot.classList.add('state-equipped');
+                }
 
                 const rarity = item.rarity || 'common';
                 const type = item.item_type || 'misc';
@@ -590,24 +644,150 @@ Object.assign(LabyrinthiaGame.prototype, {
                 const cooldown = Number(item.current_cooldown || 0) > 0
                     ? `\n冷却: ${item.current_cooldown}回合`
                     : '';
+                const lockText = item.is_quest_item ? `\n任务锁定: ${(item.quest_lock_reason || '任务相关物品')}` : '';
 
-                slot.title = `${item.name}\n[${type}/${rarity}]\n${item.description}${charges}${cooldown}`;
-                slot.textContent = item.name.charAt(0).toUpperCase();
+                slot.title = `${item.name}\n[${type}/${rarity}]\n${item.description}${charges}${cooldown}${lockText}`;
+                slot.textContent = (item.name || '?').charAt(0).toUpperCase();
                 slot.dataset.rarity = rarity;
 
-                // 【修复】存储物品ID而不是整个物品对象，避免闭包问题
                 const itemId = item.id;
                 slot.addEventListener('click', () => {
-                    // 从当前游戏状态中获取最新的物品数据
                     const currentItem = this.gameState.player.inventory.find(it => it.id === itemId);
-                    if (currentItem) {
-                        this.showItemUseDialog(currentItem);
+                    if (!currentItem) {
+                        return;
                     }
+                    this._inventorySelectedItemId = itemId;
+                    this.renderInventoryDetail(currentItem);
+                    this.updateInventory();
+                });
+
+                slot.addEventListener('dblclick', () => {
+                    const currentItem = this.gameState.player.inventory.find(it => it.id === itemId);
+                    if (!currentItem) {
+                        return;
+                    }
+                    this.useItem(currentItem.id);
                 });
             }
 
             inventoryGrid.appendChild(slot);
         }
+
+        this.updateEquippedItemsPanel();
+
+        const selectedItem = this.gameState.player.inventory.find(it => it.id === selectedId);
+        if (selectedItem) {
+            this.renderInventoryDetail(selectedItem);
+        } else {
+            this._inventorySelectedItemId = '';
+            this.renderInventoryDetail(null);
+        }
+    },
+
+    updateEquippedItemsPanel() {
+        const equipGrid = document.getElementById('equip-grid');
+        if (!equipGrid) {
+            return;
+        }
+
+        const slots = ['weapon', 'armor', 'accessory_1', 'accessory_2'];
+        slots.forEach(slotName => {
+            const slotEl = equipGrid.querySelector(`[data-slot="${slotName}"]`);
+            if (!slotEl) {
+                return;
+            }
+            const item = (this.gameState.player.equipped_items || {})[slotName];
+            const labels = {
+                weapon: '武器',
+                armor: '防具',
+                accessory_1: '饰品1',
+                accessory_2: '饰品2'
+            };
+            if (item) {
+                slotEl.textContent = `${labels[slotName]}: ${item.name}`;
+                slotEl.classList.add('filled');
+            } else {
+                slotEl.textContent = `${labels[slotName]}: 空`;
+                slotEl.classList.remove('filled');
+            }
+        });
+    },
+
+    renderInventoryDetail(item) {
+        const detail = document.getElementById('inventory-detail');
+        const useBtn = document.getElementById('inventory-action-use');
+        const dropBtn = document.getElementById('inventory-action-drop');
+        if (!detail || !useBtn || !dropBtn) {
+            return;
+        }
+
+        if (!item) {
+            detail.className = 'inventory-detail-empty';
+            detail.textContent = '请选择一个物品查看详情';
+            useBtn.disabled = true;
+            dropBtn.disabled = true;
+            useBtn.onclick = null;
+            dropBtn.onclick = null;
+            return;
+        }
+
+        const activeEffects = (this.gameState.player.active_effects || []).filter(effect => {
+            const source = (effect && effect.source) ? String(effect.source) : '';
+            return source.endsWith(`:${item.name}`) || source === `item:${item.name}`;
+        });
+
+        const effectLines = activeEffects.length > 0
+            ? activeEffects.map(effect => {
+                const duration = Number(effect.duration_turns || 0);
+                const stacks = Number(effect.stacks || 1);
+                return `- ${effect.name} | 剩余${duration}回合 | 层数${stacks}`;
+            }).join('\n')
+            : '- 无';
+
+        const itemTypeLabelMap = {
+            weapon: '武器',
+            armor: '防具',
+            consumable: '消耗品',
+            misc: '杂项'
+        };
+        const itemRarityLabelMap = {
+            common: '普通',
+            uncommon: '精良',
+            rare: '稀有',
+            epic: '史诗',
+            legendary: '传说'
+        };
+        const itemTypeRaw = String(item.item_type || 'misc');
+        const itemRarityRaw = String(item.rarity || 'common');
+        const itemTypeLabel = itemTypeLabelMap[itemTypeRaw] || itemTypeRaw;
+        const itemRarityLabel = itemRarityLabelMap[itemRarityRaw] || itemRarityRaw;
+
+        const lines = [
+            `${item.name}`,
+            `类型: ${itemTypeLabel} / 稀有度: ${itemRarityLabel}`,
+            `描述: ${item.description || '无'}`,
+            `使用说明: ${item.usage_description || '无'}`,
+            `充能: ${(item.max_charges || 0) > 0 ? `${item.charges || 0}/${item.max_charges}` : '无限'}`,
+            `冷却: ${item.current_cooldown || 0}/${item.cooldown_turns || 0} 回合`,
+            `任务锁定: ${item.is_quest_item ? '是' : '否'}`,
+            `持续效果来源:`,
+            `${effectLines}`
+        ];
+
+        detail.className = '';
+        detail.textContent = lines.join('\n');
+
+        useBtn.disabled = false;
+        dropBtn.disabled = false;
+        useBtn.textContent = item.is_equippable ? '装备/卸下' : '使用';
+        dropBtn.textContent = item.is_quest_item ? '尝试丢弃(保护)' : '丢弃';
+
+        useBtn.onclick = () => {
+            this.useItem(item.id);
+        };
+        dropBtn.onclick = () => {
+            this.dropItem(item.id);
+        };
     },
     
     updateQuests() {

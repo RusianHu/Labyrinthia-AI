@@ -92,6 +92,7 @@ class DataManager:
 
         # 基础属性
         game_state.id = data.get("id", game_state.id)
+        game_state.save_version = int(data.get("save_version", 1) or 1)
         game_state.turn_count = data.get("turn_count", 0)
         game_state.game_time = data.get("game_time", 0)
 
@@ -247,23 +248,38 @@ class DataManager:
         item.id = data.get("id", item.id)
         item.name = data.get("name", "")
         item.description = data.get("description", "")
-        item.item_type = data.get("item_type", "misc")
-        item.value = data.get("value", 0)
-        item.weight = data.get("weight", 0.0)
-        item.rarity = data.get("rarity", "common")
-        item.properties = data.get("properties", {})
-        # 新增字段
+
+        item_type = str(data.get("item_type", "misc") or "misc")
+        allowed_item_types = {"weapon", "armor", "consumable", "misc"}
+        item.item_type = item_type if item_type in allowed_item_types else "misc"
+
+        item.value = max(0, int(data.get("value", 0) or 0))
+        item.weight = max(0.0, float(data.get("weight", 0.0) or 0.0))
+
+        rarity = str(data.get("rarity", "common") or "common")
+        allowed_rarity = {"common", "uncommon", "rare", "epic", "legendary"}
+        item.rarity = rarity if rarity in allowed_rarity else "common"
+
+        item.properties = data.get("properties", {}) if isinstance(data.get("properties", {}), dict) else {}
+
         item.usage_description = data.get("usage_description", "")
-        item.llm_generated = data.get("llm_generated", False)
+        item.llm_generated = bool(data.get("llm_generated", False))
         item.generation_context = data.get("generation_context", "")
-        item.effect_payload = data.get("effect_payload", {}) or {}
+        item.effect_payload = data.get("effect_payload", {}) if isinstance(data.get("effect_payload", {}), dict) else {}
         item.use_mode = data.get("use_mode", "active")
         item.is_equippable = bool(data.get("is_equippable", False))
-        item.equip_slot = data.get("equip_slot", "")
-        item.max_charges = int(data.get("max_charges", 0) or 0)
-        item.charges = int(data.get("charges", item.max_charges) or 0)
-        item.cooldown_turns = int(data.get("cooldown_turns", 0) or 0)
-        item.current_cooldown = int(data.get("current_cooldown", 0) or 0)
+
+        equip_slot = str(data.get("equip_slot", "") or "")
+        allowed_slots = {"", "weapon", "armor", "accessory_1", "accessory_2"}
+        item.equip_slot = equip_slot if equip_slot in allowed_slots else ""
+
+        item.max_charges = max(0, int(data.get("max_charges", 0) or 0))
+        item.charges = max(0, min(item.max_charges if item.max_charges > 0 else int(data.get("charges", 0) or 0), int(data.get("charges", item.max_charges) or 0)))
+        item.cooldown_turns = max(0, int(data.get("cooldown_turns", 0) or 0))
+        item.current_cooldown = max(0, int(data.get("current_cooldown", 0) or 0))
+        if item.cooldown_turns > 0:
+            item.current_cooldown = min(item.current_cooldown, item.cooldown_turns)
+
         item.is_quest_item = bool(data.get("is_quest_item", False))
         item.quest_lock_reason = str(data.get("quest_lock_reason", "") or "")
         return item

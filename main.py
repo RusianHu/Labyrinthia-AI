@@ -91,10 +91,13 @@ def _normalize_action_response(
         "action": action,
         "trace_id": trace_id,
         "message": message,
+        "reason": str(result.get("reason") or ("ok" if success else (result.get("error_code") or "ACTION_FAILED"))),
         "events": events,
         "effects": result.get("effects", []),
         "error_code": result.get("error_code"),
         "retryable": bool(result.get("retryable", False)),
+        "impact_summary": result.get("impact_summary", {}),
+        "action_trace_id": result.get("action_trace_id"),
         "llm_interaction_required": bool(result.get("llm_interaction_required", False)),
     }
 
@@ -110,6 +113,8 @@ def _normalize_action_response(
         "idempotent_replay",
         "requires_confirmation",
         "confirmation_token",
+        "undo_token",
+        "undo_expires_turn",
         "debug_info",
     ]
     for key in passthrough_keys:
@@ -120,6 +125,10 @@ def _normalize_action_response(
         normalized["error_code"] = "ACTION_FAILED"
 
     return normalized
+
+
+def _build_context_key(user_id: str, game_id: str) -> str:
+    return f"{user_id}:{game_id}"
 
 
 class SyncStateRequest(BaseModel):
@@ -332,7 +341,12 @@ async def load_game(save_id: str, request: Request, response: Response):
         try:
             from llm_context_manager import llm_context_manager
             logs = save_data.get("llm_context_logs", [])
-            llm_context_manager.restore_context(logs, append=False, max_entries=getattr(config.llm, "save_context_entries", 20))
+            llm_context_manager.restore_context(
+                logs,
+                append=False,
+                max_entries=getattr(config.llm, "save_context_entries", 20),
+                context_key=_build_context_key(user_id, game_state.id),
+            )
         except Exception as _e:
             logger.warning(f"Failed to restore LLM context on load: {_e}")
 
@@ -372,65 +386,71 @@ async def get_game_state(game_id: str, request: Request, response: Response):
     user_id = user_session_manager.get_or_create_user_id(request, response)
     game_key = (user_id, game_id)
 
-    # 如果游戏不在内存中，尝试从磁盘加载
-    if game_key not in game_engine.active_games:
+    async with game_state_lock_manager.lock_game_state(user_id, game_id, "get_game_state"):
+        # 如果游戏不在内存中，尝试从磁盘加载
+        if game_key not in game_engine.active_games:
 
-        logger.info(f"Game {game_id} not in memory for user {user_id}, attempting to load from disk...")
+            logger.info(f"Game {game_id} not in memory for user {user_id}, attempting to load from disk...")
 
-        # 尝试从用户存档加载
-        save_data = user_session_manager.load_game_for_user(user_id, game_id)
+            # 尝试从用户存档加载
+            save_data = user_session_manager.load_game_for_user(user_id, game_id)
 
-        if save_data:
-            # 重建游戏状态并加载到内存
-            game_state = data_manager._dict_to_game_state(save_data)
+            if save_data:
+                # 重建游戏状态并加载到内存
+                game_state = data_manager._dict_to_game_state(save_data)
 
-            # 【修复】清除所有瓦片的character_id（防止存档中有错误数据）
-            for tile in game_state.current_map.tiles.values():
-                tile.character_id = None
-            logger.info(f"[lazy load] Cleared all character_id from {len(game_state.current_map.tiles)} tiles")
+                # 【修复】清除所有瓦片的character_id（防止存档中有错误数据）
+                for tile in game_state.current_map.tiles.values():
+                    tile.character_id = None
+                logger.info(f"[lazy load] Cleared all character_id from {len(game_state.current_map.tiles)} tiles")
 
-            # 【修复】重新设置玩家位置的character_id
-            player_tile = game_state.current_map.get_tile(*game_state.player.position)
-            if player_tile:
-                player_tile.character_id = game_state.player.id
-                player_tile.is_explored = True
-                player_tile.is_visible = True
-                logger.info(f"[lazy load] Player position restored: {game_state.player.position}")
+                # 【修复】重新设置玩家位置的character_id
+                player_tile = game_state.current_map.get_tile(*game_state.player.position)
+                if player_tile:
+                    player_tile.character_id = game_state.player.id
+                    player_tile.is_explored = True
+                    player_tile.is_visible = True
+                    logger.info(f"[lazy load] Player position restored: {game_state.player.position}")
 
-            # 【修复】重新设置怪物位置的character_id
-            for monster in game_state.monsters:
-                monster_tile = game_state.current_map.get_tile(*monster.position)
-                if monster_tile:
-                    monster_tile.character_id = monster.id
-                    logger.info(f"[lazy load] Monster {monster.name} position restored: {monster.position}")
+                # 【修复】重新设置怪物位置的character_id
+                for monster in game_state.monsters:
+                    monster_tile = game_state.current_map.get_tile(*monster.position)
+                    if monster_tile:
+                        monster_tile.character_id = monster.id
+                        logger.info(f"[lazy load] Monster {monster.name} position restored: {monster.position}")
 
-            # 恢复LLM上下文（在懒加载路径）
-            try:
-                from llm_context_manager import llm_context_manager
-                logs = save_data.get("llm_context_logs", [])
-                llm_context_manager.restore_context(logs, append=False, max_entries=getattr(config.llm, "save_context_entries", 20))
-            except Exception as _e:
-                logger.warning(f"[lazy load] Failed to restore LLM context: {_e}")
+                # 恢复LLM上下文（在懒加载路径）
+                try:
+                    from llm_context_manager import llm_context_manager
+                    logs = save_data.get("llm_context_logs", [])
+                    llm_context_manager.restore_context(
+                        logs,
+                        append=False,
+                        max_entries=getattr(config.llm, "save_context_entries", 20),
+                        context_key=_build_context_key(user_id, game_id),
+                    )
+                except Exception as _e:
+                    logger.warning(f"[lazy load] Failed to restore LLM context: {_e}")
 
-            game_engine.active_games[game_key] = game_state
-            game_engine._start_auto_save(user_id, game_state.id)
-            logger.info(f"Game {game_id} loaded from disk for user {user_id}")
-        else:
-            # 如果磁盘上也没有，返回404
-            raise HTTPException(status_code=404, detail="游戏未找到")
+                game_engine.active_games[game_key] = game_state
+                game_engine._start_auto_save(user_id, game_state.id)
+                logger.info(f"Game {game_id} loaded from disk for user {user_id}")
+            else:
+                # 如果磁盘上也没有，返回404
+                raise HTTPException(status_code=404, detail="游戏未找到")
 
-    game_state = game_engine.active_games[game_key]
+        game_state = game_engine.active_games[game_key]
 
-    # 更新访问时间
-    game_engine.update_access_time(user_id, game_id)
+        # 更新访问时间
+        game_engine.update_access_time(user_id, game_id)
 
-    # 获取游戏状态字典
-    state_dict = game_state.to_dict()
+        # 获取游戏状态字典
+        state_dict = game_state.to_dict()
 
-    # 清理服务器端的pending_effects，避免重复触发
-    if hasattr(game_state, 'pending_effects') and game_state.pending_effects:
-        # 前端会处理这些特效，所以服务器端可以清理了
-        game_state.pending_effects = []
+        # 清理服务器端的pending_effects，避免重复触发
+        if hasattr(game_state, 'pending_effects') and game_state.pending_effects:
+            # 前端会处理这些特效，所以服务器端可以清理了
+            game_state.pending_effects = []
 
     return state_dict
 
@@ -478,9 +498,13 @@ async def get_game_quests(game_id: str, request: Request, response: Response):
 async def perform_action(request: ActionRequest, http_request: Request, response: Response):
     """执行游戏行动"""
     trace_id = str(uuid.uuid4())
+    context_token = None
     try:
         # 获取用户ID
         user_id = user_session_manager.get_or_create_user_id(http_request, response)
+
+        from llm_context_manager import llm_context_manager
+        context_token = llm_context_manager.set_current_context_key(_build_context_key(user_id, request.game_id))
 
         # 验证游戏ID
         game_id_validation = input_validator.validate_game_id(request.game_id)
@@ -488,7 +512,16 @@ async def perform_action(request: ActionRequest, http_request: Request, response
             raise HTTPException(status_code=400, detail=game_id_validation.error_message)
 
         # 验证动作类型
-        valid_actions = ["move", "attack", "rest", "interact", "use_item", "drop_item", "pickup_item"]
+        valid_actions = [
+            "move",
+            "attack",
+            "rest",
+            "interact",
+            "use_item",
+            "drop_item",
+            "undo_drop_item",
+            "cast_spell",
+        ]
         if request.action not in valid_actions:
             raise HTTPException(status_code=400, detail=f"无效的动作类型: {request.action}")
 
@@ -499,7 +532,7 @@ async def perform_action(request: ActionRequest, http_request: Request, response
             if not direction_validation.is_valid:
                 raise HTTPException(status_code=400, detail=direction_validation.error_message)
             sanitized_params["direction"] = direction_validation.sanitized_value
-        elif request.action in ["use_item", "drop_item", "pickup_item"] and "item_id" in request.parameters:
+        elif request.action in ["use_item", "drop_item"] and "item_id" in request.parameters:
             # 验证item_id是UUID格式
             item_id_validation = input_validator.validate_game_id(request.parameters["item_id"])
             if not item_id_validation.is_valid:
@@ -511,6 +544,17 @@ async def perform_action(request: ActionRequest, http_request: Request, response
             if not target_id_validation.is_valid:
                 raise HTTPException(status_code=400, detail="无效的目标ID")
             sanitized_params["target_id"] = target_id_validation.sanitized_value
+        elif request.action == "cast_spell":
+            if "spell_id" in request.parameters:
+                spell_id_validation = input_validator.validate_game_id(request.parameters["spell_id"])
+                if not spell_id_validation.is_valid:
+                    raise HTTPException(status_code=400, detail="无效的法术ID")
+                sanitized_params["spell_id"] = spell_id_validation.sanitized_value
+            if "target_id" in request.parameters:
+                target_id_validation = input_validator.validate_game_id(request.parameters["target_id"])
+                if not target_id_validation.is_valid:
+                    raise HTTPException(status_code=400, detail="无效的目标ID")
+                sanitized_params["target_id"] = target_id_validation.sanitized_value
         else:
             # 其他参数直接传递（如坐标等）
             sanitized_params = request.parameters
@@ -557,116 +601,144 @@ async def perform_action(request: ActionRequest, http_request: Request, response
                 "retryable": True,
             },
         )
+    finally:
+        if context_token is not None:
+            from llm_context_manager import llm_context_manager
+            llm_context_manager.reset_current_context_key(context_token)
 
 
 @app.post("/api/llm-event")
 async def handle_llm_event(request: LLMEventRequest, http_request: Request, response: Response):
     """处理需要LLM的事件"""
+    context_token = None
     try:
         # 获取用户ID
         user_id = user_session_manager.get_or_create_user_id(http_request, response)
         game_key = (user_id, request.game_id)
 
-        logger.info(f"Processing LLM event: {request.event_type} for user {user_id}, game: {request.game_id}")
+        from llm_context_manager import llm_context_manager
+        context_token = llm_context_manager.set_current_context_key(
+            _build_context_key(user_id, request.game_id)
+        )
 
-        if game_key not in game_engine.active_games:
-            raise HTTPException(status_code=404, detail="游戏未找到")
-
-        # 从请求中重建游戏状态
-        from data_manager import data_manager
-        game_state = data_manager._dict_to_game_state(request.game_state)
-
-        # 更新内存中的游戏状态
-        game_engine.active_games[game_key] = game_state
+        logger.info(
+            f"Processing LLM event: {request.event_type} for user {user_id}, game: {request.game_id}"
+        )
 
         event_type = request.event_type
         event_data = request.event_data
 
-        # 根据事件类型处理
-        if event_type == 'tile_event':
-            # 处理瓦片事件
-            tile_data = event_data.get('tile', {})
-            position = event_data.get('position', [0, 0])
+        async with game_state_lock_manager.lock_game_state(
+            user_id, request.game_id, f"llm_event:{event_type}"
+        ):
+            if game_key not in game_engine.active_games:
+                raise HTTPException(status_code=404, detail="游戏未找到")
 
-            # 重建MapTile对象
-            from data_models import MapTile, TerrainType
-            tile = MapTile()
-            tile.x = tile_data.get('x', position[0])
-            tile.y = tile_data.get('y', position[1])
-            tile.terrain = TerrainType(tile_data.get('terrain', 'floor'))
-            tile.has_event = tile_data.get('has_event', False)
-            tile.event_type = tile_data.get('event_type', '')
-            tile.event_data = tile_data.get('event_data', {})
-            tile.event_triggered = tile_data.get('event_triggered', False)
+            # 仅使用服务端权威状态，避免客户端提交完整状态覆盖内存态
+            game_state = game_engine.active_games[game_key]
 
-            # 触发事件
-            event_result = await game_engine._trigger_tile_event(game_state, tile)
+            # 根据事件类型处理
+            if event_type == "tile_event":
+                # 处理瓦片事件
+                tile_data = event_data.get("tile", {})
+                position = event_data.get("position", [0, 0])
 
-            return {
-                "success": True,
-                "message": event_result,
-                "events": [event_result],
-                "game_state": game_state.to_dict()
-            }
+                # 重建MapTile对象
+                from data_models import MapTile, TerrainType
 
-        elif event_type == 'treasure':
-            # 处理宝藏事件 - 使用LLM生成物品
-            position = event_data.get('position', [0, 0])
-            tile_data = event_data.get('tile', {})
+                tile = MapTile()
+                tile.x = tile_data.get("x", position[0])
+                tile.y = tile_data.get("y", position[1])
+                tile.terrain = TerrainType(tile_data.get("terrain", "floor"))
+                tile.has_event = tile_data.get("has_event", False)
+                tile.event_type = tile_data.get("event_type", "")
+                tile.event_data = tile_data.get("event_data", {})
+                tile.event_triggered = tile_data.get("event_triggered", False)
 
-            # 生成宝藏物品
-            treasure_result = await game_engine._find_treasure(game_state)
+                # 触发事件
+                event_result = await game_engine._trigger_tile_event(game_state, tile)
 
-            # 更新地图上的瓦片（宝藏变为地板）
-            tile = game_state.current_map.get_tile(position[0], position[1])
-            if tile:
-                from data_models import TerrainType
-                tile.terrain = TerrainType.FLOOR
+                return {
+                    "success": True,
+                    "message": event_result,
+                    "events": [event_result],
+                    "game_state": game_state.to_dict(),
+                }
 
-            return {
-                "success": True,
-                "message": treasure_result,
-                "events": [treasure_result],
-                "game_state": game_state.to_dict()
-            }
+            if event_type == "treasure":
+                # 处理宝藏事件 - 使用LLM生成物品
+                position = event_data.get("position", [0, 0])
 
-        elif event_type == 'trap_narrative':
-            # 处理陷阱叙述生成 - 前端已计算效果，后端按配置生成描述性文本
-            position = event_data.get('position', [0, 0])
-            trap_result = event_data.get('trap_result', {})
+                # 生成宝藏物品
+                treasure_result = await game_engine._find_treasure(game_state)
 
-            narrative = await game_engine._generate_trap_narrative(game_state, trap_result)
+                # 更新地图上的瓦片（宝藏变为地板）
+                tile = game_state.current_map.get_tile(position[0], position[1])
+                if tile:
+                    from data_models import TerrainType
 
-            # 写入 LLM 上下文：陷阱事件与叙述（可由配置开关控制）
-            try:
-                from llm_context_manager import llm_context_manager
-                if getattr(config.llm, "record_trap_to_context", True):
-                    trap_type = trap_result.get('trap_type', trap_result.get('type', 'unknown')) if isinstance(trap_result, dict) else 'unknown'
-                    llm_context_manager.add_event(
-                        event_type="trap",
-                        description=f"触发陷阱：{trap_type}",
-                        data=trap_result if isinstance(trap_result, dict) else {"raw": str(trap_result)}
-                    )
-                    if narrative:
-                        llm_context_manager.add_narrative(narrative, context_type="trap")
-            except Exception as _e:
-                logger.warning(f"Failed to log trap context: {_e}")
+                    tile.terrain = TerrainType.FLOOR
 
-            return {
-                "success": True,
-                "narrative": narrative,
-                "game_state": game_state.to_dict()
-            }
+                return {
+                    "success": True,
+                    "message": treasure_result,
+                    "events": [treasure_result],
+                    "game_state": game_state.to_dict(),
+                }
 
-        else:
+            if event_type == "trap_narrative":
+                # 处理陷阱叙述生成 - 前端已计算效果，后端按配置生成描述性文本
+                trap_result = event_data.get("trap_result", {})
+
+                narrative = await game_engine._generate_trap_narrative(game_state, trap_result)
+
+                # 写入 LLM 上下文：陷阱事件与叙述（可由配置开关控制）
+                try:
+                    from llm_context_manager import llm_context_manager
+
+                    if getattr(config.llm, "record_trap_to_context", True):
+                        context_key = _build_context_key(user_id, request.game_id)
+                        trap_type = (
+                            trap_result.get("trap_type", trap_result.get("type", "unknown"))
+                            if isinstance(trap_result, dict)
+                            else "unknown"
+                        )
+                        llm_context_manager.add_event(
+                            event_type="trap",
+                            description=f"触发陷阱：{trap_type}",
+                            data=trap_result if isinstance(trap_result, dict) else {"raw": str(trap_result)},
+                            context_key=context_key,
+                        )
+                        if narrative:
+                            llm_context_manager.add_narrative(
+                                narrative,
+                                context_type="trap",
+                                context_key=context_key,
+                            )
+                except Exception as _e:
+                    logger.warning(f"Failed to log trap context: {_e}")
+
+                return {
+                    "success": True,
+                    "narrative": narrative,
+                    "game_state": game_state.to_dict(),
+                }
+
             return {
                 "success": False,
-                "message": f"未知的事件类型: {event_type}"
+                "message": f"未知的事件类型: {event_type}",
             }
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Failed to process LLM event: {e}")
         raise HTTPException(status_code=500, detail=f"处理LLM事件失败: {str(e)}")
+    finally:
+        if context_token is not None:
+            from llm_context_manager import llm_context_manager
+
+            llm_context_manager.reset_current_context_key(context_token)
 
 
 @app.post("/api/trap-choice/register")
@@ -689,42 +761,45 @@ async def register_trap_choice_context(request: Request, response: Response):
         user_id = user_session_manager.get_or_create_user_id(request, response)
         game_key = (user_id, game_id)
 
-        # 获取游戏状态
-        game_state = game_engine.active_games.get(game_key)
-        if not game_state:
-            raise HTTPException(status_code=404, detail="游戏未找到")
+        async with game_state_lock_manager.lock_game_state(user_id, game_id, "trap_choice_register"):
+            # 获取游戏状态
+            game_state = game_engine.active_games.get(game_key)
+            if not game_state:
+                raise HTTPException(status_code=404, detail="游戏未找到")
 
-        # 创建EventChoiceContext
-        from data_models import EventChoiceContext, EventChoice
-        from event_choice_system import event_choice_system
+            # 创建EventChoiceContext
+            from data_models import EventChoiceContext, EventChoice
+            from event_choice_system import event_choice_system
 
-        context = EventChoiceContext(
-            id=context_id,
-            event_type="trap_event",
-            title=f"⚠️ 发现陷阱：{trap_name}",
-            description=trap_description,
-            context_data={
-                "trap_data": trap_data,
-                "position": position
-            }
-        )
-
-        # 创建选项
-        for choice_data in choices_data:
-            choice = EventChoice(
-                text=choice_data.get("text", ""),
-                description=choice_data.get("description", ""),
-                consequences=choice_data.get("consequences", ""),
-                requirements=choice_data.get("requirements", {}),
-                is_available=True
+            context = EventChoiceContext(
+                id=context_id,
+                event_type="trap_event",
+                title=f"⚠️ 发现陷阱：{trap_name}",
+                description=trap_description,
+                context_data={
+                    "trap_data": trap_data,
+                    "position": position,
+                    "owner_game_id": game_id,
+                    "owner_user_id": user_id,
+                }
             )
-            # 使用前端传来的id作为选项ID
-            choice.id = choice_data.get("id", choice.id)
-            context.choices.append(choice)
 
-        # 注册到EventChoiceSystem
-        event_choice_system.active_contexts[context_id] = context
-        game_state.pending_choice_context = context
+            # 创建选项
+            for choice_data in choices_data:
+                choice = EventChoice(
+                    text=choice_data.get("text", ""),
+                    description=choice_data.get("description", ""),
+                    consequences=choice_data.get("consequences", ""),
+                    requirements=choice_data.get("requirements", {}),
+                    is_available=True
+                )
+                # 使用前端传来的id作为选项ID
+                choice.id = choice_data.get("id", choice.id)
+                context.choices.append(choice)
+
+            # 注册到EventChoiceSystem
+            event_choice_system.active_contexts[context_id] = context
+            game_state.pending_choice_context = context
 
         logger.info(f"Registered trap choice context: {context_id} for game {game_id}")
 
@@ -754,63 +829,64 @@ async def check_trap_detection(request: Request, response: Response):
         user_id = user_session_manager.get_or_create_user_id(request, response)
         game_key = (user_id, game_id)
 
-        # 获取游戏状态
-        game_state = game_engine.active_games.get(game_key)
-        if not game_state:
-            raise HTTPException(status_code=404, detail="游戏未找到")
+        async with game_state_lock_manager.lock_game_state(user_id, game_id, "check_trap"):
+            # 获取游戏状态
+            game_state = game_engine.active_games.get(game_key)
+            if not game_state:
+                raise HTTPException(status_code=404, detail="游戏未找到")
 
-        # 获取目标瓦片
-        tile = game_state.current_map.get_tile(position[0], position[1])
-        if not tile or not tile.is_trap():
-            return {
-                "trap_detected": False,
-                "message": "没有陷阱"
-            }
+            # 获取目标瓦片
+            tile = game_state.current_map.get_tile(position[0], position[1])
+            if not tile or not tile.is_trap():
+                return {
+                    "trap_detected": False,
+                    "message": "没有陷阱"
+                }
 
-        # 如果陷阱已经被发现或已触发，直接返回
-        if tile.trap_detected or tile.event_triggered:
-            return {
-                "trap_detected": tile.trap_detected,
-                "already_known": True,
-                "message": "陷阱已被发现" if tile.trap_detected else "陷阱已触发"
-            }
+            # 如果陷阱已经被发现或已触发，直接返回
+            if tile.trap_detected or tile.event_triggered:
+                return {
+                    "trap_detected": tile.trap_detected,
+                    "already_known": True,
+                    "message": "陷阱已被发现" if tile.trap_detected else "陷阱已触发"
+                }
 
-        # 获取陷阱数据
-        trap_data = tile.get_trap_data()
-        detect_dc = trap_data.get("detect_dc", 15)
+            # 获取陷阱数据
+            trap_data = tile.get_trap_data()
+            detect_dc = trap_data.get("detect_dc", 15)
 
-        # 进行被动侦测
-        from trap_manager import get_trap_manager
-        trap_manager = get_trap_manager()
+            # 进行被动侦测
+            from trap_manager import get_trap_manager
+            trap_manager = get_trap_manager()
 
-        detected = trap_manager.passive_detect_trap(game_state.player, detect_dc)
+            detected = trap_manager.passive_detect_trap(game_state.player, detect_dc)
 
-        if detected:
-            # 标记陷阱已被发现
-            tile.trap_detected = True
-            if tile.has_event and tile.event_type == 'trap':
-                tile.event_data["is_detected"] = True
+            if detected:
+                # 标记陷阱已被发现
+                tile.trap_detected = True
+                if tile.has_event and tile.event_type == 'trap':
+                    tile.event_data["is_detected"] = True
 
-            logger.info(f"Trap detected at ({position[0]}, {position[1]}) by passive perception")
+                logger.info(f"Trap detected at ({position[0]}, {position[1]}) by passive perception")
 
-            return {
-                "trap_detected": True,
-                "trap_data": trap_data,
-                "position": position,
-                "passive_perception": game_state.player.get_passive_perception(),
-                "detect_dc": detect_dc,
-                "message": f"你的敏锐感知发现了陷阱！（被动感知 {game_state.player.get_passive_perception()} vs DC {detect_dc}）"
-            }
-        else:
-            logger.info(f"Trap not detected at ({position[0]}, {position[1]}) - PP too low")
+                return {
+                    "trap_detected": True,
+                    "trap_data": trap_data,
+                    "position": position,
+                    "passive_perception": game_state.player.get_passive_perception(),
+                    "detect_dc": detect_dc,
+                    "message": f"你的敏锐感知发现了陷阱！（被动感知 {game_state.player.get_passive_perception()} vs DC {detect_dc}）"
+                }
+            else:
+                logger.info(f"Trap not detected at ({position[0]}, {position[1]}) - PP too low")
 
-            return {
-                "trap_detected": False,
-                "will_trigger": True,
-                "passive_perception": game_state.player.get_passive_perception(),
-                "detect_dc": detect_dc,
-                "message": "未能发现陷阱"
-            }
+                return {
+                    "trap_detected": False,
+                    "will_trigger": True,
+                    "passive_perception": game_state.player.get_passive_perception(),
+                    "detect_dc": detect_dc,
+                    "message": "未能发现陷阱"
+                }
 
     except Exception as e:
         logger.error(f"Failed to check trap detection: {e}")
@@ -838,6 +914,7 @@ async def trigger_trap(request: Request, response: Response):
     - player_hp: 玩家当前HP
     - player_died: 玩家是否死亡
     """
+    context_token = None
     try:
         data = await request.json()
         game_id = data.get("game_id")
@@ -847,91 +924,99 @@ async def trigger_trap(request: Request, response: Response):
         user_id = user_session_manager.get_or_create_user_id(request, response)
         game_key = (user_id, game_id)
 
-        # 获取游戏状态
-        game_state = game_engine.active_games.get(game_key)
-        if not game_state:
-            raise HTTPException(status_code=404, detail="游戏未找到")
+        from llm_context_manager import llm_context_manager
+        context_token = llm_context_manager.set_current_context_key(_build_context_key(user_id, game_id))
 
-        # 获取目标瓦片
-        tile = game_state.current_map.get_tile(position[0], position[1])
-        if not tile or not tile.is_trap():
+        async with game_state_lock_manager.lock_game_state(user_id, game_id, "trigger_trap"):
+            # 获取游戏状态
+            game_state = game_engine.active_games.get(game_key)
+            if not game_state:
+                raise HTTPException(status_code=404, detail="游戏未找到")
+
+            # 获取目标瓦片
+            tile = game_state.current_map.get_tile(position[0], position[1])
+            if not tile or not tile.is_trap():
+                return {
+                    "success": False,
+                    "message": "该位置没有陷阱"
+                }
+
+            # 获取陷阱数据
+            from trap_schema import trap_validator
+            raw_trap_data = tile.get_trap_data()
+            trap_data = trap_validator.validate_and_normalize(raw_trap_data)
+
+            # 获取 TrapManager
+            from trap_manager import get_trap_manager
+            trap_manager = get_trap_manager()
+
+            # 检查陷阱是否可以被规避（需要豁免）
+            can_be_avoided = trap_data.get("can_be_avoided", True)
+            save_dc = trap_data.get("save_dc", 14)
+
+            save_attempted = False
+            save_result = None
+            save_message = ""
+
+            # 如果陷阱可以被规避，自动进行敏捷豁免
+            if can_be_avoided and save_dc > 0:
+                save_attempted = True
+                save_result = trap_manager.attempt_avoid(game_state.player, save_dc)
+
+                # 使用统一的消息格式（优先使用新引擎的ui_text）
+                if "ui_text" in save_result:
+                    save_message = save_result["ui_text"]
+                elif "breakdown" in save_result:
+                    # 如果有breakdown但没有ui_text，手动构建
+                    success_icon = "✅" if save_result['success'] else "❌"
+                    save_message = f"{success_icon} DEX豁免：{save_result['breakdown']} vs DC {save_dc} - {'成功' if save_result['success'] else '失败'}"
+                else:
+                    # 旧格式兼容
+                    success_icon = "✅" if save_result['success'] else "❌"
+                    save_message = (
+                        f"{success_icon} 敏捷豁免：🎲 1d20={save_result['roll']} + "
+                        f"DEX{save_result['modifier']:+d} = {save_result['total']} "
+                        f"vs DC {save_dc} - {'成功' if save_result['success'] else '失败'}"
+                    )
+
+                logger.info(f"Trap trigger with save: {save_message}")
+
+            # 触发陷阱（传入豁免结果，如果有的话）
+            trigger_result = trap_manager.trigger_trap(game_state, tile, save_result=save_result)
+
+            # 生成陷阱叙述（根据配置使用 local 或 llm）
+            from trap_narrative_service import trap_narrative_service
+            narrative = await trap_narrative_service.generate_narrative(
+                game_state=game_state,
+                trap_data=trap_data,
+                trigger_result=trigger_result,
+                save_attempted=save_attempted,
+                save_result=save_result,
+            )
+
+            # 返回结果
             return {
-                "success": False,
-                "message": "该位置没有陷阱"
+                "success": True,
+                "save_attempted": save_attempted,
+                "save_result": save_result,
+                "save_message": save_message,
+                "trigger_result": trigger_result,
+                "narrative": narrative,
+                "player_hp": game_state.player.stats.hp,
+                "player_max_hp": game_state.player.stats.max_hp,
+                "player_died": trigger_result.get("player_died", False),
+                "game_over": game_state.is_game_over
             }
-
-        # 获取陷阱数据
-        from trap_schema import trap_validator
-        raw_trap_data = tile.get_trap_data()
-        trap_data = trap_validator.validate_and_normalize(raw_trap_data)
-
-        # 获取 TrapManager
-        from trap_manager import get_trap_manager
-        trap_manager = get_trap_manager()
-
-        # 检查陷阱是否可以被规避（需要豁免）
-        can_be_avoided = trap_data.get("can_be_avoided", True)
-        save_dc = trap_data.get("save_dc", 14)
-
-        save_attempted = False
-        save_result = None
-        save_message = ""
-
-        # 如果陷阱可以被规避，自动进行敏捷豁免
-        if can_be_avoided and save_dc > 0:
-            save_attempted = True
-            save_result = trap_manager.attempt_avoid(game_state.player, save_dc)
-
-            # 使用统一的消息格式（优先使用新引擎的ui_text）
-            if "ui_text" in save_result:
-                save_message = save_result["ui_text"]
-            elif "breakdown" in save_result:
-                # 如果有breakdown但没有ui_text，手动构建
-                success_icon = "✅" if save_result['success'] else "❌"
-                save_message = f"{success_icon} DEX豁免：{save_result['breakdown']} vs DC {save_dc} - {'成功' if save_result['success'] else '失败'}"
-            else:
-                # 旧格式兼容
-                success_icon = "✅" if save_result['success'] else "❌"
-                save_message = (
-                    f"{success_icon} 敏捷豁免：🎲 1d20={save_result['roll']} + "
-                    f"DEX{save_result['modifier']:+d} = {save_result['total']} "
-                    f"vs DC {save_dc} - {'成功' if save_result['success'] else '失败'}"
-                )
-
-            logger.info(f"Trap trigger with save: {save_message}")
-
-        # 触发陷阱（传入豁免结果，如果有的话）
-        trigger_result = trap_manager.trigger_trap(game_state, tile, save_result=save_result)
-
-        # 生成陷阱叙述（根据配置使用 local 或 llm）
-        from trap_narrative_service import trap_narrative_service
-        narrative = await trap_narrative_service.generate_narrative(
-            game_state=game_state,
-            trap_data=trap_data,
-            trigger_result=trigger_result,
-            save_attempted=save_attempted,
-            save_result=save_result,
-        )
-
-        # 返回结果
-        return {
-            "success": True,
-            "save_attempted": save_attempted,
-            "save_result": save_result,
-            "save_message": save_message,
-            "trigger_result": trigger_result,
-            "narrative": narrative,
-            "player_hp": game_state.player.stats.hp,
-            "player_max_hp": game_state.player.stats.max_hp,
-            "player_died": trigger_result.get("player_died", False),
-            "game_over": game_state.is_game_over
-        }
 
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Failed to trigger trap: {e}")
         raise HTTPException(status_code=500, detail=f"触发陷阱失败: {str(e)}")
+    finally:
+        if context_token is not None:
+            from llm_context_manager import llm_context_manager
+            llm_context_manager.reset_current_context_key(context_token)
 
 
 @app.post("/api/sync-state")
@@ -943,67 +1028,84 @@ async def sync_game_state(request: SyncStateRequest, http_request: Request, resp
     - 后端状态：任务进度、经验值、等级等"生成型"数据
     - 返回合并后的状态，确保前端获取最新的后端数据
     """
+    context_token = None
     try:
         # 获取用户ID
         user_id = user_session_manager.get_or_create_user_id(http_request, response)
         game_key = (user_id, request.game_id)
 
+        from llm_context_manager import llm_context_manager
+        context_token = llm_context_manager.set_current_context_key(_build_context_key(user_id, request.game_id))
+
         logger.info(f"Syncing game state for user {user_id}, game: {request.game_id}")
 
-        # 获取后端当前的游戏状态（包含最新的任务进度等数据）
-        backend_game_state = game_engine.active_games.get(game_key)
+        async with game_state_lock_manager.lock_game_state(user_id, request.game_id, "sync_state"):
+            # 获取后端当前的游戏状态（包含最新的任务进度等数据）
+            backend_game_state = game_engine.active_games.get(game_key)
 
-        if not backend_game_state:
-            raise HTTPException(status_code=404, detail="游戏未找到")
+            if not backend_game_state:
+                raise HTTPException(status_code=404, detail="游戏未找到")
 
-        # 从请求中重建前端游戏状态
-        from data_manager import data_manager
-        frontend_game_state = data_manager._dict_to_game_state(request.game_state)
+            # 从请求中重建前端游戏状态
+            from data_manager import data_manager
+            frontend_game_state = data_manager._dict_to_game_state(request.game_state)
 
-        # 【关键】合并前端和后端状态
-        # 前端状态：玩家位置、怪物列表、地图状态（前端计算）
-        backend_game_state.player.position = frontend_game_state.player.position
-        backend_game_state.monsters = frontend_game_state.monsters
-        backend_game_state.current_map = frontend_game_state.current_map
-        backend_game_state.turn_count = frontend_game_state.turn_count
+            # 【关键】合并前端和后端状态（仅同步允许前端主导的计算型字段）
+            backend_game_state.player.position = frontend_game_state.player.position
+            backend_game_state.monsters = frontend_game_state.monsters
+            backend_game_state.current_map = frontend_game_state.current_map
+            backend_game_state.turn_count = frontend_game_state.turn_count
 
-        # 后端状态：任务进度、经验值、等级、物品栏（后端生成）
-        # 这些数据保持后端的值，不被前端覆盖
+            # 修复地图角色索引，避免客户端提交导致的 character_id 不一致
+            for tile in backend_game_state.current_map.tiles.values():
+                tile.character_id = None
+            player_tile = backend_game_state.current_map.get_tile(*backend_game_state.player.position)
+            if player_tile:
+                player_tile.character_id = backend_game_state.player.id
+                player_tile.is_explored = True
+                player_tile.is_visible = True
+            for monster in backend_game_state.monsters:
+                monster_tile = backend_game_state.current_map.get_tile(*monster.position)
+                if monster_tile:
+                    monster_tile.character_id = monster.id
 
-        # 【新增】检查是否需要进度补偿（每次同步时检查）
-        from quest_progress_compensator import quest_progress_compensator
-        compensation_result = await quest_progress_compensator.check_and_compensate(backend_game_state)
-        if compensation_result["compensated"]:
-            logger.info(f"Progress compensated during sync: +{compensation_result['compensation_amount']:.1f}% ({compensation_result['reason']})")
+            # 后端状态：任务进度、经验值、等级、物品栏（后端生成）
+            # 这些数据保持后端的值，不被前端覆盖
 
-            # 【新增】如果补偿后任务完成，创建任务完成选择
-            if hasattr(backend_game_state, 'pending_quest_completion') and backend_game_state.pending_quest_completion:
-                completed_quest = backend_game_state.pending_quest_completion
-                logger.info(f"Quest completion detected after compensation: {completed_quest.title}")
+            # 【新增】检查是否需要进度补偿（每次同步时检查）
+            from quest_progress_compensator import quest_progress_compensator
+            compensation_result = await quest_progress_compensator.check_and_compensate(backend_game_state)
+            if compensation_result["compensated"]:
+                logger.info(f"Progress compensated during sync: +{compensation_result['compensation_amount']:.1f}% ({compensation_result['reason']})")
 
-                try:
-                    # 创建任务完成选择上下文
-                    from event_choice_system import event_choice_system
-                    choice_context = await event_choice_system.create_quest_completion_choice(
-                        backend_game_state, completed_quest
-                    )
+                # 【新增】如果补偿后任务完成，创建任务完成选择
+                if hasattr(backend_game_state, 'pending_quest_completion') and backend_game_state.pending_quest_completion:
+                    completed_quest = backend_game_state.pending_quest_completion
+                    logger.info(f"Quest completion detected after compensation: {completed_quest.title}")
 
-                    # 将选择上下文存储到游戏状态中
-                    backend_game_state.pending_choice_context = choice_context
-                    event_choice_system.active_contexts[choice_context.id] = choice_context
+                    try:
+                        # 创建任务完成选择上下文
+                        from event_choice_system import event_choice_system
+                        choice_context = await event_choice_system.create_quest_completion_choice(
+                            backend_game_state, completed_quest
+                        )
 
-                    # 清理任务完成标志
-                    backend_game_state.pending_quest_completion = None
+                        # 将选择上下文存储到游戏状态中
+                        backend_game_state.pending_choice_context = choice_context
+                        event_choice_system.active_contexts[choice_context.id] = choice_context
 
-                    logger.info(f"Created quest completion choice after compensation: {completed_quest.title}")
+                        # 清理任务完成标志
+                        backend_game_state.pending_quest_completion = None
 
-                except Exception as e:
-                    logger.error(f"Error creating quest completion choice after compensation: {e}")
-                    # 清理标志，避免重复处理
-                    backend_game_state.pending_quest_completion = None
+                        logger.info(f"Created quest completion choice after compensation: {completed_quest.title}")
 
-        # 更新内存中的游戏状态
-        game_engine.active_games[game_key] = backend_game_state
+                    except Exception as e:
+                        logger.error(f"Error creating quest completion choice after compensation: {e}")
+                        # 清理标志，避免重复处理
+                        backend_game_state.pending_quest_completion = None
+
+            # 更新内存中的游戏状态
+            game_engine.active_games[game_key] = backend_game_state
 
         # 可选：立即保存到文件
         # data_manager.save_game_state(backend_game_state)
@@ -1171,9 +1273,13 @@ async def process_combat_result(game_id: str, request: Request, response: Respon
 @app.post("/api/event-choice")
 async def process_event_choice(request: EventChoiceRequest, http_request: Request, response: Response):
     """处理事件选择"""
+    context_token = None
     try:
         # 记录接收到的请求数据
-        logger.info(f"Received event choice request: game_id={request.game_id}, context_id={request.context_id}, choice_id={request.choice_id}")
+        logger.info(
+            f"Received event choice request: game_id={request.game_id}, "
+            f"context_id={request.context_id}, choice_id={request.choice_id}"
+        )
 
         # 验证游戏ID
         game_id_validation = input_validator.validate_game_id(request.game_id)
@@ -1190,7 +1296,10 @@ async def process_event_choice(request: EventChoiceRequest, http_request: Reques
         # 验证选择ID
         choice_id_validation = input_validator.validate_choice_id(request.choice_id)
         if not choice_id_validation.is_valid:
-            logger.error(f"Choice ID validation failed for '{request.choice_id}': {choice_id_validation.error_message}")
+            logger.error(
+                f"Choice ID validation failed for '{request.choice_id}': "
+                f"{choice_id_validation.error_message}"
+            )
             raise HTTPException(status_code=400, detail=choice_id_validation.error_message)
 
         logger.info(f"Processing event choice: {request.choice_id} for context: {request.context_id}")
@@ -1198,6 +1307,12 @@ async def process_event_choice(request: EventChoiceRequest, http_request: Reques
         # 获取用户ID
         user_id = user_session_manager.get_or_create_user_id(http_request, response)
         game_key = (user_id, request.game_id)
+
+        from llm_context_manager import llm_context_manager
+
+        context_token = llm_context_manager.set_current_context_key(
+            _build_context_key(user_id, request.game_id)
+        )
 
         # 使用锁保护事件选择处理
         async with game_state_lock_manager.lock_game_state(user_id, request.game_id, "event_choice"):
@@ -1210,7 +1325,8 @@ async def process_event_choice(request: EventChoiceRequest, http_request: Reques
             result = await event_choice_system.process_choice(
                 game_state=game_state,
                 context_id=request.context_id,
-                choice_id=request.choice_id
+                choice_id=request.choice_id,
+                game_id=request.game_id,
             )
 
             if result.success:
@@ -1224,19 +1340,24 @@ async def process_event_choice(request: EventChoiceRequest, http_request: Reques
                     "success": True,
                     "message": result.message,
                     "events": result.events,
-                    "game_state": game_state.to_dict()
+                    "game_state": game_state.to_dict(),
                 }
-            else:
-                return {
-                    "success": False,
-                    "message": result.message
-                }
+
+            return {
+                "success": False,
+                "message": result.message,
+            }
 
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Failed to process event choice: {e}")
         raise HTTPException(status_code=500, detail=f"处理事件选择失败: {str(e)}")
+    finally:
+        if context_token is not None:
+            from llm_context_manager import llm_context_manager
+
+            llm_context_manager.reset_current_context_key(context_token)
 
 
 async def _process_post_choice_updates(game_state: GameState):
@@ -1390,7 +1511,8 @@ async def save_game(game_id: str, request: Request, response: Response):
                 from llm_context_manager import llm_context_manager
                 game_data["llm_context_logs"] = [
                     e.to_dict() for e in llm_context_manager.get_recent_context(
-                        max_entries=getattr(config.llm, "save_context_entries", 20)
+                        max_entries=getattr(config.llm, "save_context_entries", 20),
+                        context_key=_build_context_key(user_id, game_id),
                     )
                 ]
             except Exception as _e:
@@ -2138,21 +2260,30 @@ if config.game.debug_mode:
     # ==================== LLM 上下文日志接口 ====================
 
     @app.get("/api/debug/llm-context/statistics")
-    async def debug_get_llm_context_statistics():
+    async def debug_get_llm_context_statistics(request: Request, response: Response, game_id: Optional[str] = None):
         """调试：获取LLM上下文统计信息"""
         from llm_context_manager import llm_context_manager
+        user_id = user_session_manager.get_or_create_user_id(request, response)
+        context_key = _build_context_key(user_id, game_id) if game_id else None
         return {
             "success": True,
-            "statistics": llm_context_manager.get_statistics()
+            "context_key": context_key,
+            "statistics": llm_context_manager.get_statistics(context_key=context_key),
         }
 
     @app.get("/api/debug/llm-context/entries")
     async def debug_get_llm_context_entries(
+        request: Request,
+        response: Response,
         max_entries: int = 50,
-        entry_type: Optional[str] = None
+        entry_type: Optional[str] = None,
+        game_id: Optional[str] = None,
     ):
         """调试：获取LLM上下文条目列表"""
         from llm_context_manager import llm_context_manager, ContextEntryType
+
+        user_id = user_session_manager.get_or_create_user_id(request, response)
+        context_key = _build_context_key(user_id, game_id) if game_id else None
 
         # 筛选类型
         entry_types = None
@@ -2167,46 +2298,59 @@ if config.game.debug_mode:
 
         entries = llm_context_manager.get_recent_context(
             max_entries=max_entries,
-            entry_types=entry_types
+            entry_types=entry_types,
+            context_key=context_key,
         )
 
         return {
             "success": True,
+            "context_key": context_key,
             "total_entries": len(entries),
             "entries": [entry.to_dict() for entry in entries]
         }
 
     @app.get("/api/debug/llm-context/formatted")
     async def debug_get_llm_context_formatted(
+        request: Request,
+        response: Response,
         max_entries: int = 20,
-        include_metadata: bool = False
+        include_metadata: bool = False,
+        game_id: Optional[str] = None,
     ):
         """调试：获取格式化的LLM上下文字符串"""
         from llm_context_manager import llm_context_manager
 
+        user_id = user_session_manager.get_or_create_user_id(request, response)
+        context_key = _build_context_key(user_id, game_id) if game_id else None
+
         context_string = llm_context_manager.build_context_string(
             max_entries=max_entries,
-            include_metadata=include_metadata
+            include_metadata=include_metadata,
+            context_key=context_key,
         )
 
         return {
             "success": True,
+            "context_key": context_key,
             "context_string": context_string,
-            "statistics": llm_context_manager.get_statistics()
+            "statistics": llm_context_manager.get_statistics(context_key=context_key),
         }
 
     @app.post("/api/debug/llm-context/clear")
-    async def debug_clear_llm_context():
+    async def debug_clear_llm_context(request: Request, response: Response, game_id: Optional[str] = None):
         """调试：清空LLM上下文"""
         from llm_context_manager import llm_context_manager
 
-        old_stats = llm_context_manager.get_statistics()
-        llm_context_manager.clear_all()
+        user_id = user_session_manager.get_or_create_user_id(request, response)
+        context_key = _build_context_key(user_id, game_id) if game_id else None
+        old_stats = llm_context_manager.get_statistics(context_key=context_key)
+        llm_context_manager.clear_all(context_key=context_key)
 
         return {
             "success": True,
+            "context_key": context_key,
             "message": "LLM上下文已清空",
-            "cleared_entries": old_stats["total_entries"]
+            "cleared_entries": old_stats.get("total_entries", 0),
         }
 
     # ==================== 内容生成测试接口 ====================

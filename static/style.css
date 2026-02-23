@@ -1542,33 +1542,143 @@ body {
 .message-warning { color: #f39c12; }
 
 /* 物品栏 */
+.inventory-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.inventory-toolbar {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+}
+
+.inventory-select {
+    border: 1px solid rgba(94, 53, 177, 0.35);
+    background: rgba(255, 255, 255, 0.92);
+    border-radius: 8px;
+    padding: 8px;
+    font-size: 0.85rem;
+}
+
 .inventory-grid {
     display: grid;
     grid-template-columns: repeat(4, 1fr);
-    gap: 5px;
-    margin-top: 10px;
+    gap: 6px;
+    margin-top: 4px;
+    min-height: 124px;
 }
 
 .inventory-slot {
     aspect-ratio: 1;
-    background: rgba(0,0,0,0.1);
-    border-radius: 6px;
+    background: rgba(0,0,0,0.08);
+    border-radius: 8px;
     display: flex;
     align-items: center;
     justify-content: center;
     cursor: pointer;
     transition: all 0.2s ease;
     position: relative;
+    font-weight: 700;
 }
 
 .inventory-slot:hover {
-    background: rgba(94, 53, 177, 0.2);
-    transform: scale(1.05);
+    background: rgba(94, 53, 177, 0.18);
+    transform: scale(1.04);
 }
 
 .inventory-slot.has-item {
     background: rgba(94, 53, 177, 0.1);
     border: 2px solid #5e35b1;
+}
+
+.inventory-slot.selected {
+    border-color: #ef6c00;
+    box-shadow: 0 0 0 2px rgba(239, 108, 0, 0.35);
+}
+
+.inventory-slot.state-equipped::after {
+    content: '装';
+    position: absolute;
+    top: 2px;
+    right: 2px;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: #2e7d32;
+    color: #fff;
+    font-size: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.inventory-slot.state-locked {
+    opacity: 0.85;
+}
+
+.inventory-slot.state-cooldown {
+    filter: saturate(0.75);
+}
+
+.inventory-layout {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+}
+
+.equip-zone,
+.item-detail-zone {
+    background: rgba(255, 255, 255, 0.65);
+    border: 1px solid rgba(94, 53, 177, 0.2);
+    border-radius: 10px;
+    padding: 8px;
+}
+
+.equip-zone h4,
+.item-detail-zone h4 {
+    margin: 0 0 8px;
+    font-size: 0.92rem;
+    color: #4527a0;
+}
+
+.equip-grid {
+    display: grid;
+    gap: 6px;
+}
+
+.equip-slot {
+    border: 1px dashed rgba(94, 53, 177, 0.35);
+    background: rgba(255, 255, 255, 0.82);
+    border-radius: 8px;
+    padding: 8px;
+    font-size: 0.82rem;
+}
+
+.equip-slot.filled {
+    border-style: solid;
+    border-color: rgba(46, 125, 50, 0.5);
+    background: rgba(200, 230, 201, 0.45);
+}
+
+#inventory-detail {
+    min-height: 90px;
+    font-size: 0.82rem;
+    line-height: 1.45;
+    color: #37474f;
+    white-space: pre-wrap;
+}
+
+.inventory-detail-empty {
+    color: #78909c;
+}
+
+.item-actions {
+    margin-top: 8px;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
 }
 
 /* ========================================
@@ -1599,6 +1709,13 @@ body {
 
 /* 响应式设计 */
 @media (max-width: 768px) {
+    .inventory-layout {
+        grid-template-columns: 1fr;
+    }
+
+    .inventory-toolbar {
+        grid-template-columns: 1fr;
+    }
     .container {
         padding: 10px; /* 统一调整移动端内边距 */
     }

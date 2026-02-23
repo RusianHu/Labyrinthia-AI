@@ -17,31 +17,24 @@ Object.assign(LabyrinthiaGame.prototype, {
     },
     
     async performAction(action, parameters = {}) {
-        if (this.isLoading || !this.gameId) return;
+        if (this.isLoading || !this.gameId) return null;
 
-        // 祈祷前强制同步状态到后端，避免怪物"复活"问题
         if (action === 'rest' && this.localEngine) {
             await this.localEngine.syncToBackend();
         }
 
-        // 检查是否需要显示特定的LLM遮罩（特殊地形或事件触发时）
         const needsSpecificLLMOverlay = this.shouldShowLLMOverlay(action, parameters);
-
-        // 如果需要特定的LLM遮罩，先显示它，然后再设置loading
         if (needsSpecificLLMOverlay) {
             this.showLLMOverlay(action);
             this.isLoading = true;
-            // 禁用控制按钮但不显示通用的loading indicator
             const controlButtons = document.querySelectorAll('.control-btn, .dir-btn');
             controlButtons.forEach(btn => {
                 btn.disabled = true;
             });
         } else {
-            // 普通情况，使用标准的loading（会自动显示遮罩）
             this.setLoading(true);
         }
 
-        // 【修复】标志位：是否有待处理的选择上下文（用于避免 isVisible 竞态）
         let hasPendingChoiceContext = false;
 
         try {
@@ -56,7 +49,6 @@ Object.assign(LabyrinthiaGame.prototype, {
                 parameters: params
             };
 
-            // 记录调试信息
             if (this.debugMode) {
                 this.lastLLMRequest = {
                     timestamp: new Date().toISOString(),
@@ -76,7 +68,6 @@ Object.assign(LabyrinthiaGame.prototype, {
 
             const result = await response.json();
 
-            // 记录响应调试信息
             if (this.debugMode) {
                 this.lastLLMResponse = {
                     timestamp: new Date().toISOString(),
@@ -87,9 +78,8 @@ Object.assign(LabyrinthiaGame.prototype, {
                 };
                 this.updateDebugInfo();
             }
-            
+
             if (result.success) {
-                // 检查后端是否指示需要LLM遮罩（用于怪物攻击等情况）
                 const backendNeedsLLMOverlay = result.llm_interaction_required;
                 let showedBackendOverlay = false;
 
@@ -98,24 +88,20 @@ Object.assign(LabyrinthiaGame.prototype, {
                     showedBackendOverlay = true;
                 }
 
-                // 更新游戏状态
                 await this.refreshGameState();
 
-                // 【修复】检查 refreshGameState 是否已触发选择对话框（旁路竞态保护）
                 if (!hasPendingChoiceContext && this.gameState?.pending_choice_context && window.eventChoiceManager) {
                     console.log('[GameActions] Found pending_choice_context after refreshGameState');
                     this.isLoading = true;
                     hasPendingChoiceContext = true;
                 }
 
-                // 添加消息
                 if (result.message) {
                     this.addMessage(result.message, 'action');
                 }
 
                 if (result.events) {
                     result.events.forEach(event => {
-                        // 战斗伤害消息使用特殊样式
                         const messageType = event.includes('造成') || event.includes('攻击') ? 'combat' : 'system';
                         this.addMessage(event, messageType);
                     });
@@ -125,69 +111,57 @@ Object.assign(LabyrinthiaGame.prototype, {
                     this.addMessage(result.narrative, 'narrative');
                 }
 
-                // 【修复】检查是否有待处理的选择上下文，立即显示
                 if (result.pending_choice_context && window.eventChoiceManager) {
                     console.log('[GameActions] Found pending_choice_context in action result, showing dialog immediately');
-                    // 【修复】设置加载状态阻止输入，直到玩家完成选择
                     this.isLoading = true;
-                    hasPendingChoiceContext = true; // 【修复】设置标志位，避免 isVisible 竞态
+                    hasPendingChoiceContext = true;
                     window.eventChoiceManager.showChoiceDialog(result.pending_choice_context);
-                } else {
-                    // 回合制游戏：操作完成后检查是否有待处理的选择
-                    // 只在没有直接返回选择上下文时才检查
-                    if (window.eventChoiceManager) {
-                        window.eventChoiceManager.checkAfterPlayerAction();
-                    }
+                } else if (window.eventChoiceManager) {
+                    window.eventChoiceManager.checkAfterPlayerAction();
                 }
 
-                // 检查游戏是否结束
                 if (result.game_over) {
                     this.handleGameOver(result.game_over_reason);
                 }
 
-                // 如果显示了后端指示的LLM遮罩，现在隐藏它
                 if (showedBackendOverlay) {
                     this.hideLLMOverlay();
                 }
             } else {
                 this.handleActionErrorResult(result, action, params);
             }
+
+            return result;
         } catch (error) {
             console.error('Action error:', error);
             this.addMessage('网络错误，请重试', 'error');
+            return null;
         } finally {
-            // 【修复】优先使用标志位判断，避免 isVisible() 与动画延迟的竞态
             if (hasPendingChoiceContext) {
                 console.log('[GameActions] Keeping input locked - pending choice context exists');
-                // 隐藏遮罩但保持锁定
                 if (needsSpecificLLMOverlay) {
                     this.hideLLMOverlay();
                 }
-                return; // 不解锁，由 EventChoiceManager 负责解锁
+                return;
             }
 
-            // 【修复】后备检查：使用 isVisible() 作为兜底
             const hasPendingDialog = window.eventChoiceManager?.isVisible();
             if (hasPendingDialog) {
                 console.log('[GameActions] Keeping input locked - choice dialog is visible');
-                // 隐藏遮罩但保持锁定
                 if (needsSpecificLLMOverlay) {
                     this.hideLLMOverlay();
                 }
-                return; // 不解锁，由 EventChoiceManager 负责解锁
+                return;
             }
 
-            // 隐藏特定的LLM遮罩
             if (needsSpecificLLMOverlay) {
                 this.hideLLMOverlay();
-                // 重新启用控制按钮
                 const controlButtons = document.querySelectorAll('.control-btn, .dir-btn');
                 controlButtons.forEach(btn => {
                     btn.disabled = false;
                 });
                 this.isLoading = false;
             } else {
-                // 普通情况，使用标准的setLoading(false)
                 this.setLoading(false);
             }
         }
@@ -212,11 +186,17 @@ Object.assign(LabyrinthiaGame.prototype, {
     },
 
     async dropItem(itemId) {
-        // 丢弃物品前强制同步状态到后端，避免状态不一致
         if (this.localEngine) {
             await this.localEngine.syncToBackend();
         }
-        await this.performAction('drop_item', { item_id: itemId });
+        const result = await this.performAction('drop_item', { item_id: itemId });
+
+        if (result && result.success && result.undo_token) {
+            const confirmed = window.confirm('已丢弃该物品，可在短时间内撤销。是否立即撤销？');
+            if (confirmed) {
+                await this.performAction('undo_drop_item', { undo_token: result.undo_token });
+            }
+        }
     },
 
     handleActionErrorResult(result, action, params = {}) {

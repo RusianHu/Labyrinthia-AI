@@ -719,6 +719,7 @@ class EventChoiceContext:
 class GameState:
     """游戏状态"""
     id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    save_version: int = 2
     player: Character = field(default_factory=Character)
     current_map: GameMap = field(default_factory=GameMap)
     monsters: List[Monster] = field(default_factory=list)
@@ -736,10 +737,11 @@ class GameState:
     pending_map_transition: Optional[str] = None  # 待切换的地图类型 ("stairs_down", "stairs_up", etc.)
     # 新增：事件选择系统
     pending_choice_context: Optional[EventChoiceContext] = None  # 待处理的选择上下文
-    
+
     def to_dict(self) -> Dict[str, Any]:
         return {
             "id": self.id,
+            "save_version": self.save_version,
             "player": self.player.to_dict(),
             "current_map": self.current_map.to_dict(),
             "monsters": [monster.to_dict() for monster in self.monsters],

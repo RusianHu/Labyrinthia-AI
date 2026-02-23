@@ -263,12 +263,52 @@
                 </div>
 
                 <!-- 物品栏 -->
-                <div class="panel elevation-2">
+                <div class="panel elevation-2 inventory-panel">
                     <h3>
                         <i class="material-icons">inventory</i>
                         物品栏
                     </h3>
+
+                    <div class="inventory-toolbar">
+                        <select id="inventory-filter" class="inventory-select">
+                            <option value="all">全部类型</option>
+                            <option value="weapon">武器</option>
+                            <option value="armor">防具</option>
+                            <option value="consumable">消耗品</option>
+                            <option value="misc">杂项</option>
+                            <option value="equippable">仅可装备</option>
+                            <option value="cooldown">冷却中</option>
+                            <option value="quest_locked">任务锁定</option>
+                        </select>
+                        <select id="inventory-sort" class="inventory-select">
+                            <option value="recent">最近获得</option>
+                            <option value="rarity">按稀有度</option>
+                            <option value="value">按价值</option>
+                            <option value="name">按名称</option>
+                        </select>
+                    </div>
+
                     <div id="inventory-grid" class="inventory-grid"></div>
+
+                    <div class="inventory-layout">
+                        <div class="equip-zone">
+                            <h4>装备区</h4>
+                            <div class="equip-grid" id="equip-grid">
+                                <div class="equip-slot" data-slot="weapon">武器: 空</div>
+                                <div class="equip-slot" data-slot="armor">防具: 空</div>
+                                <div class="equip-slot" data-slot="accessory_1">饰品1: 空</div>
+                                <div class="equip-slot" data-slot="accessory_2">饰品2: 空</div>
+                            </div>
+                        </div>
+                        <div class="item-detail-zone">
+                            <h4>详情区</h4>
+                            <div id="inventory-detail" class="inventory-detail-empty">请选择一个物品查看详情</div>
+                            <div class="item-actions">
+                                <button id="inventory-action-use" class="btn btn-primary" disabled>使用/装备</button>
+                                <button id="inventory-action-drop" class="btn btn-warning" disabled>丢弃</button>
+                            </div>
+                        </div>
+                    </div>
                 </div>
 
                 <!-- 物品使用确认对话框 -->
@@ -529,14 +569,14 @@
     <script src="/static/EffectsManager.js?v=4"></script>
     <script src="/static/EnhancedEffectsManager.js?v=2"></script>
     <script src="/static/MapVisualManager.js?v=1"></script>
-    <script src="/static/UIManager.js?v=15"></script>
+    <script src="/static/UIManager.js?v=16"></script>
     <script src="/static/MapInteraction.js?v=5"></script>
     <script src="/static/MapZoomManager.js?v=7"></script>
     <script src="/static/CameraFollowManager.js?v=1"></script>
     <script src="/static/GameActions.js?v=5"></script>
     <script src="/static/SaveManager.js?v=6"></script>
     <script src="/static/SaveImportExport.js?v=4"></script>
-    <script src="/static/EventHandler.js?v=4"></script>
+    <script src="/static/EventHandler.js?v=5"></script>
     <script src="/static/EventChoiceManager.js?v=6"></script>
     <script src="/static/DirectionButtonManager.js?v=1"></script>
     <script src="/static/js/dungeon_border.js"></script>

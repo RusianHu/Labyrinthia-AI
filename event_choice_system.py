@@ -299,7 +299,13 @@ class EventChoiceSystem:
         logger.warning("Using fallback default quest completion choice")
         return self._create_default_quest_completion_choice(game_state, completed_quest)
 
-    async def process_choice(self, game_state: GameState, context_id: str, choice_id: str) -> ChoiceResult:
+    async def process_choice(
+        self,
+        game_state: GameState,
+        context_id: str,
+        choice_id: str,
+        game_id: Optional[str] = None,
+    ) -> ChoiceResult:
         """处理玩家的选择"""
         # 首先检查游戏状态中的待处理上下文
         context = None
@@ -338,10 +344,15 @@ class EventChoiceSystem:
         })
 
         # 添加到统一上下文管理器
+        context_key = llm_context_manager.get_current_context_key()
+        if game_id and context_key in {"", "global"}:
+            context_key = game_id
+
         llm_context_manager.add_choice(
             choice_type=context.event_type,
             choice_text=selected_choice.text,
-            result=f"处理中..."  # 结果将在处理后更新
+            result="处理中...",  # 结果将在处理后更新
+            context_key=context_key,
         )
 
         # 根据事件类型处理选择

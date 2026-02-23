@@ -41,8 +41,22 @@ Object.assign(LabyrinthiaGame.prototype, {
                 e.target.style.display = 'none';
             }
         });
+        // 物品栏工具条事件（避免重复绑定）
+        if (!this._inventoryEventBound) {
+            const filterSelect = document.getElementById('inventory-filter');
+            const sortSelect = document.getElementById('inventory-sort');
+
+            if (filterSelect) {
+                filterSelect.addEventListener('change', () => this.updateInventory());
+            }
+            if (sortSelect) {
+                sortSelect.addEventListener('change', () => this.updateInventory());
+            }
+
+            this._inventoryEventBound = true;
+        }
     },
-    
+
     handleKeyPress(e) {
         // 【修复】如果游戏正在加载或处理中，忽略所有键盘输入
         if (this.isLoading) {
@@ -52,23 +66,23 @@ Object.assign(LabyrinthiaGame.prototype, {
         }
 
         const keyMap = {
-            'ArrowUp': 'north',
-            'ArrowDown': 'south',
-            'ArrowLeft': 'west',
-            'ArrowRight': 'east',
-            'w': 'north',
-            's': 'south',
-            'a': 'west',
-            'd': 'east',
-            'q': 'northwest',
-            'e': 'northeast',
-            'z': 'southwest',
-            'c': 'southeast',
-            'r': 'rest',
+            arrowup: 'north',
+            arrowdown: 'south',
+            arrowleft: 'west',
+            arrowright: 'east',
+            w: 'north',
+            s: 'south',
+            a: 'west',
+            d: 'east',
+            q: 'northwest',
+            e: 'northeast',
+            z: 'southwest',
+            c: 'southeast',
+            r: 'rest',
             ' ': 'rest'
         };
 
-        const action = keyMap[e.key.toLowerCase()];
+        const action = keyMap[(e.key || '').toLowerCase()];
         if (action) {
             e.preventDefault();
             if (action === 'rest') {

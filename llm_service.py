@@ -214,6 +214,8 @@ class LLMService:
         async with async_task_manager.llm_semaphore:
             loop = asyncio.get_event_loop()
 
+            current_context_key = llm_context_manager.get_current_context_key()
+
             def _sync_generate():
                 try:
                     # 使用原始提示词
@@ -225,7 +227,8 @@ class LLMService:
                             context_block = llm_context_manager.build_context_string(
                                 max_entries=getattr(config.llm, "context_max_entries", 12),
                                 max_tokens=getattr(config.llm, "max_history_tokens", 10240),
-                                include_metadata=getattr(config.llm, "context_include_metadata", False)
+                                include_metadata=getattr(config.llm, "context_include_metadata", False),
+                                context_key=current_context_key,
                             )
                             if context_block:
                                 processed_prompt = f"{context_block}\n\n{processed_prompt}"
@@ -338,6 +341,8 @@ class LLMService:
         async with async_task_manager.llm_semaphore:
             loop = asyncio.get_event_loop()
 
+            current_context_key = llm_context_manager.get_current_context_key()
+
             def _sync_generate_json():
                 try:
                     # 使用原始提示词
@@ -350,7 +355,8 @@ class LLMService:
                             context_block = llm_context_manager.build_context_string(
                                 max_entries=getattr(config.llm, "context_max_entries", 12),
                                 max_tokens=getattr(config.llm, "max_history_tokens", 10240),
-                                include_metadata=getattr(config.llm, "context_include_metadata", False)
+                                include_metadata=getattr(config.llm, "context_include_metadata", False),
+                                context_key=current_context_key,
                             )
                             if context_block:
                                 processed_prompt = f"{context_block}\n\n{processed_prompt}"
