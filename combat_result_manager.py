@@ -111,33 +111,26 @@ class CombatResultManager:
         safe_experience_gained = self._safe_int(raw_experience_gained, default=0, min_value=0)
         combat_result.experience_gained = safe_experience_gained
 
-        # 应用经验值并检查升级（使用GameStateModifier）
+        # 应用经验值并检查升级（统一写入口）
         old_level = game_state.player.stats.level
 
-        # 构建玩家更新数据
-        player_updates = {
-            "stats": {
-                "experience": game_state.player.stats.experience + safe_experience_gained
-            }
-        }
-
-        # 应用经验值更新
-        modification_result = game_state_modifier.apply_player_updates(
+        progression_result = game_state_modifier.apply_player_progression_updates(
             game_state,
-            player_updates,
-            source=f"combat:{monster.name}"
+            experience_gained=safe_experience_gained,
+            source=f"combat:{monster.name}",
         )
 
-        if not modification_result.success:
+        if not progression_result.get("success", False):
             logger.error(
-                f"Failed to apply combat exp updates for monster {monster.name}: {modification_result.errors}"
+                "Failed to apply combat progression updates for monster %s: %s",
+                monster.name,
+                progression_result.get("errors", []),
             )
             # 写回失败时，确保返回值与玩家状态一致，避免“显示获得经验但实际未入账”
             combat_result.experience_gained = 0
             combat_result.level_up = False
         else:
-            # 检查升级
-            combat_result.level_up = self._check_level_up(game_state.player)
+            combat_result.level_up = bool(progression_result.get("level_up", False))
         
         # 生成战利品
         combat_result.loot_items = await self._generate_loot(game_state, monster)
@@ -214,31 +207,9 @@ class CombatResultManager:
         return base_exp
     
     def _check_level_up(self, player: Character) -> bool:
-        """检查并处理升级（使用GameStateModifier）"""
+        """已废弃：升级统一走 GameStateModifier.apply_player_progression_updates。"""
         exp_needed = player.stats.level * 1000
-
-        if player.stats.experience >= exp_needed:
-            new_level = player.stats.level + 1
-            new_experience = player.stats.experience - exp_needed
-            new_max_hp = player.stats.max_hp + 10
-            new_max_mp = player.stats.max_mp + 5
-            new_ac = player.stats.ac + 1
-
-            # 构建升级更新数据
-            # 注意：这里需要从game_state获取，但我们只有player引用
-            # 为了保持一致性，我们直接修改（因为这是内部方法）
-            player.stats.level = new_level
-            player.stats.experience = new_experience
-            player.stats.max_hp = new_max_hp
-            player.stats.hp = new_max_hp  # 升级时完全恢复HP
-            player.stats.max_mp = new_max_mp
-            player.stats.mp = new_max_mp  # 升级时完全恢复MP
-            player.stats.ac = new_ac
-
-            logger.info(f"Player leveled up to {player.stats.level}")
-            return True
-
-        return False
+        return player.stats.experience >= exp_needed
     
     async def _generate_loot(self, game_state: GameState, monster: Monster) -> List[Item]:
         """生成战利品"""

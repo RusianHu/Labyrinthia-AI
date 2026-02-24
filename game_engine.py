@@ -15,7 +15,7 @@ from datetime import datetime, timedelta
 from config import config
 from data_models import (
     GameState, Character, Monster, GameMap, Quest, Item, MapTile,
-    TerrainType, CharacterClass, Stats, Ability
+    TerrainType, CharacterClass, Stats, Ability, EventChoiceContext, EventChoice
 )
 from content_generator import content_generator
 from llm_service import llm_service
@@ -31,6 +31,7 @@ from prompt_manager import prompt_manager
 from event_choice_system import event_choice_system, ChoiceEventType
 from async_task_manager import async_task_manager, TaskType, async_performance_monitor
 from game_state_lock_manager import game_state_lock_manager
+from game_state_modifier import game_state_modifier
 
 
 logger = logging.getLogger(__name__)
@@ -434,10 +435,31 @@ class GameEngine:
         metrics["p50_ms"] = self._percentile(samples, 0.5)
         metrics["p95_ms"] = self._percentile(samples, 0.95)
 
+    def _get_player_defense_runtime(self, player: Character) -> Dict[str, int]:
+        runtime = getattr(player, "combat_runtime", None)
+        if not isinstance(runtime, dict):
+            runtime = {
+                "shield": int(getattr(player.stats, "shield", 0) or 0),
+                "temporary_hp": int(getattr(player.stats, "temporary_hp", 0) or 0),
+            }
+            player.combat_runtime = runtime
+
+        runtime.setdefault("shield", int(getattr(player.stats, "shield", 0) or 0))
+        runtime.setdefault("temporary_hp", int(getattr(player.stats, "temporary_hp", 0) or 0))
+        runtime["shield"] = max(0, int(runtime.get("shield", 0) or 0))
+        runtime["temporary_hp"] = max(0, int(runtime.get("temporary_hp", 0) or 0))
+        return runtime
+
+    def _sync_player_defense_runtime(self, player: Character):
+        runtime = self._get_player_defense_runtime(player)
+        player.stats.shield = int(runtime.get("shield", 0) or 0)
+        player.stats.temporary_hp = int(runtime.get("temporary_hp", 0) or 0)
+
     def _rebuild_combat_snapshot(self, game_state: GameState):
         self._ensure_combat_defaults(game_state)
         player = game_state.player
         stats = player.stats
+        self._sync_player_defense_runtime(player)
 
         total_set_counts: Dict[str, int] = {}
         passive_effects: List[Dict[str, Any]] = []
@@ -542,8 +564,8 @@ class GameEngine:
                     },
                     "ac_components": snapshot_ac_components,
                     "ac_policy": "hit_threshold_only",
-                    "shield": int(getattr(stats, "shield", 0) or 0),
-                    "temporary_hp": int(getattr(stats, "temporary_hp", 0) or 0),
+                    "shield": int(self._get_player_defense_runtime(player).get("shield", 0) or 0),
+                    "temporary_hp": int(self._get_player_defense_runtime(player).get("temporary_hp", 0) or 0),
                     "resistances": effective_resistances,
                     "vulnerabilities": effective_vulnerabilities,
                     "immunities": list(getattr(player, "immunities", []) or []),
@@ -577,8 +599,8 @@ class GameEngine:
                     },
                 },
                 "defense_layers": {
-                    "shield": int(getattr(stats, "shield", 0) or 0),
-                    "temporary_hp": int(getattr(stats, "temporary_hp", 0) or 0),
+                    "shield": int(self._get_player_defense_runtime(player).get("shield", 0) or 0),
+                    "temporary_hp": int(self._get_player_defense_runtime(player).get("temporary_hp", 0) or 0),
                     "order": list(game_state.combat_rules.get("damage_order", ["hit", "shield", "temporary_hp", "resistance", "vulnerability", "hp"])),
                     "true_damage_enabled": True,
                 },
@@ -2059,6 +2081,78 @@ class GameEngine:
             action_trace_id=action_trace_id,
         )
 
+    def _should_open_item_choice_context(self, llm_response: Dict[str, Any], item: Item) -> bool:
+        effect_scope = str((llm_response or {}).get("effect_scope", "") or "").strip().lower()
+        if effect_scope == ChoiceEventType.ITEM_USE.value or effect_scope == "trigger":
+            return True
+
+        effects = (llm_response or {}).get("effects", {})
+        if not isinstance(effects, dict):
+            effects = {}
+        special_effects = effects.get("special_effects", [])
+        if isinstance(special_effects, list):
+            for entry in special_effects:
+                text = str(entry.get("code") if isinstance(entry, dict) else entry or "").strip().lower()
+                if not text:
+                    continue
+                if any(keyword in text for keyword in ("choice", "trigger", "event", "ritual", "curse", "summon")):
+                    return True
+
+        if bool(getattr(item, "requires_use_confirmation", False)):
+            return True
+
+        return False
+
+    def _create_item_use_choice_context(
+        self,
+        game_state: GameState,
+        item: Item,
+        llm_response: Dict[str, Any],
+    ) -> EventChoiceContext:
+        outcomes = getattr(item, "expected_outcomes", []) or []
+        if isinstance(outcomes, list) and outcomes:
+            outcome_text = "；".join(str(v) for v in outcomes[:3])
+        else:
+            outcome_text = "结果仍有不确定性"
+
+        trigger_hint = str(getattr(item, "trigger_hint", "") or "触发条件未完全明朗")
+        risk_hint = str(getattr(item, "risk_hint", "") or "风险未知")
+
+        context = EventChoiceContext(
+            event_type=ChoiceEventType.ITEM_USE.value,
+            title=f"{item.name} 的后续反应",
+            description=(
+                f"{trigger_hint}\n"
+                f"风险评估: {risk_hint}\n"
+                f"可能结果: {outcome_text}"
+            ),
+            context_data={
+                "item_id": item.id,
+                "item_name": item.name,
+                "effect_scope": str((llm_response or {}).get("effect_scope", "active_use") or "active_use"),
+                "risk_hint": risk_hint,
+                "trigger_hint": trigger_hint,
+            },
+        )
+
+        context.choices = [
+            EventChoice(
+                text="继续观察异动",
+                description="接受当前变化，并让异动继续发展",
+                consequences="你选择顺势而为，观察后续变化。",
+                requirements={},
+                is_available=True,
+            ),
+            EventChoice(
+                text="谨慎稳定状态",
+                description="采取保守策略，优先稳住局面",
+                consequences="你压制了进一步的波动，局势暂时稳定。",
+                requirements={},
+                is_available=True,
+            ),
+        ]
+        return context
+
     async def _handle_use_item(self, game_state: GameState, parameters: Dict[str, Any]) -> Dict[str, Any]:
         """处理使用物品行动"""
         item_id = parameters.get("item_id", "")
@@ -2151,6 +2245,36 @@ class GameEngine:
                     action_trace_id=action_trace_id,
                 )
 
+            # 使用后回写情报字段，形成可持续的“鉴定”闭环
+            if isinstance(llm_response, dict):
+                raw_hint_level = str(llm_response.get("hint_level", getattr(item, "hint_level", "vague")) or "vague").strip().lower()
+                item.hint_level = raw_hint_level if raw_hint_level in {"none", "vague", "clear"} else "vague"
+
+                trigger_hint = str(llm_response.get("trigger_hint", "") or "").strip()
+                if trigger_hint:
+                    item.trigger_hint = trigger_hint
+
+                risk_hint = str(llm_response.get("risk_hint", "") or "").strip()
+                if risk_hint:
+                    item.risk_hint = risk_hint
+
+                outcomes_raw = llm_response.get("expected_outcomes", None)
+                if isinstance(outcomes_raw, list):
+                    normalized_outcomes = [str(v).strip() for v in outcomes_raw if str(v).strip()]
+                    if normalized_outcomes:
+                        item.expected_outcomes = normalized_outcomes[:6]
+                elif outcomes_raw:
+                    single_outcome = str(outcomes_raw).strip()
+                    if single_outcome:
+                        item.expected_outcomes = [single_outcome]
+
+                if "requires_use_confirmation" in llm_response:
+                    item.requires_use_confirmation = bool(llm_response.get("requires_use_confirmation", False))
+
+                consumption_hint = str(llm_response.get("consumption_hint", "") or "").strip()
+                if consumption_hint:
+                    item.consumption_hint = consumption_hint
+
             # 消耗充能与设置冷却（仅在效果成功时）
             if getattr(item, "max_charges", 0) > 0:
                 item.charges = max(0, int(item.charges) - 1)
@@ -2160,6 +2284,11 @@ class GameEngine:
             # 移除消耗的物品（仅成功路径）
             if effect_result.item_consumed and item in game_state.player.inventory:
                 game_state.player.inventory.remove(item)
+
+            if self._should_open_item_choice_context(llm_response, item):
+                choice_context = self._create_item_use_choice_context(game_state, item, llm_response)
+                game_state.pending_choice_context = choice_context
+                event_choice_system.active_contexts[choice_context.id] = choice_context
 
             return self._make_action_result(
                 True,
@@ -2173,6 +2302,11 @@ class GameEngine:
                     "charges": {"current": getattr(item, "charges", 0), "max": getattr(item, "max_charges", 0)},
                     "cooldown": getattr(item, "current_cooldown", 0),
                     "consumed": bool(effect_result.item_consumed),
+                    "hint_level": str(getattr(item, "hint_level", "vague") or "vague"),
+                    "trigger_hint": str(getattr(item, "trigger_hint", "") or ""),
+                    "risk_hint": str(getattr(item, "risk_hint", "") or ""),
+                    "consumption_hint": str(getattr(item, "consumption_hint", "") or ""),
+                    "expected_outcomes": getattr(item, "expected_outcomes", []) or [],
                 },
                 action_trace_id=action_trace_id,
             )
@@ -2362,8 +2496,21 @@ class GameEngine:
         if game_state.player.stats.mp < mp_cost:
             return {"success": False, "message": "法力值不足"}
 
-        # 消耗法力值
-        game_state.player.stats.mp -= mp_cost
+        # 统一写入口：消耗法力值
+        resource_result = game_state_modifier.apply_player_resource_delta(
+            game_state,
+            hp_delta=0,
+            mp_delta=-int(mp_cost),
+            source=f"cast_spell:{spell.name}",
+        )
+        if not resource_result.success:
+            return self._make_action_result(
+                False,
+                "施法资源更新失败",
+                error_code="SPELL_RESOURCE_UPDATE_FAILED",
+                retryable=True,
+                reason="spell_resource_update_failed",
+            )
 
         events = [f"施放了 {spell.name}"]
 
@@ -2525,8 +2672,20 @@ class GameEngine:
         hp_restored = min(player.stats.max_hp - player.stats.hp, player.stats.max_hp // 4)
         mp_restored = min(player.stats.max_mp - player.stats.mp, player.stats.max_mp // 2)
 
-        player.stats.hp += hp_restored
-        player.stats.mp += mp_restored
+        rest_result = game_state_modifier.apply_player_resource_delta(
+            game_state,
+            hp_delta=int(hp_restored),
+            mp_delta=int(mp_restored),
+            source="rest",
+        )
+        if not rest_result.success:
+            return self._make_action_result(
+                False,
+                "休息恢复失败",
+                error_code="REST_RESOURCE_UPDATE_FAILED",
+                retryable=True,
+                reason="rest_resource_update_failed",
+            )
 
         events = []
         if hp_restored > 0:
@@ -3473,6 +3632,12 @@ class GameEngine:
                         mitigation_policy=mitigation_rules,
                     )
                 finally:
+                    # 同步 combat_runtime（新结构）与 legacy stats 字段
+                    player_runtime = self._get_player_defense_runtime(game_state.player)
+                    player_runtime["shield"] = max(0, int(getattr(game_state.player.stats, "shield", 0) or 0))
+                    player_runtime["temporary_hp"] = max(0, int(getattr(game_state.player.stats, "temporary_hp", 0) or 0))
+                    self._sync_player_defense_runtime(game_state.player)
+
                     game_state.player.resistances = original_resistances
                     game_state.player.vulnerabilities = original_vulnerabilities
                     game_state.player.stats.ac_components = original_ac_components

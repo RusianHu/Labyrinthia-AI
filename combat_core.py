@@ -106,6 +106,26 @@ class CombatCoreEvaluator:
         self.resolver = resolver or roll_resolver
         self._rng = random.Random(rng_seed)
 
+    def _get_defense_runtime(self, entity: Union[Character, Monster]) -> Dict[str, int]:
+        runtime = getattr(entity, "combat_runtime", None)
+        if not isinstance(runtime, dict):
+            runtime = {
+                "shield": int(getattr(entity.stats, "shield", 0) or 0),
+                "temporary_hp": int(getattr(entity.stats, "temporary_hp", 0) or 0),
+            }
+            setattr(entity, "combat_runtime", runtime)
+
+        runtime.setdefault("shield", int(getattr(entity.stats, "shield", 0) or 0))
+        runtime.setdefault("temporary_hp", int(getattr(entity.stats, "temporary_hp", 0) or 0))
+        runtime["shield"] = max(0, int(runtime.get("shield", 0) or 0))
+        runtime["temporary_hp"] = max(0, int(runtime.get("temporary_hp", 0) or 0))
+        return runtime
+
+    def _sync_legacy_defense_fields(self, entity: Union[Character, Monster]):
+        runtime = self._get_defense_runtime(entity)
+        entity.stats.shield = int(runtime.get("shield", 0) or 0)
+        entity.stats.temporary_hp = int(runtime.get("temporary_hp", 0) or 0)
+
     def evaluate_attack(
         self,
         attacker: Union[Character, Monster],
@@ -230,10 +250,7 @@ class CombatCoreEvaluator:
         death = target_hp_after <= 0
 
         defender.stats.hp = target_hp_after
-        if hasattr(defender.stats, "shield"):
-            defender.stats.shield = int(getattr(defender.stats, "shield", 0) or 0)
-        if hasattr(defender.stats, "temporary_hp"):
-            defender.stats.temporary_hp = int(getattr(defender.stats, "temporary_hp", 0) or 0)
+        self._sync_legacy_defense_fields(defender)
 
         breakdown.extend(
             {
@@ -350,7 +367,8 @@ class CombatCoreEvaluator:
         penetration = dict(damage_packet.penetration or {})
         policy = mitigation_policy if isinstance(mitigation_policy, dict) else {}
 
-        shield_val = max(0, int(getattr(defender.stats, "shield", 0) or 0))
+        runtime = self._get_defense_runtime(defender)
+        shield_val = max(0, int(runtime.get("shield", 0) or 0))
         allow_shield_pen = bool(policy.get("allow_shield_penetration", True))
         shield_penetration = max(
             0.0,
@@ -361,6 +379,7 @@ class CombatCoreEvaluator:
         if shield_penetration > 0.0 and shield_val > 0:
             reduced = min(shield_val, int(shield_val * min(1.0, shield_penetration)))
             shield_val = max(0, shield_val - reduced)
+            runtime["shield"] = shield_val
             defender.stats.shield = shield_val
             stages.append(
                 MitigationStage(
@@ -376,7 +395,8 @@ class CombatCoreEvaluator:
         if shield_absorbed > 0:
             before = remaining
             remaining -= shield_absorbed
-            defender.stats.shield = shield_val - shield_absorbed
+            runtime["shield"] = shield_val - shield_absorbed
+            defender.stats.shield = runtime["shield"]
             stages.append(
                 MitigationStage(
                     stage="shield",
@@ -387,7 +407,7 @@ class CombatCoreEvaluator:
                 )
             )
 
-        temp_hp_val = max(0, int(getattr(defender.stats, "temporary_hp", 0) or 0))
+        temp_hp_val = max(0, int(runtime.get("temporary_hp", 0) or 0))
         allow_temp_hp_pen = bool(policy.get("allow_temporary_hp_penetration", True))
         temp_hp_penetration = max(
             0.0,
@@ -398,6 +418,7 @@ class CombatCoreEvaluator:
         if temp_hp_penetration > 0.0 and temp_hp_val > 0:
             reduced = min(temp_hp_val, int(temp_hp_val * min(1.0, temp_hp_penetration)))
             temp_hp_val = max(0, temp_hp_val - reduced)
+            runtime["temporary_hp"] = temp_hp_val
             defender.stats.temporary_hp = temp_hp_val
             stages.append(
                 MitigationStage(
@@ -413,7 +434,8 @@ class CombatCoreEvaluator:
         if temporary_hp_absorbed > 0:
             before = remaining
             remaining -= temporary_hp_absorbed
-            defender.stats.temporary_hp = temp_hp_val - temporary_hp_absorbed
+            runtime["temporary_hp"] = temp_hp_val - temporary_hp_absorbed
+            defender.stats.temporary_hp = runtime["temporary_hp"]
             stages.append(
                 MitigationStage(
                     stage="temporary_hp",

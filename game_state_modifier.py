@@ -224,6 +224,20 @@ class GameStateModifier:
                 changes = {}
 
                 for stat_name, value in stats_updates.items():
+                    if stat_name in {"shield", "temporary_hp"}:
+                        runtime = self._get_combat_runtime(player)
+                        old_value = int(runtime.get(stat_name, 0) or 0)
+                        validated_value = self._validate_stat_value(stat_name, value, player.stats)
+                        runtime[stat_name] = validated_value
+                        # 兼容镜像到旧字段
+                        setattr(player.stats, stat_name, validated_value)
+                        changes[stat_name] = {
+                            "old": old_value,
+                            "new": validated_value
+                        }
+                        logger.debug(f"Updated player combat_runtime {stat_name}: {old_value} -> {validated_value}")
+                        continue
+
                     if hasattr(player.stats, stat_name):
                         old_value = getattr(player.stats, stat_name)
 
@@ -304,7 +318,9 @@ class GameStateModifier:
                 error_message=str(e)
             )
             result.add_record(error_record)
-        
+
+        # 同步 combat_runtime 与 legacy stats 字段，确保旧逻辑兼容
+        self._sync_legacy_defense_fields(player)
         return result
 
     def apply_map_updates(
@@ -591,6 +607,110 @@ class GameStateModifier:
 
         return result
 
+    # ==================== 玩家状态统一写入口 ====================
+
+    def apply_player_progression_updates(
+        self,
+        game_state: GameState,
+        experience_gained: int = 0,
+        source: str = "unknown"
+    ) -> Dict[str, Any]:
+        """统一处理经验与升级写入入口"""
+        safe_gain = max(0, int(experience_gained or 0))
+        player = game_state.player
+        before_level = int(player.stats.level)
+
+        updates = {
+            "stats": {
+                "experience": int(player.stats.experience) + safe_gain
+            }
+        }
+        apply_result = self.apply_player_updates(game_state, updates, source=source)
+        if not apply_result.success:
+            return {
+                "success": False,
+                "errors": apply_result.errors,
+                "level_up": False,
+                "level_up_count": 0,
+            }
+
+        level_up_count = 0
+        while int(player.stats.experience) >= int(player.stats.level) * 1000:
+            current_level = int(player.stats.level)
+            if current_level >= 100:
+                # 等级封顶：保留经验，不再继续扣减
+                break
+
+            next_level = current_level + 1
+            remain_exp = int(player.stats.experience) - (current_level * 1000)
+            next_max_hp = int(player.stats.max_hp) + 10
+            next_max_mp = int(player.stats.max_mp) + 5
+            level_updates = {
+                "stats": {
+                    "level": next_level,
+                    "experience": max(0, remain_exp),
+                    "max_hp": next_max_hp,
+                    "hp": next_max_hp,
+                    "max_mp": next_max_mp,
+                    "mp": next_max_mp,
+                }
+            }
+            level_result = self.apply_player_updates(game_state, level_updates, source=f"{source}:level_up")
+            if not level_result.success:
+                return {
+                    "success": False,
+                    "errors": level_result.errors,
+                    "level_up": level_up_count > 0,
+                    "level_up_count": level_up_count,
+                }
+
+            # 防御性保护：若等级未实际提升，避免死循环和经验被异常扣减
+            if int(player.stats.level) <= current_level:
+                logger.warning("Level-up write had no effect, stop progression loop: level=%s", player.stats.level)
+                break
+
+            player.update_proficiency_bonus()
+            level_up_count += 1
+
+        return {
+            "success": True,
+            "errors": [],
+            "level_up": int(player.stats.level) > before_level,
+            "level_up_count": level_up_count,
+        }
+
+    def apply_player_resource_delta(
+        self,
+        game_state: GameState,
+        hp_delta: int = 0,
+        mp_delta: int = 0,
+        source: str = "unknown"
+    ) -> ModificationResult:
+        """统一处理 HP/MP 资源变化写入入口"""
+        player = game_state.player
+        try:
+            current_hp = int(getattr(player.stats, "hp", 0) or 0)
+        except (TypeError, ValueError):
+            current_hp = 0
+
+        try:
+            current_mp = int(getattr(player.stats, "mp", 0) or 0)
+        except (TypeError, ValueError):
+            current_mp = 0
+
+        next_hp = current_hp + int(hp_delta or 0)
+        next_mp = current_mp + int(mp_delta or 0)
+        return self.apply_player_updates(
+            game_state,
+            {
+                "stats": {
+                    "hp": next_hp,
+                    "mp": next_mp,
+                }
+            },
+            source=source,
+        )
+
     # ==================== 验证方法 ====================
 
     def _validate_stat_value(self, stat_name: str, value: Any, stats: Stats) -> Any:
@@ -613,6 +733,8 @@ class GameStateModifier:
                 return max(1, min(value, 100))  # 最高等级100
             elif stat_name == "ac":
                 return max(0, min(value, 50))  # 护甲等级上限50
+            elif stat_name in ["shield", "temporary_hp"]:
+                return max(0, value)
             else:
                 # 其他属性（力量、敏捷等）
                 return max(1, min(value, 30))  # 属性范围1-30
@@ -620,6 +742,33 @@ class GameStateModifier:
         except Exception as e:
             logger.error(f"Error validating stat {stat_name}={value}: {e}")
             return getattr(stats, stat_name)  # 返回原值
+
+    def _get_combat_runtime(self, player: Character) -> Dict[str, int]:
+        runtime = getattr(player, "combat_runtime", None)
+
+        def _safe_non_negative_int(value: Any, default: int = 0) -> int:
+            try:
+                return max(0, int(value or 0))
+            except (TypeError, ValueError):
+                return max(0, int(default or 0))
+
+        if not isinstance(runtime, dict):
+            runtime = {
+                "shield": _safe_non_negative_int(getattr(player.stats, "shield", 0), 0),
+                "temporary_hp": _safe_non_negative_int(getattr(player.stats, "temporary_hp", 0), 0),
+            }
+            player.combat_runtime = runtime
+
+        runtime.setdefault("shield", _safe_non_negative_int(getattr(player.stats, "shield", 0), 0))
+        runtime.setdefault("temporary_hp", _safe_non_negative_int(getattr(player.stats, "temporary_hp", 0), 0))
+        runtime["shield"] = _safe_non_negative_int(runtime.get("shield", 0), getattr(player.stats, "shield", 0))
+        runtime["temporary_hp"] = _safe_non_negative_int(runtime.get("temporary_hp", 0), getattr(player.stats, "temporary_hp", 0))
+        return runtime
+
+    def _sync_legacy_defense_fields(self, player: Character):
+        runtime = self._get_combat_runtime(player)
+        player.stats.shield = int(runtime.get("shield", 0) or 0)
+        player.stats.temporary_hp = int(runtime.get("temporary_hp", 0) or 0)
 
     def _validate_tile_position(self, game_map: 'GameMap', x: int, y: int) -> bool:
         """验证瓦片位置是否有效"""
@@ -677,6 +826,25 @@ class GameStateModifier:
             item.is_quest_item = bool(item_data.get("is_quest_item", False))
         if "quest_lock_reason" in item_data:
             item.quest_lock_reason = str(item_data.get("quest_lock_reason", "") or "")
+        if "hint_level" in item_data:
+            hint_level = str(item_data.get("hint_level", "vague") or "vague").strip().lower()
+            item.hint_level = hint_level if hint_level in {"none", "vague", "clear"} else "vague"
+        if "trigger_hint" in item_data:
+            item.trigger_hint = str(item_data.get("trigger_hint", "") or "")
+        if "risk_hint" in item_data:
+            item.risk_hint = str(item_data.get("risk_hint", "") or "")
+        if "expected_outcomes" in item_data:
+            outcomes = item_data.get("expected_outcomes", [])
+            if isinstance(outcomes, list):
+                item.expected_outcomes = [str(v) for v in outcomes if str(v).strip()]
+            elif outcomes:
+                item.expected_outcomes = [str(outcomes)]
+            else:
+                item.expected_outcomes = []
+        if "requires_use_confirmation" in item_data:
+            item.requires_use_confirmation = bool(item_data.get("requires_use_confirmation", False))
+        if "consumption_hint" in item_data:
+            item.consumption_hint = str(item_data.get("consumption_hint", "") or "")
 
         return item
 

@@ -822,6 +822,23 @@ class LLMService:
             usage_description = "装备后自动生效" if is_equippable else "使用后触发效果"
         item.usage_description = usage_description
 
+        hint_level = str(result.get("hint_level") or "vague").strip().lower()
+        if hint_level not in {"none", "vague", "clear"}:
+            hint_level = "vague"
+        item.hint_level = hint_level
+        item.trigger_hint = str(result.get("trigger_hint") or "").strip()
+        item.risk_hint = str(result.get("risk_hint") or "").strip()
+
+        expected_outcomes_raw = result.get("expected_outcomes", [])
+        if isinstance(expected_outcomes_raw, list):
+            item.expected_outcomes = [str(v).strip() for v in expected_outcomes_raw if str(v).strip()]
+        elif expected_outcomes_raw:
+            item.expected_outcomes = [str(expected_outcomes_raw).strip()]
+        else:
+            item.expected_outcomes = []
+
+        item.requires_use_confirmation = self._parse_bool(result.get("requires_use_confirmation"), default=False)
+
         item.is_equippable = is_equippable
         item.equip_slot = equip_slot
         item.max_charges = int(result.get("max_charges", 0) or 0)
@@ -852,6 +869,24 @@ class LLMService:
             properties["consumption_policy"] = "consume_on_use"
         else:
             properties.setdefault("consumption_policy", "keep_on_use")
+
+        policy = str(properties.get("consumption_policy", "") or "").strip().lower()
+        if policy == "consume_on_use":
+            item.consumption_hint = "通常会在成功使用后消耗"
+        elif policy == "keep_on_use":
+            item.consumption_hint = "通常不会被消耗，可重复使用"
+        else:
+            item.consumption_hint = "消耗方式由情境决定"
+
+        if not item.trigger_hint:
+            item.trigger_hint = "在当前场景中使用后触发效果"
+        if not item.risk_hint:
+            item.risk_hint = "风险未知，建议在安全位置尝试"
+        if not item.expected_outcomes:
+            if item.item_type == "consumable":
+                item.expected_outcomes = ["可能恢复状态", "可能施加短时增益", "可能产生环境互动"]
+            else:
+                item.expected_outcomes = ["可能改变当前状态", "可能触发剧情或环境反馈"]
 
         item.properties = properties
         item.llm_generated = True
@@ -941,6 +976,15 @@ class LLMService:
                     "items": {"type": "string"}
                 },
                 "item_consumed": {"type": "boolean"},
+                "hint_level": {"type": "string", "enum": ["none", "vague", "clear"]},
+                "trigger_hint": {"type": "string"},
+                "risk_hint": {"type": "string"},
+                "expected_outcomes": {
+                    "type": "array",
+                    "items": {"type": "string"}
+                },
+                "requires_use_confirmation": {"type": "boolean"},
+                "consumption_hint": {"type": "string"},
                 "effects": {
                     "type": "object",
                     "properties": {
@@ -1052,6 +1096,12 @@ class LLMService:
             normalized = self._normalize_item_usage_response(item, result or {})
             normalized.setdefault("effect_scope", "active_use")
             normalized.setdefault("source", f"item_use:{item.id}")
+            normalized.setdefault("hint_level", item.hint_level or "vague")
+            normalized.setdefault("trigger_hint", item.trigger_hint or "")
+            normalized.setdefault("risk_hint", item.risk_hint or "")
+            normalized.setdefault("expected_outcomes", item.expected_outcomes or [])
+            normalized.setdefault("requires_use_confirmation", bool(item.requires_use_confirmation))
+            normalized.setdefault("consumption_hint", item.consumption_hint or "")
             logger.info(f"物品使用LLM响应: {normalized}")
             return normalized
         except Exception as e:
@@ -1062,6 +1112,12 @@ class LLMService:
                 "source": f"item_use:{item.id}",
                 "events": ["物品使用失败"],
                 "item_consumed": False,
+                "hint_level": item.hint_level or "vague",
+                "trigger_hint": item.trigger_hint or "",
+                "risk_hint": item.risk_hint or "",
+                "expected_outcomes": item.expected_outcomes or [],
+                "requires_use_confirmation": bool(item.requires_use_confirmation),
+                "consumption_hint": item.consumption_hint or "",
                 "effects": {}
             }
             return self._normalize_item_usage_response(item, fallback)

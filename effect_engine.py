@@ -468,9 +468,18 @@ class EffectEngine:
                     tile.is_visible = True
                 result.events.append("地图完全显现")
             elif code == "heal_full":
-                game_state.player.stats.hp = game_state.player.stats.max_hp
-                game_state.player.stats.mp = game_state.player.stats.max_mp
-                result.events.append("生命与法力完全恢复")
+                hp_delta = int(getattr(game_state.player.stats, "max_hp", 0) or 0) - int(getattr(game_state.player.stats, "hp", 0) or 0)
+                mp_delta = int(getattr(game_state.player.stats, "max_mp", 0) or 0) - int(getattr(game_state.player.stats, "mp", 0) or 0)
+                update_result = game_state_modifier.apply_player_resource_delta(
+                    game_state,
+                    hp_delta=hp_delta,
+                    mp_delta=mp_delta,
+                    source="special_effect:heal_full",
+                )
+                if not update_result.success:
+                    result.events.append("生命与法力恢复失败")
+                else:
+                    result.events.append("生命与法力完全恢复")
             elif code == "cleanse_negative":
                 before = len(game_state.player.active_effects)
                 game_state.player.active_effects = [
@@ -489,19 +498,34 @@ class EffectEngine:
                             result.events.append(f"{inv_item.name} 充能 +{amount}")
             elif code == "grant_shield":
                 shield = self._safe_int(payload.get("value", 5), 5)
-                game_state.player.stats.shield = max(0, int(getattr(game_state.player.stats, "shield", 0) or 0) + shield)
+                runtime = getattr(game_state.player, "combat_runtime", None)
+                if not isinstance(runtime, dict):
+                    runtime = {
+                        "shield": int(getattr(game_state.player.stats, "shield", 0) or 0),
+                        "temporary_hp": int(getattr(game_state.player.stats, "temporary_hp", 0) or 0),
+                    }
+                    game_state.player.combat_runtime = runtime
+                runtime["shield"] = max(0, int(runtime.get("shield", 0) or 0) + shield)
+                game_state.player.stats.shield = int(runtime["shield"])
                 result.events.append(f"获得护盾 +{shield}")
             elif code == "refresh_cooldowns":
                 for inv_item in game_state.player.inventory:
                     inv_item.current_cooldown = 0
                 result.events.append("所有物品冷却已刷新")
             elif code == "level_up":
-                game_state.player.stats.level += 1
-                game_state.player.stats.max_hp += 10
-                game_state.player.stats.max_mp += 5
-                game_state.player.stats.hp = game_state.player.stats.max_hp
-                game_state.player.stats.mp = game_state.player.stats.max_mp
-                result.events.append("等级提升")
+                current_level = int(getattr(game_state.player.stats, "level", 1) or 1)
+                exp_target = max(0, (current_level * 1000) - int(getattr(game_state.player.stats, "experience", 0) or 0))
+                progression_result = game_state_modifier.apply_player_progression_updates(
+                    game_state,
+                    experience_gained=exp_target,
+                    source="special_effect:level_up",
+                )
+                if progression_result.get("success", False) and progression_result.get("level_up", False):
+                    result.events.append("等级提升")
+                elif progression_result.get("success", False):
+                    result.events.append("等级已达上限")
+                else:
+                    result.events.append("等级提升失败")
             elif code:
                 logger.info("Unknown special effect code: %s", code)
 

@@ -222,6 +222,7 @@ class PromptManager:
 6. weapon/armor必须返回is_equippable=true，equip_slot需匹配槽位
 7. consumable必须返回is_equippable=false且equip_slot为空字符串
 8. 可选返回effect_payload作为固定效果
+9. 返回使用前情报字段：hint_level、trigger_hint、risk_hint、expected_outcomes、requires_use_confirmation、consumption_hint
 
 请返回JSON格式的物品数据。
             """.strip(),
@@ -239,6 +240,12 @@ class PromptManager:
                     "value": {"type": "integer", "minimum": 1},
                     "weight": {"type": "number", "minimum": 0.1},
                     "usage_description": {"type": "string"},
+                    "hint_level": {"type": "string", "enum": ["none", "vague", "clear"]},
+                    "trigger_hint": {"type": "string"},
+                    "risk_hint": {"type": "string"},
+                    "expected_outcomes": {"type": "array", "items": {"type": "string"}},
+                    "requires_use_confirmation": {"type": "boolean"},
+                    "consumption_hint": {"type": "string"},
                     "damage": {"type": "integer", "minimum": 0},
                     "armor_class": {"type": "integer", "minimum": 0},
                     "healing": {"type": "integer", "minimum": 0},
@@ -268,6 +275,10 @@ class PromptManager:
 - 类型：{item_type}
 - 稀有度：{item_rarity}
 - 使用说明：{item_usage_description}
+- 触发提示：{item_trigger_hint}
+- 风险提示：{item_risk_hint}
+- 预期结果：{item_expected_outcomes}
+- 消耗提示：{item_consumption_hint}
 - 属性：{item_properties}
 
 玩家信息：
@@ -283,6 +294,7 @@ class PromptManager:
 地图信息：{map_info}
 
 请生成结构化JSON效果，支持以下能力：
+0) 事件范围：effect_scope（active_use/equip_passive/trigger）
 1) 即时数值变化：stat_changes, ability_changes
 2) 位移和地图影响：teleport, map_changes
 3) 背包变化：inventory_changes(add_items/remove_items)
@@ -297,6 +309,9 @@ class PromptManager:
 - tick_effects: 每回合生效的增减值（如{{"hp":-3}}）
 - modifiers/potency/tags/triggers/metadata: 可选扩展字段
 
+同时返回使用后可更新的情报字段：
+- hint_level, trigger_hint, risk_hint, expected_outcomes, requires_use_confirmation, consumption_hint
+
 消耗规则（必须遵守）：
 - item_type为weapon/armor时，item_consumed必须为false
 - item_type为consumable时，item_consumed通常为true（除非明确可重复使用）
@@ -309,7 +324,8 @@ class PromptManager:
             """.strip(),
             required_params=[
                 "item_name", "item_description", "item_type", "item_rarity",
-                "item_usage_description", "item_properties", "player_name",
+                "item_usage_description", "item_trigger_hint", "item_risk_hint",
+                "item_expected_outcomes", "item_consumption_hint", "item_properties", "player_name",
                 "player_class", "player_level", "player_hp", "player_max_hp",
                 "player_mp", "player_max_mp", "player_ac", "player_experience",
                 "player_position", "map_info"
@@ -1112,6 +1128,10 @@ class PromptManager:
             "item_type": item.item_type,
             "item_rarity": item.rarity,
             "item_usage_description": getattr(item, 'usage_description', ''),
+            "item_trigger_hint": getattr(item, 'trigger_hint', ''),
+            "item_risk_hint": getattr(item, 'risk_hint', ''),
+            "item_expected_outcomes": getattr(item, 'expected_outcomes', []),
+            "item_consumption_hint": getattr(item, 'consumption_hint', ''),
             "item_properties": getattr(item, 'properties', {})
         }
 

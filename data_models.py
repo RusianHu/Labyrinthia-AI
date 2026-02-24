@@ -372,6 +372,12 @@ class Item:
     current_cooldown: int = 0
     is_quest_item: bool = False
     quest_lock_reason: str = ""
+    hint_level: str = "vague"  # none, vague, clear
+    trigger_hint: str = ""
+    risk_hint: str = ""
+    expected_outcomes: List[str] = field(default_factory=list)
+    requires_use_confirmation: bool = False
+    consumption_hint: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -403,7 +409,13 @@ class Item:
             "cooldown_turns": self.cooldown_turns,
             "current_cooldown": self.current_cooldown,
             "is_quest_item": self.is_quest_item,
-            "quest_lock_reason": self.quest_lock_reason
+            "quest_lock_reason": self.quest_lock_reason,
+            "hint_level": self.hint_level,
+            "trigger_hint": self.trigger_hint,
+            "risk_hint": self.risk_hint,
+            "expected_outcomes": self.expected_outcomes,
+            "requires_use_confirmation": self.requires_use_confirmation,
+            "consumption_hint": self.consumption_hint
         }
 
 
@@ -461,6 +473,10 @@ class Character:
     active_effects: List[StatusEffect] = field(default_factory=list)
     runtime_stats: Dict[str, Any] = field(default_factory=dict)
     derived_runtime: Dict[str, Any] = field(default_factory=dict)
+    combat_runtime: Dict[str, int] = field(default_factory=lambda: {
+        "shield": 0,
+        "temporary_hp": 0,
+    })
     spells: List[Spell] = field(default_factory=list)
     position: tuple = (0, 0)
     # DND技能系统
@@ -511,6 +527,25 @@ class Character:
         self.proficiency_bonus = self.get_proficiency_bonus_by_level()
 
     def to_dict(self) -> Dict[str, Any]:
+        combat_runtime = self.combat_runtime if isinstance(self.combat_runtime, dict) else {}
+
+        def _safe_non_negative_int(value: Any, default: int = 0) -> int:
+            try:
+                return max(0, int(value or 0))
+            except (TypeError, ValueError):
+                return max(0, int(default or 0))
+
+        shield = _safe_non_negative_int(combat_runtime.get("shield", getattr(self.stats, "shield", 0)), getattr(self.stats, "shield", 0))
+        temporary_hp = _safe_non_negative_int(combat_runtime.get("temporary_hp", getattr(self.stats, "temporary_hp", 0)), getattr(self.stats, "temporary_hp", 0))
+
+        # 兼容旧字段：仍在 stats 中保留镜像值，避免旧客户端/旧逻辑断裂
+        self.stats.shield = shield
+        self.stats.temporary_hp = temporary_hp
+        self.combat_runtime = {
+            "shield": shield,
+            "temporary_hp": temporary_hp,
+        }
+
         return {
             "id": self.id,
             "name": self.name,
@@ -534,6 +569,10 @@ class Character:
             "spells": [spell.to_dict() for spell in self.spells],
             "runtime_stats": self.runtime_stats,
             "derived_runtime": self.derived_runtime,
+            "combat_runtime": {
+                "shield": shield,
+                "temporary_hp": temporary_hp,
+            },
             "position": self.position,
             "proficiency_bonus": self.proficiency_bonus,
             "skill_proficiencies": self.skill_proficiencies,

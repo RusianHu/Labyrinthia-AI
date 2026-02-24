@@ -212,6 +212,57 @@ Object.assign(LabyrinthiaGame.prototype, {
         return num > 0 ? `+${num}` : `${num}`;
     },
 
+    _pickKnownText(...candidates) {
+        for (const candidate of candidates) {
+            const text = String(candidate || '').trim();
+            if (!text) {
+                continue;
+            }
+            if (text === '无' || text === 'none' || text === 'N/A') {
+                continue;
+            }
+            return text;
+        }
+        return '';
+    },
+
+    _normalizeHintLevel(value) {
+        const raw = String(value || 'vague').trim().toLowerCase();
+        if (raw === 'none' || raw === 'clear' || raw === 'vague') {
+            return raw;
+        }
+        return 'vague';
+    },
+
+    _collectItemIntel(item) {
+        const usage = this._pickKnownText(item.usage_description);
+        const triggerHint = this._pickKnownText(item.trigger_hint);
+        const riskHint = this._pickKnownText(item.risk_hint);
+        const consumptionHint = this._pickKnownText(item.consumption_hint);
+        const hintLevel = this._normalizeHintLevel(item.hint_level);
+        const outcomesRaw = Array.isArray(item.expected_outcomes) ? item.expected_outcomes : [];
+        const outcomes = outcomesRaw
+            .map((entry) => String(entry || '').trim())
+            .filter((entry) => entry.length > 0);
+
+        const usageText = usage || (hintLevel === 'none' ? '无额外使用步骤' : '未记录，建议先观察局势再尝试');
+        const triggerText = triggerHint || (hintLevel === 'clear' ? '满足条件后立即触发' : '触发条件未明，可能受地形/状态影响');
+        const riskText = riskHint || (hintLevel === 'none' ? '风险较低' : '风险未知，建议在安全位置尝试');
+        const consumptionText = consumptionHint || '消耗方式未记录';
+        const outcomeLines = outcomes.length > 0
+            ? outcomes.map((entry) => `- ${entry}`)
+            : [hintLevel === 'none' ? '- 暂无额外结果' : '- 结果未鉴定，使用后将补充情报'];
+
+        return {
+            hintLevel,
+            usageText,
+            triggerText,
+            riskText,
+            consumptionText,
+            outcomeLines
+        };
+    },
+
     _collectItemCombatBonuses(item) {
         if (!item || typeof item !== 'object') {
             return {
@@ -1198,6 +1249,7 @@ Object.assign(LabyrinthiaGame.prototype, {
     },
 
     renderInventoryDetail(item) {
+        this._inventorySelectedItemData = item || null;
         const detail = document.getElementById('inventory-detail');
         const equipBtn = document.getElementById('inventory-action-equip');
         const unequipBtn = document.getElementById('inventory-action-unequip');
@@ -1263,8 +1315,15 @@ Object.assign(LabyrinthiaGame.prototype, {
 
         const policyRaw = String((item.properties || {}).consumption_policy || 'auto');
         const policyText = this._getConsumptionPolicyLabel(policyRaw);
+        const intel = this._collectItemIntel(item);
         const bonusLines = this._extractItemBonusLines(item);
-        const bonusText = bonusLines.length > 0 ? bonusLines.map((entry) => `- ${entry}`).join('\n') : '- 暂无可识别加成';
+        const bonusText = bonusLines.length > 0 ? bonusLines.map((entry) => `- ${entry}`).join('\n') : '- 未发现可识别加成';
+
+        const hintLabelMap = {
+            none: '明确',
+            vague: '模糊',
+            clear: '清晰'
+        };
 
         const lines = [
             `${item.name}`,
@@ -1273,8 +1332,14 @@ Object.assign(LabyrinthiaGame.prototype, {
             `装备状态: ${isCurrentlyEquipped ? '已装备' : '未装备'}`,
             `效果来源: ${sourceHint}`,
             `消耗策略: ${policyText}`,
-            `描述: ${item.description || '无'}`,
-            `使用说明: ${item.usage_description || '无'}`,
+            `描述: ${item.description || '未记录'}`,
+            `使用说明: ${intel.usageText}`,
+            `情报等级: ${hintLabelMap[intel.hintLevel] || '模糊'}`,
+            `触发提示: ${intel.triggerText}`,
+            `风险提示: ${intel.riskText}`,
+            `消耗提示: ${intel.consumptionText}`,
+            `预期结果:`,
+            ...intel.outcomeLines,
             `装备/词缀加成:`,
             `${bonusText}`,
             `充能: ${(item.max_charges || 0) > 0 ? `${item.charges || 0}/${item.max_charges}` : '无限'}`,
@@ -1310,6 +1375,12 @@ Object.assign(LabyrinthiaGame.prototype, {
         unequipBtn.textContent = '卸下';
         replaceBtn.textContent = canReplace ? `替换(${slotItem?.name || '当前装备'})` : '替换';
         useBtn.textContent = isEquippable ? '装备类请用上方按钮' : '使用';
+        const shouldShowIntelDialog = !isEquippable
+            && typeof this.requiresItemUseIntelDialog === 'function'
+            && this.requiresItemUseIntelDialog(item);
+        if (shouldShowIntelDialog) {
+            useBtn.textContent = '情报确认后使用';
+        }
         dropBtn.textContent = item.is_quest_item ? '尝试丢弃(保护)' : '丢弃';
 
         equipBtn.onclick = () => {
@@ -1323,6 +1394,10 @@ Object.assign(LabyrinthiaGame.prototype, {
         };
         useBtn.onclick = () => {
             if (!item.is_equippable) {
+                if (shouldShowIntelDialog && typeof this.showItemUseDialog === 'function') {
+                    this.showItemUseDialog(item);
+                    return;
+                }
                 this.useItem(item.id);
             }
         };

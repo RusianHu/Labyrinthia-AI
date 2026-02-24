@@ -247,6 +247,34 @@ class DataManager:
         derived_runtime = data.get("derived_runtime", {})
         character.derived_runtime = derived_runtime if isinstance(derived_runtime, dict) else {}
 
+        # 战斗运行时字段（新结构，兼容旧字段 stats.shield/stats.temporary_hp）
+        raw_combat_runtime = data.get("combat_runtime", {})
+        if isinstance(raw_combat_runtime, dict):
+            shield_val = raw_combat_runtime.get("shield", getattr(character.stats, "shield", 0))
+            temp_hp_val = raw_combat_runtime.get("temporary_hp", getattr(character.stats, "temporary_hp", 0))
+        else:
+            shield_val = getattr(character.stats, "shield", 0)
+            temp_hp_val = getattr(character.stats, "temporary_hp", 0)
+
+        try:
+            shield_int = max(0, int(shield_val or 0))
+        except (TypeError, ValueError):
+            shield_int = max(0, int(getattr(character.stats, "shield", 0) or 0))
+
+        try:
+            temp_hp_int = max(0, int(temp_hp_val or 0))
+        except (TypeError, ValueError):
+            temp_hp_int = max(0, int(getattr(character.stats, "temporary_hp", 0) or 0))
+
+        character.combat_runtime = {
+            "shield": shield_int,
+            "temporary_hp": temp_hp_int,
+        }
+
+        # 兼容镜像：保留旧 stats 字段，避免既有计算链路断裂
+        character.stats.shield = shield_int
+        character.stats.temporary_hp = temp_hp_int
+
         # 持续状态（兼容旧存档）
         active_effects_data = data.get("active_effects", []) or []
         active_effects = []
@@ -358,6 +386,24 @@ class DataManager:
 
         item.is_quest_item = bool(data.get("is_quest_item", False))
         item.quest_lock_reason = str(data.get("quest_lock_reason", "") or "")
+
+        hint_level = str(data.get("hint_level", "vague") or "vague").strip().lower()
+        if hint_level not in {"none", "vague", "clear"}:
+            hint_level = "vague"
+        item.hint_level = hint_level
+        item.trigger_hint = str(data.get("trigger_hint", "") or "")
+        item.risk_hint = str(data.get("risk_hint", "") or "")
+
+        expected_outcomes = data.get("expected_outcomes", [])
+        if isinstance(expected_outcomes, list):
+            item.expected_outcomes = [str(v) for v in expected_outcomes if str(v).strip()]
+        elif expected_outcomes:
+            item.expected_outcomes = [str(expected_outcomes)]
+        else:
+            item.expected_outcomes = []
+
+        item.requires_use_confirmation = bool(data.get("requires_use_confirmation", False))
+        item.consumption_hint = str(data.get("consumption_hint", "") or "")
         return item
     
     def _dict_to_spell(self, data: Dict[str, Any]) -> Spell:

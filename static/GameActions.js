@@ -121,6 +121,37 @@ Object.assign(LabyrinthiaGame.prototype, {
                     });
                 }
 
+                if (action === 'use_item' && result.impact_summary && typeof result.impact_summary === 'object') {
+                    const impact = result.impact_summary;
+                    const lines = ['[物品影响摘要]'];
+                    if (impact.charges && typeof impact.charges === 'object') {
+                        lines.push(`充能: ${impact.charges.current ?? 0}/${impact.charges.max ?? 0}`);
+                    }
+                    if (impact.cooldown !== undefined) {
+                        lines.push(`冷却: ${impact.cooldown ?? 0} 回合`);
+                    }
+                    if (impact.consumed !== undefined) {
+                        lines.push(`是否消耗: ${impact.consumed ? '是' : '否'}`);
+                    }
+                    if (impact.hint_level) {
+                        lines.push(`情报等级: ${impact.hint_level}`);
+                    }
+                    if (impact.trigger_hint) {
+                        lines.push(`触发提示: ${impact.trigger_hint}`);
+                    }
+                    if (impact.risk_hint) {
+                        lines.push(`风险提示: ${impact.risk_hint}`);
+                    }
+                    if (impact.consumption_hint) {
+                        lines.push(`消耗提示: ${impact.consumption_hint}`);
+                    }
+                    if (Array.isArray(impact.expected_outcomes) && impact.expected_outcomes.length > 0) {
+                        const joined = impact.expected_outcomes.slice(0, 3).join('；');
+                        lines.push(`预期结果: ${joined}`);
+                    }
+                    this.addMessage(lines.join('\n'), 'system');
+                }
+
                 if (result.narrative) {
                     this.addMessage(result.narrative, 'narrative');
                 }

@@ -189,6 +189,17 @@ Object.assign(LabyrinthiaGame.prototype, {
         this.highlightedTiles = [];
     },
 
+    requiresItemUseIntelDialog(item) {
+        if (!item || item.is_equippable) {
+            return false;
+        }
+        if (item.requires_use_confirmation) {
+            return true;
+        }
+        const hintLevel = String(item.hint_level || 'vague').trim().toLowerCase();
+        return hintLevel !== 'none';
+    },
+
     showItemUseDialog(item) {
         const dialog = document.getElementById('item-use-dialog');
         const nameElement = document.getElementById('item-use-name');
@@ -199,32 +210,72 @@ Object.assign(LabyrinthiaGame.prototype, {
         const dropButton = document.getElementById('drop-item');
         const cancelButton = document.getElementById('cancel-use-item');
 
-        // 填充物品信息
+        const normalizeHintLevel = (value) => {
+            const raw = String(value || 'vague').trim().toLowerCase();
+            if (raw === 'none' || raw === 'clear' || raw === 'vague') {
+                return raw;
+            }
+            return 'vague';
+        };
+
+        const pickText = (...values) => {
+            for (const value of values) {
+                const text = String(value || '').trim();
+                if (!text || text === '无' || text === 'none' || text === 'N/A') {
+                    continue;
+                }
+                return text;
+            }
+            return '';
+        };
+
+        const hintLevel = normalizeHintLevel(item.hint_level);
+        const usageText = pickText(item.usage_description) || (hintLevel === 'none' ? '无额外使用步骤。' : '使用步骤未完全记录，建议谨慎尝试。');
+        const triggerText = pickText(item.trigger_hint) || (hintLevel === 'clear' ? '满足条件后触发效果。' : '触发条件未明，可能受场景影响。');
+        const riskText = pickText(item.risk_hint) || (hintLevel === 'none' ? '风险较低。' : '风险未知，建议在安全位置使用。');
+        const consumptionText = pickText(item.consumption_hint) || '消耗方式未记录。';
+        const outcomes = Array.isArray(item.expected_outcomes)
+            ? item.expected_outcomes.map((entry) => String(entry || '').trim()).filter((entry) => entry.length > 0)
+            : [];
+        const outcomeText = outcomes.length > 0 ? outcomes.map((entry) => `- ${entry}`).join('\n') : '- 使用后可补全情报';
+
         nameElement.textContent = item.name;
-        descriptionElement.textContent = item.description;
-        usageElement.textContent = item.usage_description || '使用方法未知';
+        descriptionElement.textContent = item.description || '未记录描述';
+        usageElement.textContent = [
+            `使用说明: ${usageText}`,
+            `触发提示: ${triggerText}`,
+            `风险提示: ${riskText}`,
+            `消耗提示: ${consumptionText}`,
+            '可能结果:',
+            `${outcomeText}`
+        ].join('\n');
 
         if (metaElement) {
             const chips = [];
-            chips.push(`<span class="item-chip">类型: ${item.item_type || 'misc'}</span>`);
-            chips.push(`<span class="item-chip">稀有度: ${item.rarity || 'common'}</span>`);
-            if (item.is_equippable) {
-                chips.push(`<span class="item-chip">可装备: ${item.equip_slot || 'accessory_1'}</span>`);
-            }
+            const rarity = this._getItemRarityLabel(item.rarity || 'common');
+            const type = this._getItemTypeLabel(item.item_type || 'misc');
+            const hintLabelMap = { none: '无情报', vague: '模糊', clear: '清晰' };
+            chips.push(`<span class="item-chip">类型: ${type}</span>`);
+            chips.push(`<span class="item-chip">稀有度: ${rarity}</span>`);
+            chips.push(`<span class="item-chip">情报: ${hintLabelMap[hintLevel] || '模糊'}</span>`);
             if ((item.max_charges || 0) > 0) {
                 chips.push(`<span class="item-chip">充能: ${item.charges ?? 0}/${item.max_charges}</span>`);
             }
             if ((item.current_cooldown || 0) > 0) {
                 chips.push(`<span class="item-chip">冷却: ${item.current_cooldown}回合</span>`);
             }
+            if (item.requires_use_confirmation) {
+                chips.push('<span class="item-chip">高风险确认</span>');
+            }
             metaElement.innerHTML = chips.join('');
         }
 
         const isEquip = !!item.is_equippable;
-        const confirmText = isEquip ? '装备/卸下' : '确认使用';
+        const confirmText = isEquip
+            ? '装备/卸下'
+            : (item.requires_use_confirmation ? '承担风险并使用' : '确认使用');
         confirmButton.textContent = confirmText;
 
-        // 设置按钮事件
         confirmButton.onclick = () => {
             this.hideItemUseDialog();
             this.useItem(item.id);
@@ -239,7 +290,6 @@ Object.assign(LabyrinthiaGame.prototype, {
             this.hideItemUseDialog();
         };
 
-        // 显示对话框
         dialog.style.display = 'flex';
     },
 
