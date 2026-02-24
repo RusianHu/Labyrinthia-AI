@@ -4238,7 +4238,6 @@ if config.game.debug_mode:
     async def debug_get_random_treasure(game_id: str, request: Request, response: Response):
         """调试：获得随机宝物（模拟宝箱）"""
         try:
-            # 获取用户ID
             user_id = user_session_manager.get_or_create_user_id(request, response)
             game_key = (user_id, game_id)
 
@@ -4248,104 +4247,44 @@ if config.game.debug_mode:
             game_state = game_engine.active_games[game_key]
             request_data = await request.json()
 
-            player_position = request_data.get("player_position", game_state.player.position)
-            player_level = request_data.get("player_level", game_state.player.stats.level)
             quest_context = request_data.get("quest_context")
-
-            # 构建宝箱上下文
-            treasure_context = {
-                "player_level": player_level,
-                "player_class": game_state.player.character_class.value,
-                "current_floor": game_state.current_map.depth,
-                "map_name": game_state.current_map.name,
-                "position": player_position
-            }
-
+            pickup_context = f"调试宝箱：玩家在{game_state.current_map.name}发现了宝物"
             if quest_context:
-                treasure_context["quest_name"] = quest_context.get("name", "")
-                treasure_context["quest_description"] = quest_context.get("description", "")
+                pickup_context = (
+                    f"调试宝箱：玩家在{game_state.current_map.name}发现了与任务相关的宝物。"
+                    f"任务名：{quest_context.get('name', '')}；任务描述：{quest_context.get('description', '')}"
+                )
 
-            # 使用LLM生成宝物
-            from llm_service import llm_service
+            item_count = max(1, min(3, int(request_data.get("count", 1) or 1)))
+            generated_items = []
+            for index in range(item_count):
+                item = await llm_service.generate_item_on_pickup(
+                    game_state,
+                    f"{pickup_context}（第{index + 1}件）",
+                )
+                if item:
+                    game_state.player.inventory.append(item)
+                    generated_items.append(item)
 
-            prompt = f"""你是一个DND风格地下城游戏的宝箱生成器。玩家打开了一个宝箱，请生成1-3个合适的宝物。
-
-玩家信息：
-- 等级: {player_level}
-- 职业: {treasure_context['player_class']}
-- 当前楼层: {treasure_context['current_floor']}
-- 地图: {treasure_context['map_name']}
-
-{f"当前任务: {treasure_context.get('quest_name', '')}" if quest_context else ""}
-{f"任务描述: {treasure_context.get('quest_description', '')}" if quest_context else ""}
-
-请生成宝物列表，每个宝物包含：
-1. 中文名称（必须是中文）
-2. 详细的功能描述
-3. 物品类型（weapon/armor/consumable/accessory/quest_item）
-4. 稀有度（common/uncommon/rare/epic/legendary）
-
-请以JSON格式返回，格式如下：
-{{
-    "items": [
-        {{
-            "name": "物品名称",
-            "description": "详细描述",
-            "type": "物品类型",
-            "rarity": "稀有度",
-            "effects": {{
-                "stat_bonuses": {{"strength": 2}},
-                "special_abilities": ["特殊能力描述"]
-            }}
-        }}
-    ],
-    "narrative": "发现宝物时的叙述文本"
-}}"""
-
-            # 调用LLM
-            llm_response = await llm_service.generate_text(prompt=prompt)
-
-            if not llm_response:
+            if not generated_items:
                 return {"success": False, "message": "LLM生成失败"}
 
-            # 解析LLM响应
-            import json
-            import re
-
-            # 尝试提取JSON
-            json_match = re.search(r'\{[\s\S]*\}', llm_response)
-            if json_match:
-                treasure_data = json.loads(json_match.group())
-            else:
-                return {"success": False, "message": "无法解析LLM响应"}
-
-            # 将物品添加到玩家背包
-            from data_models import Item
-            item_names = []
-
-            for item_data in treasure_data.get("items", []):
-                item = Item(
-                    name=item_data.get("name", "未知物品"),
-                    description=item_data.get("description", ""),
-                    item_type=item_data.get("type", "consumable"),
-                    rarity=item_data.get("rarity", "common"),
-                    properties=item_data.get("effects", {}),
-                    llm_generated=True,
-                    generation_context="宝箱生成"
-                )
-                game_state.player.inventory.append(item)
-                item_names.append(item.name)
-
-            # 获取叙述文本
-            narrative = treasure_data.get("narrative", "你打开了宝箱，发现了一些宝物！")
-
-            # 保存游戏状态
             await game_engine._save_game_async(game_state, user_id)
 
             return {
                 "success": True,
-                "message": narrative,
-                "items": item_names
+                "message": f"你打开了宝箱，获得了{len(generated_items)}件宝物。",
+                "items": [it.name for it in generated_items],
+                "item_details": [
+                    {
+                        "name": it.name,
+                        "item_type": it.item_type,
+                        "rarity": it.rarity,
+                        "is_equippable": it.is_equippable,
+                        "equip_slot": it.equip_slot,
+                    }
+                    for it in generated_items
+                ],
             }
 
         except Exception as e:

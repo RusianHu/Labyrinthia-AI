@@ -753,14 +753,148 @@ class LLMService:
             else:
                 return await self._async_generate(prompt, **kwargs)
 
+    @staticmethod
+    def _normalize_item_type(raw_type: Any) -> str:
+        item_type = str(raw_type or "misc").strip().lower()
+        if item_type not in {"weapon", "armor", "consumable", "misc"}:
+            return "misc"
+        return item_type
+
+    @staticmethod
+    def _normalize_item_rarity(raw_rarity: Any) -> str:
+        rarity = str(raw_rarity or "common").strip().lower()
+        if rarity not in {"common", "uncommon", "rare", "epic", "legendary"}:
+            return "common"
+        return rarity
+
+    @staticmethod
+    def _parse_bool(value: Any, default: bool = False) -> bool:
+        if isinstance(value, bool):
+            return value
+        if value is None:
+            return default
+        if isinstance(value, (int, float)):
+            return bool(value)
+        text = str(value).strip().lower()
+        if text in {"true", "1", "yes", "y", "on"}:
+            return True
+        if text in {"false", "0", "no", "n", "off"}:
+            return False
+        return default
+
+    def _normalize_generated_item(self, result: Dict[str, Any], pickup_context: str) -> Item:
+        item = Item()
+
+        item_type = self._normalize_item_type(result.get("item_type"))
+        rarity = self._normalize_item_rarity(result.get("rarity"))
+        requested_slot = str(result.get("equip_slot", "") or "").strip()
+
+        has_explicit_equippable = "is_equippable" in result
+        is_equippable = self._parse_bool(result.get("is_equippable"), default=False)
+
+        if not has_explicit_equippable:
+            is_equippable = item_type in {"weapon", "armor"}
+
+        if item_type == "consumable":
+            is_equippable = False
+
+        if is_equippable:
+            if requested_slot in {"weapon", "armor", "accessory_1", "accessory_2"}:
+                equip_slot = requested_slot
+            elif item_type == "weapon":
+                equip_slot = "weapon"
+            elif item_type == "armor":
+                equip_slot = "armor"
+            else:
+                equip_slot = "accessory_1"
+        else:
+            equip_slot = ""
+
+        item.name = str(result.get("name") or "神秘物品")
+        item.description = str(result.get("description") or "一个神秘的物品")
+        item.item_type = item_type
+        item.rarity = rarity
+        item.value = int(result.get("value", 10) or 10)
+        item.weight = float(result.get("weight", 1.0) or 1.0)
+
+        usage_description = str(result.get("usage_description") or "").strip()
+        if not usage_description:
+            usage_description = "装备后自动生效" if is_equippable else "使用后触发效果"
+        item.usage_description = usage_description
+
+        item.is_equippable = is_equippable
+        item.equip_slot = equip_slot
+        item.max_charges = int(result.get("max_charges", 0) or 0)
+        item.charges = item.max_charges
+        item.cooldown_turns = int(result.get("cooldown_turns", 0) or 0)
+        item.current_cooldown = 0
+
+        effect_payload = result.get("effect_payload", {})
+        item.effect_payload = effect_payload if isinstance(effect_payload, dict) else {}
+
+        properties = {}
+        if isinstance(result.get("properties"), dict):
+            properties.update(result["properties"])
+        if result.get("damage") is not None:
+            properties["damage"] = result.get("damage")
+        if result.get("armor_class") is not None:
+            properties["armor_class"] = result.get("armor_class")
+        if result.get("healing") is not None:
+            properties["healing"] = result.get("healing")
+        if result.get("mana_restore") is not None:
+            properties["mana_restore"] = result.get("mana_restore")
+        if result.get("special_effect") is not None:
+            properties["special_effect"] = result.get("special_effect")
+
+        if item.is_equippable:
+            properties["consumption_policy"] = "keep_on_use"
+        elif item.item_type == "consumable":
+            properties["consumption_policy"] = "consume_on_use"
+        else:
+            properties.setdefault("consumption_policy", "keep_on_use")
+
+        item.properties = properties
+        item.llm_generated = True
+        item.generation_context = pickup_context
+
+        return item
+
+    def _normalize_item_usage_response(self, item: Item, raw_response: Dict[str, Any]) -> Dict[str, Any]:
+        response = dict(raw_response or {})
+        response.setdefault("message", f"使用了{item.name}")
+
+        events = response.get("events")
+        if isinstance(events, list):
+            response["events"] = [str(event) for event in events]
+        elif events:
+            response["events"] = [str(events)]
+        else:
+            response["events"] = []
+
+        if not isinstance(response.get("effects"), dict):
+            response["effects"] = {}
+
+        policy = str((item.properties or {}).get("consumption_policy", "") or "").strip().lower()
+
+        if item.is_equippable or item.item_type in {"weapon", "armor"}:
+            response["item_consumed"] = False
+            return response
+
+        if "item_consumed" in response:
+            response["item_consumed"] = self._parse_bool(response.get("item_consumed"), default=False)
+        elif policy in {"consume_on_use", "keep_on_use"}:
+            response["item_consumed"] = policy == "consume_on_use"
+        else:
+            response["item_consumed"] = item.item_type == "consumable"
+
+        return response
+
     async def generate_item_on_pickup(self, game_state: GameState,
                                     pickup_context: str = "") -> Optional[Item]:
         """在拾取时生成物品"""
-        # 使用PromptManager构建提示词
         player_context = prompt_manager.build_player_context(game_state.player)
         map_context = prompt_manager.build_map_context(game_state.current_map)
 
-        # 合并所有上下文
         context = {**player_context, **map_context, "pickup_context": pickup_context}
 
         prompt = prompt_manager.format_prompt("item_pickup_generation", **context)
@@ -769,39 +903,7 @@ class LLMService:
         try:
             result = await self._async_generate_json(prompt, schema)
             if result:
-                item = Item()
-                item.name = result.get("name", "神秘物品")
-                item.description = result.get("description", "一个神秘的物品")
-                item.item_type = result.get("item_type", "misc")
-                item.rarity = result.get("rarity", "common")
-                item.value = result.get("value", 10)
-                item.weight = result.get("weight", 1.0)
-                item.usage_description = result.get("usage_description", "使用方法未知")
-                item.is_equippable = bool(result.get("is_equippable", False))
-                item.equip_slot = result.get("equip_slot", "")
-                item.max_charges = int(result.get("max_charges", 0) or 0)
-                item.charges = item.max_charges
-                item.cooldown_turns = int(result.get("cooldown_turns", 0) or 0)
-                item.current_cooldown = 0
-                item.effect_payload = result.get("effect_payload", {}) or {}
-                # 构建properties字典
-                properties = {}
-                if result.get("damage"):
-                    properties["damage"] = result["damage"]
-                if result.get("armor_class"):
-                    properties["armor_class"] = result["armor_class"]
-                if result.get("healing"):
-                    properties["healing"] = result["healing"]
-                if result.get("mana_restore"):
-                    properties["mana_restore"] = result["mana_restore"]
-                if result.get("special_effect"):
-                    properties["special_effect"] = result["special_effect"]
-
-                item.properties = properties
-                item.llm_generated = True
-                item.generation_context = pickup_context
-
-                return item
+                return self._normalize_generated_item(result, pickup_context)
         except Exception as e:
             logger.error(f"生成物品失败: {e}")
 
@@ -945,16 +1047,18 @@ class LLMService:
 
         try:
             result = await self._async_generate_json(prompt, schema)
-            logger.info(f"物品使用LLM响应: {result}")
-            return result or {}
+            normalized = self._normalize_item_usage_response(item, result or {})
+            logger.info(f"物品使用LLM响应: {normalized}")
+            return normalized
         except Exception as e:
             logger.error(f"处理物品使用失败: {e}")
-            return {
+            fallback = {
                 "message": f"使用{item.name}时发生了意外",
                 "events": ["物品使用失败"],
                 "item_consumed": False,
                 "effects": {}
             }
+            return self._normalize_item_usage_response(item, fallback)
 
     def get_last_request_payload(self) -> Optional[Dict[str, Any]]:
         """获取最后一次发送给LLM的请求报文。

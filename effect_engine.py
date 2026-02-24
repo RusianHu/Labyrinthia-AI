@@ -53,10 +53,21 @@ class EffectEngine:
         item: Item,
         llm_response: Dict[str, Any],
     ) -> EffectExecutionResult:
+        if "item_consumed" in llm_response:
+            consumed = bool(llm_response.get("item_consumed"))
+        else:
+            if item.is_equippable or item.item_type in {"weapon", "armor"}:
+                consumed = False
+            elif item.item_type == "consumable":
+                consumed = True
+            else:
+                policy = str((item.properties or {}).get("consumption_policy", "keep_on_use") or "keep_on_use").strip().lower()
+                consumed = policy == "consume_on_use"
+
         result = EffectExecutionResult(
             message=llm_response.get("message", f"使用了{item.name}"),
             events=list(llm_response.get("events", []) or []),
-            item_consumed=bool(llm_response.get("item_consumed", True)),
+            item_consumed=consumed,
         )
 
         effects = llm_response.get("effects", {}) or {}

@@ -216,9 +216,12 @@ class PromptManager:
 请生成一个适合当前情况的物品，要求：
 1. 必须有中文名称
 2. 详细的功能和使用场景介绍
-3. 物品类型要合理（weapon/armor/consumable/misc）
+3. 物品类型必须是weapon/armor/consumable/misc之一
 4. 稀有度要符合地图深度和玩家等级
 5. 使用说明要清晰明确
+6. weapon/armor必须返回is_equippable=true，equip_slot需匹配槽位
+7. consumable必须返回is_equippable=false且equip_slot为空字符串
+8. 可选返回effect_payload作为固定效果
 
 请返回JSON格式的物品数据。
             """.strip(),
@@ -246,7 +249,7 @@ class PromptManager:
                     "cooldown_turns": {"type": "integer", "minimum": 0},
                     "effect_payload": {"type": "object"}
                 },
-                "required": ["name", "description", "item_type", "rarity", "value", "weight", "usage_description"]
+                "required": ["name", "description", "item_type", "rarity", "value", "weight", "usage_description", "is_equippable", "equip_slot"]
             },
             description="生成玩家拾取的物品"
         )
@@ -293,6 +296,11 @@ class PromptManager:
 - stacks/max_stacks/stack_policy: 叠加规则
 - tick_effects: 每回合生效的增减值（如{{"hp":-3}}）
 - modifiers/potency/tags/triggers/metadata: 可选扩展字段
+
+消耗规则（必须遵守）：
+- item_type为weapon/armor时，item_consumed必须为false
+- item_type为consumable时，item_consumed通常为true（除非明确可重复使用）
+- 不允许描述为盾牌/护甲/武器的物品一次使用后消失
 
 重要：
 - 只输出JSON，不要额外解释

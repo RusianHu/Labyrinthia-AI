@@ -113,6 +113,165 @@ Object.assign(LabyrinthiaGame.prototype, {
         });
     },
 
+    _getItemTypeLabel(rawType) {
+        const itemTypeLabelMap = {
+            weapon: '武器',
+            armor: '防具',
+            consumable: '消耗品',
+            misc: '杂项'
+        };
+        const key = String(rawType || 'misc');
+        return itemTypeLabelMap[key] || key;
+    },
+
+    _getItemRarityLabel(rawRarity) {
+        const itemRarityLabelMap = {
+            common: '普通',
+            uncommon: '精良',
+            rare: '稀有',
+            epic: '史诗',
+            legendary: '传说'
+        };
+        const key = String(rawRarity || 'common');
+        return itemRarityLabelMap[key] || key;
+    },
+
+    _getEquipSlotLabel(rawSlot) {
+        const slotLabelMap = {
+            weapon: '武器',
+            armor: '防具',
+            accessory_1: '饰品1',
+            accessory_2: '饰品2'
+        };
+        const key = String(rawSlot || '');
+        return slotLabelMap[key] || (key || '无');
+    },
+
+    _getConsumptionPolicyLabel(rawPolicy) {
+        const policyLabelMap = {
+            keep_on_use: '使用后保留',
+            consume_on_use: '使用后消耗',
+            auto: '自动判定'
+        };
+        const key = String(rawPolicy || 'auto').trim().toLowerCase();
+        return policyLabelMap[key] || key;
+    },
+
+    _getSetLabel(rawSetId) {
+        const setId = String(rawSetId || '').trim();
+        if (!setId) {
+            return '未归属套装';
+        }
+        if (/^[0-9a-f]{8}-/i.test(setId)) {
+            return `套装#${setId.slice(0, 8)}`;
+        }
+        return setId;
+    },
+
+    _getDamageTypeLabel(rawType) {
+        const damageTypeMap = {
+            physical: '物理',
+            fire: '火焰',
+            cold: '寒霜',
+            lightning: '闪电',
+            poison: '毒素',
+            acid: '酸蚀',
+            necrotic: '死灵',
+            radiant: '神圣',
+            psychic: '精神',
+            thunder: '雷鸣',
+            force: '力场'
+        };
+        const key = String(rawType || '').trim().toLowerCase();
+        return damageTypeMap[key] || (key || '未知类型');
+    },
+
+    _formatPercent(value) {
+        const num = Number(value || 0);
+        return `${Math.round(num * 100)}%`;
+    },
+
+    _extractItemBonusLines(item) {
+        if (!item || typeof item !== 'object') {
+            return [];
+        }
+
+        const lines = [];
+        const pushNumberLine = (label, value, withPercent = false) => {
+            const num = Number(value || 0);
+            if (!num) {
+                return;
+            }
+            if (withPercent) {
+                lines.push(`${label}: +${this._formatPercent(num)}`);
+            } else {
+                lines.push(`${label}: ${num > 0 ? '+' : ''}${num}`);
+            }
+        };
+
+        const props = (item.properties && typeof item.properties === 'object') ? item.properties : {};
+        pushNumberLine('命中加值', props.hit_bonus || props.attack_bonus || 0);
+        pushNumberLine('伤害加值', props.damage_bonus || 0);
+        pushNumberLine('暴击加值', props.critical_bonus || 0, true);
+        pushNumberLine('护甲加值(AC)', props.ac_bonus || 0);
+        pushNumberLine('护盾加值', props.shield_bonus || 0);
+        pushNumberLine('击杀回复', props.heal_on_kill || 0);
+        pushNumberLine('每回合回复', props.regen_per_turn || 0);
+
+        const mergeDamageMappings = (prefix, mapping) => {
+            if (!mapping || typeof mapping !== 'object' || Array.isArray(mapping)) {
+                return;
+            }
+            Object.entries(mapping).forEach(([dtype, amount]) => {
+                const num = Number(amount || 0);
+                if (!num) {
+                    return;
+                }
+                lines.push(`${prefix}${this._getDamageTypeLabel(dtype)}: +${this._formatPercent(num)}`);
+            });
+        };
+
+        mergeDamageMappings('抗性加成-', props.resistance_bonus);
+        mergeDamageMappings('易伤减免-', props.vulnerability_reduction);
+
+        const payloadGroups = [item.affixes, item.equip_passive_effects, item.trigger_affixes];
+        payloadGroups.forEach((group) => {
+            if (!Array.isArray(group)) {
+                return;
+            }
+            group.forEach((payload) => {
+                if (!payload || typeof payload !== 'object') {
+                    return;
+                }
+                pushNumberLine('命中加值', payload.hit_bonus || 0);
+                pushNumberLine('伤害加值', payload.damage_bonus || 0);
+                pushNumberLine('暴击加值', payload.critical_bonus || 0, true);
+                pushNumberLine('护甲加值(AC)', payload.ac_bonus || 0);
+                pushNumberLine('护盾加值', payload.shield_bonus || 0);
+                pushNumberLine('击杀回复', payload.heal_on_kill || 0);
+                pushNumberLine('每回合回复', payload.regen_per_turn || 0);
+                mergeDamageMappings('抗性加成-', payload.resistance_bonus);
+                mergeDamageMappings('易伤减免-', payload.vulnerability_reduction);
+            });
+        });
+
+        return Array.from(new Set(lines));
+    },
+
+    _buildEquipSlotSummary(item) {
+        if (!item) {
+            return '空';
+        }
+
+        const rarity = this._getItemRarityLabel(item.rarity || 'common');
+        const bonusLines = this._extractItemBonusLines(item);
+        if (bonusLines.length === 0) {
+            return `${item.name} (${rarity})`;
+        }
+
+        return `${item.name} (${rarity}) | ${bonusLines.slice(0, 2).join(' · ')}`;
+    },
+
     updateStatusRuntimePanel() {
         const panel = document.getElementById('status-runtime-panel');
         if (!panel) return;
@@ -155,16 +314,40 @@ Object.assign(LabyrinthiaGame.prototype, {
         const affixes = Array.isArray(equipment.affixes) ? equipment.affixes : [];
         const triggerAffixes = Array.isArray(equipment.trigger_affixes) ? equipment.trigger_affixes : [];
         const passiveEffects = Array.isArray(equipment.passive_effects) ? equipment.passive_effects : [];
+        const equippedItems = this.gameState?.player?.equipped_items || {};
 
         const setText = Object.keys(setCounts).length > 0
-            ? Object.entries(setCounts).map(([setId, count]) => `${setId}: ${count}`).join(' | ')
+            ? Object.entries(setCounts)
+                .map(([setId, count]) => `${this._getSetLabel(setId)}: ${count}件`)
+                .join(' | ')
             : '无套装进度';
 
         const affixText = affixes.length > 0
             ? affixes.map((entry) => {
-                const items = Array.isArray(entry.affixes) ? entry.affixes : [];
-                const names = items.map((a) => a.name || a.id || 'unknown').join(', ') || '无词缀';
-                return `${entry.item_id}: ${names}`;
+                const entryItemId = String(entry.item_id || '');
+                const item = Object.values(equippedItems).find((eq) => eq && String(eq.id || '') === entryItemId);
+                const itemLabel = item ? item.name : (entryItemId ? `装备#${entryItemId.slice(0, 8)}` : '未知装备');
+
+                const names = [];
+                const rawAffixes = Array.isArray(entry.affixes) ? entry.affixes : [];
+                rawAffixes.forEach((a) => {
+                    if (!a || typeof a !== 'object') {
+                        return;
+                    }
+                    if (a.name) {
+                        names.push(a.name);
+                    } else if (a.id) {
+                        names.push(`词缀#${String(a.id).slice(0, 8)}`);
+                    }
+                });
+
+                const setLabel = entry.set_id ? this._getSetLabel(entry.set_id) : '无套装';
+                const thresholdMap = (entry.set_thresholds && typeof entry.set_thresholds === 'object') ? entry.set_thresholds : {};
+                const thresholdText = Object.keys(thresholdMap).length > 0
+                    ? ` | 阈值: ${Object.keys(thresholdMap).join('/')}`
+                    : '';
+                const namesText = names.length > 0 ? names.join('、') : '无词缀';
+                return `${itemLabel} | ${setLabel}${thresholdText}\n  · ${namesText}`;
             }).join('\n')
             : '无装备词缀';
 
@@ -176,7 +359,7 @@ Object.assign(LabyrinthiaGame.prototype, {
             ? `常驻效果: ${passiveEffects.length} 条`
             : '常驻效果: 无';
 
-        panel.textContent = `套装: ${setText}\n${affixText}\n${triggerText}\n${passiveText}`;
+        panel.textContent = `套装进度: ${setText}\n${affixText}\n${triggerText}\n${passiveText}`;
     },
 
     updateTurnEffectSummary() {
@@ -752,7 +935,9 @@ Object.assign(LabyrinthiaGame.prototype, {
                 }
 
                 const rarity = item.rarity || 'common';
+                const rarityLabel = this._getItemRarityLabel(rarity);
                 const type = item.item_type || 'misc';
+                const typeLabel = this._getItemTypeLabel(type);
                 const charges = Number(item.max_charges || 0) > 0
                     ? `\n充能: ${item.charges ?? 0}/${item.max_charges}`
                     : '';
@@ -761,7 +946,7 @@ Object.assign(LabyrinthiaGame.prototype, {
                     : '';
                 const lockText = item.is_quest_item ? `\n任务锁定: ${(item.quest_lock_reason || '任务相关物品')}` : '';
 
-                slot.title = `${item.name}\n[${type}/${rarity}]\n${item.description}${charges}${cooldown}${lockText}`;
+                slot.title = `${item.name}\n[${typeLabel}/${rarityLabel}]\n${item.description}${charges}${cooldown}${lockText}`;
                 slot.textContent = (item.name || '?').charAt(0).toUpperCase();
                 slot.dataset.rarity = rarity;
 
@@ -818,16 +1003,11 @@ Object.assign(LabyrinthiaGame.prototype, {
                 return;
             }
             const item = (this.gameState.player.equipped_items || {})[slotName];
-            const labels = {
-                weapon: '武器',
-                armor: '防具',
-                accessory_1: '饰品1',
-                accessory_2: '饰品2'
-            };
+            const label = this._getEquipSlotLabel(slotName);
 
             slotEl.onclick = null;
             if (item) {
-                slotEl.textContent = `${labels[slotName]}: ${item.name}`;
+                slotEl.textContent = `${label}: ${this._buildEquipSlotSummary(item)}`;
                 slotEl.classList.add('filled');
                 slotEl.onclick = () => {
                     const currentItem = (this.gameState.player.inventory || []).find(it => it.id === item.id) || item;
@@ -836,7 +1016,7 @@ Object.assign(LabyrinthiaGame.prototype, {
                     this.updateInventory();
                 };
             } else {
-                slotEl.textContent = `${labels[slotName]}: 空`;
+                slotEl.textContent = `${label}: 空`;
                 slotEl.classList.remove('filled');
             }
         });
@@ -882,23 +1062,10 @@ Object.assign(LabyrinthiaGame.prototype, {
             }).join('\n')
             : '- 无';
 
-        const itemTypeLabelMap = {
-            weapon: '武器',
-            armor: '防具',
-            consumable: '消耗品',
-            misc: '杂项'
-        };
-        const itemRarityLabelMap = {
-            common: '普通',
-            uncommon: '精良',
-            rare: '稀有',
-            epic: '史诗',
-            legendary: '传说'
-        };
         const itemTypeRaw = String(item.item_type || 'misc');
         const itemRarityRaw = String(item.rarity || 'common');
-        const itemTypeLabel = itemTypeLabelMap[itemTypeRaw] || itemTypeRaw;
-        const itemRarityLabel = itemRarityLabelMap[itemRarityRaw] || itemRarityRaw;
+        const itemTypeLabel = this._getItemTypeLabel(itemTypeRaw);
+        const itemRarityLabel = this._getItemRarityLabel(itemRarityRaw);
 
         const equippedItems = this.gameState.player.equipped_items || {};
         const slot = String(item.equip_slot || '');
@@ -909,18 +1076,36 @@ Object.assign(LabyrinthiaGame.prototype, {
         const canEquip = isEquippable && !isCurrentlyEquipped && !hasOtherInSlot;
         const canReplace = hasOtherInSlot;
         const canUnequip = isCurrentlyEquipped;
-        const slotText = slot ? `槽位: ${slot}` : '槽位: 无';
+        const slotText = slot ? `槽位: ${this._getEquipSlotLabel(slot)}` : '槽位: 无';
+
+        const inferredEquippableByType = itemTypeRaw === 'weapon' || itemTypeRaw === 'armor';
+        const mismatchHint = inferredEquippableByType && !isEquippable
+            ? '警告: 类型看起来是装备，但当前被判定为不可装备'
+            : null;
+
+        const hasPayload = item.effect_payload && typeof item.effect_payload === 'object' && Object.keys(item.effect_payload).length > 0;
+        const sourceHint = hasPayload ? '固定效果（内置效果载荷）' : '动态效果（LLM实时生成）';
+
+        const policyRaw = String((item.properties || {}).consumption_policy || 'auto');
+        const policyText = this._getConsumptionPolicyLabel(policyRaw);
+        const bonusLines = this._extractItemBonusLines(item);
+        const bonusText = bonusLines.length > 0 ? bonusLines.map((entry) => `- ${entry}`).join('\n') : '- 暂无可识别加成';
 
         const lines = [
             `${item.name}`,
             `类型: ${itemTypeLabel} / 稀有度: ${itemRarityLabel}`,
             `${slotText}`,
             `装备状态: ${isCurrentlyEquipped ? '已装备' : '未装备'}`,
+            `效果来源: ${sourceHint}`,
+            `消耗策略: ${policyText}`,
             `描述: ${item.description || '无'}`,
             `使用说明: ${item.usage_description || '无'}`,
+            `装备/词缀加成:`,
+            `${bonusText}`,
             `充能: ${(item.max_charges || 0) > 0 ? `${item.charges || 0}/${item.max_charges}` : '无限'}`,
             `冷却: ${item.current_cooldown || 0}/${item.cooldown_turns || 0} 回合`,
             `任务锁定: ${item.is_quest_item ? '是' : '否'}`,
+            ...(mismatchHint ? [mismatchHint] : []),
             `持续效果来源:`,
             `${effectLines}`
         ];

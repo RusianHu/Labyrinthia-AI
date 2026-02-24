@@ -1723,30 +1723,62 @@ body {
 
 .equip-grid {
     display: grid;
-    gap: 6px;
+    gap: 8px;
 }
 
 .equip-slot {
     border: 1px dashed rgba(94, 53, 177, 0.35);
-    background: rgba(255, 255, 255, 0.82);
-    border-radius: 8px;
-    padding: 8px;
-    font-size: 0.82rem;
+    background: linear-gradient(135deg, rgba(255, 255, 255, 0.84), rgba(245, 240, 255, 0.82));
+    border-radius: 10px;
+    padding: 9px 10px;
+    font-size: 0.8rem;
     color: #37474f;
+    line-height: 1.35;
+    transition: all 0.2s ease;
 }
 
 .equip-slot.filled {
     border-style: solid;
-    border-color: rgba(46, 125, 50, 0.5);
-    background: rgba(200, 230, 201, 0.45);
+    border-color: rgba(46, 125, 50, 0.56);
+    background: linear-gradient(135deg, rgba(219, 243, 220, 0.78), rgba(197, 233, 200, 0.7));
+    box-shadow: inset 0 0 0 1px rgba(46, 125, 50, 0.15);
+}
+
+.equip-slot.filled:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 10px rgba(46, 125, 50, 0.18);
 }
 
 #inventory-detail {
-    min-height: 90px;
-    font-size: 0.82rem;
-    line-height: 1.45;
+    min-height: 190px;
+    max-height: 280px;
+    overflow-y: auto;
+    font-size: 0.83rem;
+    line-height: 1.52;
     color: #37474f;
     white-space: pre-wrap;
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.88), rgba(245, 242, 255, 0.84));
+    border: 1px solid rgba(94, 53, 177, 0.2);
+    border-radius: 10px;
+    padding: 10px;
+}
+
+#inventory-detail::-webkit-scrollbar {
+    width: 9px;
+}
+
+#inventory-detail::-webkit-scrollbar-track {
+    background: rgba(94, 53, 177, 0.12);
+    border-radius: 6px;
+}
+
+#inventory-detail::-webkit-scrollbar-thumb {
+    background: linear-gradient(180deg, rgba(94, 53, 177, 0.7), rgba(126, 87, 194, 0.72));
+    border-radius: 6px;
+}
+
+#inventory-detail::-webkit-scrollbar-thumb:hover {
+    background: linear-gradient(180deg, rgba(74, 44, 143, 0.78), rgba(106, 71, 160, 0.8));
 }
 
 .inventory-detail-empty {
