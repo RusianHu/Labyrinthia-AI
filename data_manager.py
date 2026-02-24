@@ -93,6 +93,7 @@ class DataManager:
         # 基础属性
         game_state.id = data.get("id", game_state.id)
         game_state.save_version = int(data.get("save_version", 1) or 1)
+        game_state.equipment_schema_version = int(data.get("equipment_schema_version", 1) or 1)
         game_state.combat_rule_version = int(data.get("combat_rule_version", 1) or 1)
         game_state.combat_authority_mode = str(
             data.get("combat_authority_mode", "local")
@@ -240,6 +241,12 @@ class DataManager:
                 equipped_slots[slot] = self._dict_to_item(item_data)
         character.equipped_items = equipped_slots
 
+        # 运行时字段（兼容旧存档，默认可空）
+        runtime_stats = data.get("runtime_stats", {})
+        character.runtime_stats = runtime_stats if isinstance(runtime_stats, dict) else {}
+        derived_runtime = data.get("derived_runtime", {})
+        character.derived_runtime = derived_runtime if isinstance(derived_runtime, dict) else {}
+
         # 持续状态（兼容旧存档）
         active_effects_data = data.get("active_effects", []) or []
         active_effects = []
@@ -327,11 +334,20 @@ class DataManager:
         item.trigger_affixes = data.get("trigger_affixes", []) if isinstance(data.get("trigger_affixes", []), list) else []
         item.set_id = str(data.get("set_id", "") or "")
         item.set_thresholds = data.get("set_thresholds", {}) if isinstance(data.get("set_thresholds", {}), dict) else {}
+        item.equip_requirements = data.get("equip_requirements", {}) if isinstance(data.get("equip_requirements", {}), dict) else {}
+        try:
+            item.item_power_score = float(data.get("item_power_score", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            item.item_power_score = 0.0
         item.unique_key = str(data.get("unique_key", "") or "")
 
         equip_slot = str(data.get("equip_slot", "") or "")
         allowed_slots = {"", "weapon", "armor", "accessory_1", "accessory_2"}
         item.equip_slot = equip_slot if equip_slot in allowed_slots else ""
+        if not item.equip_slot and item.item_type in {"weapon", "armor"}:
+            item.equip_slot = item.item_type
+        if item.item_type in {"weapon", "armor"} and not bool(data.get("is_equippable", False)):
+            item.is_equippable = True
 
         item.max_charges = max(0, int(data.get("max_charges", 0) or 0))
         item.charges = max(0, min(item.max_charges if item.max_charges > 0 else int(data.get("charges", 0) or 0), int(data.get("charges", item.max_charges) or 0)))

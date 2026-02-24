@@ -53,6 +53,9 @@ class EffectEngine:
         item: Item,
         llm_response: Dict[str, Any],
     ) -> EffectExecutionResult:
+        effect_scope = str(llm_response.get("effect_scope", "active_use") or "active_use")
+        source = str(llm_response.get("source", f"item_use:{getattr(item, 'id', '')}") or f"item_use:{getattr(item, 'id', '')}")
+
         if "item_consumed" in llm_response:
             consumed = bool(llm_response.get("item_consumed"))
         else:
@@ -69,6 +72,7 @@ class EffectEngine:
             events=list(llm_response.get("events", []) or []),
             item_consumed=consumed,
         )
+        result.runtime_debug.append({"effect_scope": effect_scope, "source": source})
 
         effects = llm_response.get("effects", {}) or {}
 
@@ -81,7 +85,7 @@ class EffectEngine:
 
         self._apply_map_changes(game_state, item, effects.get("map_changes", []), result)
         self._apply_inventory_changes(game_state, item, effects.get("inventory_changes", {}), result)
-        self._apply_status_add(game_state.player, effects.get("apply_status_effects", []), result, source_item=item)
+        self._apply_status_add(game_state.player, effects.get("apply_status_effects", []), result, source_item=item, source_override=source)
         self._apply_status_remove(game_state.player, effects.get("remove_status_effects", []), result)
         self._apply_special_effects(game_state, item, effects.get("special_effects", []), result)
 
@@ -378,6 +382,7 @@ class EffectEngine:
         status_list: List[Dict[str, Any]],
         result: EffectExecutionResult,
         source_item: Optional[Item] = None,
+        source_override: str = "",
     ):
         if not isinstance(status_list, list):
             return
@@ -387,7 +392,9 @@ class EffectEngine:
                 continue
 
             effect = StatusEffect.from_dict(status_data)
-            if source_item and not effect.source:
+            if source_override and not effect.source:
+                effect.source = source_override
+            elif source_item and not effect.source:
                 effect.source = f"item:{source_item.name}"
 
             merged = self._merge_or_append_status(player, effect)
@@ -708,6 +715,35 @@ class EffectEngine:
         replay_logs.extend(logs)
         game_state.combat_snapshot["effect_replay_logs"] = replay_logs[-200:]
 
+
+    def apply_equipment_passive_effects(self, player: Character, item: Item, *, slot: str = "") -> List[str]:
+        events: List[str] = []
+        source = f"equip:{slot}:{getattr(item, 'id', '')}"
+        for payload in getattr(item, "equip_passive_effects", []) or []:
+            if not isinstance(payload, dict):
+                continue
+            status_payload = payload.get("status_effect")
+            if isinstance(status_payload, dict):
+                effect = StatusEffect.from_dict(status_payload)
+                if not effect.source:
+                    effect.source = source
+                merged = self._merge_or_append_status(player, effect)
+                events.append(f"装备效果：{effect.name} ({'叠加' if merged else '新效果'})")
+        return events
+
+    def revert_effects_by_source(self, player: Character, source: str) -> int:
+        if not player.active_effects:
+            return 0
+        normalized = self._normalize_effect_list(player)
+        kept: List[StatusEffect] = []
+        removed = 0
+        for effect in normalized:
+            if str(getattr(effect, "source", "") or "") == str(source or ""):
+                removed += 1
+                continue
+            kept.append(effect)
+        player.active_effects = kept
+        return removed
 
 # 全局实例
 effect_engine = EffectEngine()

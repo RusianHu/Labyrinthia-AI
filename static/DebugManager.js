@@ -200,6 +200,23 @@ const DebugMethods = {
             };
             combatJsonElement.textContent = JSON.stringify(payload, null, 2);
         }
+
+        const equipTraceElement = document.getElementById('debug-equip-trace');
+        if (equipTraceElement) {
+            const runtime = (((this.gameState || {}).combat_snapshot || {}).equipment || {}).runtime || {};
+            const traceRows = Array.isArray(runtime.trace) ? runtime.trace : [];
+            if (traceRows.length === 0) {
+                equipTraceElement.textContent = '暂无装备Trace';
+            } else {
+                const traceSummary = {
+                    trace_id: runtime.trace_id || '',
+                    total_rows: traceRows.length,
+                    tail: traceRows.slice(-12),
+                    combat_bonuses: runtime.combat_bonuses || {}
+                };
+                equipTraceElement.textContent = JSON.stringify(traceSummary, null, 2);
+            }
+        }
     },
 
     updateDebugFabVisibility() {

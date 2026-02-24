@@ -1804,6 +1804,33 @@ body {
     font-size: 0.8rem;
 }
 
+.inventory-runtime-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+}
+
+.inventory-runtime-card {
+    background: rgba(255, 255, 255, 0.66);
+    border: 1px solid rgba(94, 53, 177, 0.2);
+    border-radius: 10px;
+    padding: 8px;
+}
+
+.inventory-runtime-card h4 {
+    margin: 0 0 8px;
+    font-size: 0.9rem;
+    color: #4527a0;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.inventory-runtime-card .runtime-panel-content {
+    min-height: 88px;
+    max-height: 190px;
+}
+
 /* ========================================
    初始隐藏状态 - 通过 JavaScript 控制显示
    ======================================== */
@@ -1851,6 +1878,10 @@ body {
     }
 
     .inventory-layout {
+        grid-template-columns: 1fr;
+    }
+
+    .inventory-runtime-grid {
         grid-template-columns: 1fr;
     }
 
@@ -3155,12 +3186,43 @@ body {
     border-left: 3px solid rgba(245, 124, 0, 0.62);
 }
 
+.runtime-panel-content-effective {
+    border-left: 3px solid rgba(30, 136, 229, 0.58);
+}
+
+.runtime-panel-content-trace {
+    border-left: 3px solid rgba(46, 125, 50, 0.56);
+}
+
 .runtime-panel-content-combat {
     border-left: 3px solid rgba(198, 40, 40, 0.56);
 }
 
 #debug-combat-json {
     max-height: 260px;
+}
+
+#debug-equip-trace {
+    max-height: 260px;
+}
+
+.equip-slot-changed {
+    animation: equip-slot-flash 0.4s ease;
+}
+
+@keyframes equip-slot-flash {
+    0% {
+        box-shadow: 0 0 0 rgba(255, 193, 7, 0);
+        transform: translateY(0);
+    }
+    50% {
+        box-shadow: 0 0 14px rgba(255, 193, 7, 0.65);
+        transform: translateY(-1px);
+    }
+    100% {
+        box-shadow: 0 0 0 rgba(255, 193, 7, 0);
+        transform: translateY(0);
+    }
 }
 
 /* 调试按钮样式 */

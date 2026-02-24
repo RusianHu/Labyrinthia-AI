@@ -67,6 +67,8 @@ Object.assign(LabyrinthiaGame.prototype, {
             document.getElementById('current-map-name').textContent = this.gameState.current_map.name || '未知区域';
         }
 
+        this.updateEffectiveRuntimePanel();
+        this.updateEquipmentTracePanel();
         this.updateStatusRuntimePanel();
         this.updateEquipmentAffixPanel();
         this.updateTurnEffectSummary();
@@ -187,8 +189,158 @@ Object.assign(LabyrinthiaGame.prototype, {
     },
 
     _formatPercent(value) {
+        const num = Number(value);
+        if (!Number.isFinite(num)) {
+            return '0%';
+        }
+
+        const abs = Math.abs(num);
+        const percent = abs <= 1 ? num * 100 : num;
+        return `${Math.round(percent)}%`;
+    },
+
+    _formatSignedPercent(value) {
+        const normalized = this._formatPercent(value);
+        if (normalized === '0%' || normalized.startsWith('-')) {
+            return normalized;
+        }
+        return `+${normalized}`;
+    },
+
+    _formatSigned(value) {
         const num = Number(value || 0);
-        return `${Math.round(num * 100)}%`;
+        return num > 0 ? `+${num}` : `${num}`;
+    },
+
+    _collectItemCombatBonuses(item) {
+        if (!item || typeof item !== 'object') {
+            return {
+                hit_bonus: 0,
+                damage_bonus: 0,
+                critical_bonus: 0,
+                ac_bonus: 0,
+                shield_bonus: 0
+            };
+        }
+
+        const total = {
+            hit_bonus: 0,
+            damage_bonus: 0,
+            critical_bonus: 0,
+            ac_bonus: 0,
+            shield_bonus: 0
+        };
+
+        const mergeOne = (payload) => {
+            if (!payload || typeof payload !== 'object') {
+                return;
+            }
+            total.hit_bonus += Number(payload.hit_bonus || payload.attack_bonus || 0);
+            total.damage_bonus += Number(payload.damage_bonus || 0);
+            total.critical_bonus += Number(payload.critical_bonus || 0);
+            total.ac_bonus += Number(payload.ac_bonus || 0);
+            total.shield_bonus += Number(payload.shield_bonus || 0);
+        };
+
+        mergeOne(item.properties || {});
+        [item.affixes, item.equip_passive_effects, item.trigger_affixes].forEach((group) => {
+            if (!Array.isArray(group)) {
+                return;
+            }
+            group.forEach(mergeOne);
+        });
+
+        return total;
+    },
+
+    _buildEquipPreviewDelta(item) {
+        const snapshot = (this.gameState && this.gameState.combat_snapshot) || {};
+        const playerSnapshot = snapshot.player || {};
+        const equipmentRuntime = ((snapshot.equipment || {}).runtime || {});
+        const currentBonuses = equipmentRuntime.combat_bonuses || {};
+        const equippedItems = (this.gameState && this.gameState.player && this.gameState.player.equipped_items) || {};
+
+        const slot = String(item?.equip_slot || '');
+        const currentInSlot = slot ? equippedItems[slot] : null;
+        const targetBonus = this._collectItemCombatBonuses(item);
+        const slotBonus = this._collectItemCombatBonuses(currentInSlot);
+
+        const hitAfter = Number(currentBonuses.hit_bonus || 0) - Number(slotBonus.hit_bonus || 0) + Number(targetBonus.hit_bonus || 0);
+        const damageAfter = Number(currentBonuses.damage_bonus || 0) - Number(slotBonus.damage_bonus || 0) + Number(targetBonus.damage_bonus || 0);
+        const criticalAfter = Number(currentBonuses.critical_bonus || 0) - Number(slotBonus.critical_bonus || 0) + Number(targetBonus.critical_bonus || 0);
+
+        const acCurrent = Number(playerSnapshot.ac_effective || 0);
+        const acAfter = acCurrent - Number(slotBonus.ac_bonus || 0) + Number(targetBonus.ac_bonus || 0);
+
+        return {
+            acCurrent,
+            acAfter,
+            hitCurrent: Number(currentBonuses.hit_bonus || 0),
+            hitAfter,
+            damageCurrent: Number(currentBonuses.damage_bonus || 0),
+            damageAfter,
+            criticalCurrent: Number(currentBonuses.critical_bonus || 0),
+            criticalAfter,
+            replacingName: currentInSlot ? currentInSlot.name : ''
+        };
+    },
+
+    updateEffectiveRuntimePanel() {
+        const panel = document.getElementById('effective-runtime-panel');
+        if (!panel) return;
+
+        const snapshot = (this.gameState && this.gameState.combat_snapshot) || {};
+        const playerSnapshot = snapshot.player || {};
+        const equipmentRuntime = ((snapshot.equipment || {}).runtime || {});
+        const combatBonuses = equipmentRuntime.combat_bonuses || {};
+        const acComponents = playerSnapshot.ac_components || {};
+        const resistances = playerSnapshot.resistances || {};
+
+        const resText = Object.keys(resistances).length > 0
+            ? Object.entries(resistances).map(([k, v]) => `${this._getDamageTypeLabel(k)}:${this._formatPercent(v)}`).join(' | ')
+            : '无';
+
+        const lines = [
+            `AC总值: ${Number(playerSnapshot.ac_effective || 0)} (旧口径:${Number(playerSnapshot.ac_legacy || 0)})`,
+            `AC分解: 基础 ${this._formatSigned(acComponents.base || 0)} / 护甲 ${this._formatSigned(acComponents.armor || 0)} / 盾牌 ${this._formatSigned(acComponents.shield || 0)} / 状态 ${this._formatSigned(acComponents.status || 0)} / 情境 ${this._formatSigned(acComponents.situational || 0)} / 惩罚 ${this._formatSigned(0 - Number(acComponents.penalty || 0))}`,
+            `命中加值: ${this._formatSigned(combatBonuses.hit_bonus || 0)} | 伤害加值: ${this._formatSigned(combatBonuses.damage_bonus || 0)} | 暴击加值: ${this._formatPercent(combatBonuses.critical_bonus || 0)}`,
+            `护盾加值: ${this._formatSigned(combatBonuses.shield_bonus || 0)} | 击杀回复: ${this._formatSigned(combatBonuses.heal_on_kill || 0)} | 每回合回复: ${this._formatSigned(combatBonuses.regen_per_turn || 0)}`,
+            `抗性: ${resText}`
+        ];
+
+        panel.textContent = lines.join('\n');
+    },
+
+    updateEquipmentTracePanel() {
+        const panel = document.getElementById('equipment-trace-panel');
+        if (!panel) return;
+
+        const runtime = ((((this.gameState || {}).combat_snapshot || {}).equipment || {}).runtime || {});
+        const traceRows = Array.isArray(runtime.trace) ? runtime.trace : [];
+        if (traceRows.length === 0) {
+            panel.textContent = '暂无装备计算追踪';
+            return;
+        }
+
+        const rows = traceRows.slice(-8).map((row) => {
+            return `${row.stage || '阶段'} | ${row.item_name || row.item_id || '装备'} | ${row.key || '属性'}: ${this._formatSigned(row.before || 0)} -> ${this._formatSigned(row.after || 0)} (变化 ${this._formatSigned(row.delta || 0)})`;
+        });
+        panel.textContent = rows.join('\n');
+    },
+
+    _buildEquipHoverTree(item) {
+        if (!item) {
+            return '空槽位';
+        }
+
+        const bonusLines = this._extractItemBonusLines(item);
+        return [
+            `${item.name}`,
+            `类型: ${this._getItemTypeLabel(item.item_type || 'misc')} | 稀有度: ${this._getItemRarityLabel(item.rarity || 'common')}`,
+            `槽位: ${this._getEquipSlotLabel(item.equip_slot || '')}`,
+            '效果树:',
+            ...(bonusLines.length > 0 ? bonusLines.map((line) => `- ${line}`) : ['- 无显式加成'])
+        ].join('\n');
     },
 
     _extractItemBonusLines(item) {
@@ -203,7 +355,7 @@ Object.assign(LabyrinthiaGame.prototype, {
                 return;
             }
             if (withPercent) {
-                lines.push(`${label}: +${this._formatPercent(num)}`);
+                lines.push(`${label}: ${this._formatSignedPercent(num)}`);
             } else {
                 lines.push(`${label}: ${num > 0 ? '+' : ''}${num}`);
             }
@@ -227,7 +379,7 @@ Object.assign(LabyrinthiaGame.prototype, {
                 if (!num) {
                     return;
                 }
-                lines.push(`${prefix}${this._getDamageTypeLabel(dtype)}: +${this._formatPercent(num)}`);
+                lines.push(`${prefix}${this._getDamageTypeLabel(dtype)}: ${this._formatSignedPercent(num)}`);
             });
         };
 
@@ -997,6 +1149,8 @@ Object.assign(LabyrinthiaGame.prototype, {
         }
 
         const slots = ['weapon', 'armor', 'accessory_1', 'accessory_2'];
+        const prevState = this._lastEquippedSlotState || {};
+        const nextState = {};
         slots.forEach(slotName => {
             const slotEl = equipGrid.querySelector(`[data-slot="${slotName}"]`);
             if (!slotEl) {
@@ -1007,7 +1161,15 @@ Object.assign(LabyrinthiaGame.prototype, {
 
             slotEl.onclick = null;
             if (item) {
-                slotEl.textContent = `${label}: ${this._buildEquipSlotSummary(item)}`;
+                const bonus = this._collectItemCombatBonuses(item);
+                const badges = [];
+                if (Number(bonus.ac_bonus || 0)) badges.push(`AC${this._formatSigned(bonus.ac_bonus)}`);
+                if (Number(bonus.hit_bonus || 0)) badges.push(`命中${this._formatSigned(bonus.hit_bonus)}`);
+                if (Number(bonus.damage_bonus || 0)) badges.push(`伤害${this._formatSigned(bonus.damage_bonus)}`);
+                const badgeText = badges.length > 0 ? ` [${badges.join(' | ')}]` : '';
+
+                slotEl.textContent = `${label}: ${this._buildEquipSlotSummary(item)}${badgeText}`;
+                slotEl.title = this._buildEquipHoverTree(item);
                 slotEl.classList.add('filled');
                 slotEl.onclick = () => {
                     const currentItem = (this.gameState.player.inventory || []).find(it => it.id === item.id) || item;
@@ -1015,11 +1177,24 @@ Object.assign(LabyrinthiaGame.prototype, {
                     this.renderInventoryDetail(currentItem);
                     this.updateInventory();
                 };
+                nextState[slotName] = String(item.id || '');
             } else {
                 slotEl.textContent = `${label}: 空`;
+                slotEl.title = '空槽位';
                 slotEl.classList.remove('filled');
+                nextState[slotName] = '';
+            }
+
+            const beforeId = String(prevState[slotName] || '');
+            const afterId = String(nextState[slotName] || '');
+            if (beforeId !== afterId) {
+                slotEl.classList.remove('equip-slot-changed');
+                void slotEl.offsetWidth;
+                slotEl.classList.add('equip-slot-changed');
             }
         });
+
+        this._lastEquippedSlotState = nextState;
     },
 
     renderInventoryDetail(item) {
@@ -1109,6 +1284,18 @@ Object.assign(LabyrinthiaGame.prototype, {
             `持续效果来源:`,
             `${effectLines}`
         ];
+
+        if (isEquippable) {
+            const preview = this._buildEquipPreviewDelta(item);
+            const replaceHint = preview.replacingName ? ` (替换: ${preview.replacingName})` : '';
+            lines.push(
+                `装备后预估${replaceHint}:`,
+                `- AC: ${preview.acCurrent} -> ${preview.acAfter} (Δ${this._formatSigned(preview.acAfter - preview.acCurrent)})`,
+                `- 命中加值: ${this._formatSigned(preview.hitCurrent)} -> ${this._formatSigned(preview.hitAfter)} (Δ${this._formatSigned(preview.hitAfter - preview.hitCurrent)})`,
+                `- 伤害加值: ${this._formatSigned(preview.damageCurrent)} -> ${this._formatSigned(preview.damageAfter)} (Δ${this._formatSigned(preview.damageAfter - preview.damageCurrent)})`,
+                `- 暴击加值: ${this._formatSignedPercent(preview.criticalCurrent)} -> ${this._formatSignedPercent(preview.criticalAfter)} (变化 ${this._formatSignedPercent(preview.criticalAfter - preview.criticalCurrent)})`
+            );
+        }
 
         detail.className = '';
         detail.textContent = lines.join('\n');

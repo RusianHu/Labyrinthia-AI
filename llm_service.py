@@ -934,6 +934,8 @@ class LLMService:
             "type": "object",
             "properties": {
                 "message": {"type": "string"},
+                "effect_scope": {"type": "string", "enum": ["active_use", "equip_passive", "trigger"]},
+                "source": {"type": "string"},
                 "events": {
                     "type": "array",
                     "items": {"type": "string"}
@@ -1048,12 +1050,16 @@ class LLMService:
         try:
             result = await self._async_generate_json(prompt, schema)
             normalized = self._normalize_item_usage_response(item, result or {})
+            normalized.setdefault("effect_scope", "active_use")
+            normalized.setdefault("source", f"item_use:{item.id}")
             logger.info(f"物品使用LLM响应: {normalized}")
             return normalized
         except Exception as e:
             logger.error(f"处理物品使用失败: {e}")
             fallback = {
                 "message": f"使用{item.name}时发生了意外",
+                "effect_scope": "active_use",
+                "source": f"item_use:{item.id}",
                 "events": ["物品使用失败"],
                 "item_consumed": False,
                 "effects": {}

@@ -363,6 +363,8 @@ class Item:
     trigger_affixes: List[Dict[str, Any]] = field(default_factory=list)
     set_id: str = ""
     set_thresholds: Dict[str, Any] = field(default_factory=dict)
+    equip_requirements: Dict[str, Any] = field(default_factory=dict)
+    item_power_score: float = 0.0
     unique_key: str = ""
     max_charges: int = 0
     charges: int = 0
@@ -393,6 +395,8 @@ class Item:
             "trigger_affixes": self.trigger_affixes,
             "set_id": self.set_id,
             "set_thresholds": self.set_thresholds,
+            "equip_requirements": self.equip_requirements,
+            "item_power_score": self.item_power_score,
             "unique_key": self.unique_key,
             "max_charges": self.max_charges,
             "charges": self.charges,
@@ -455,6 +459,8 @@ class Character:
         "accessory_2": None,
     })
     active_effects: List[StatusEffect] = field(default_factory=list)
+    runtime_stats: Dict[str, Any] = field(default_factory=dict)
+    derived_runtime: Dict[str, Any] = field(default_factory=dict)
     spells: List[Spell] = field(default_factory=list)
     position: tuple = (0, 0)
     # DND技能系统
@@ -526,6 +532,8 @@ class Character:
                 for effect in self.active_effects
             ],
             "spells": [spell.to_dict() for spell in self.spells],
+            "runtime_stats": self.runtime_stats,
+            "derived_runtime": self.derived_runtime,
             "position": self.position,
             "proficiency_bonus": self.proficiency_bonus,
             "skill_proficiencies": self.skill_proficiencies,
@@ -834,6 +842,7 @@ class GameState:
     """游戏状态"""
     id: str = field(default_factory=lambda: str(uuid.uuid4()))
     save_version: int = 2
+    equipment_schema_version: int = 2
     combat_rule_version: int = 1
     combat_authority_mode: str = "local"
     player: Character = field(default_factory=Character)
@@ -860,6 +869,7 @@ class GameState:
         return {
             "id": self.id,
             "save_version": self.save_version,
+            "equipment_schema_version": self.equipment_schema_version,
             "combat_rule_version": self.combat_rule_version,
             "combat_authority_mode": self.combat_authority_mode,
             "player": self.player.to_dict(),

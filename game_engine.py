@@ -479,7 +479,7 @@ class GameEngine:
         stats.ac_components = ac_components
         stats.ac = stats.get_effective_ac()
 
-        equipment_runtime = self._build_equipment_runtime(player)
+        equipment_runtime = self._build_equipment_runtime(player, game_state)
         runtime_bonuses = equipment_runtime.get("combat_bonuses", {}) if isinstance(equipment_runtime, dict) else {}
 
         # 让装备 runtime 的防御向增益进入快照口径（不覆写基础存档字段）
@@ -517,6 +517,17 @@ class GameEngine:
         control = effect_engine.get_action_availability(player)
         status_view = effect_engine.build_status_debug_view(player)
         conflicts = effect_engine.detect_status_conflicts(player)
+        player.runtime_stats = {
+            "equipment": dict(runtime_bonuses) if isinstance(runtime_bonuses, dict) else {},
+            "set_effects": list(equipment_runtime.get("set_effects", [])) if isinstance(equipment_runtime, dict) else [],
+            "trace_id": str(equipment_runtime.get("trace_id", "") or "") if isinstance(equipment_runtime, dict) else "",
+        }
+        player.derived_runtime = {
+            "ac_effective": int(snapshot_ac_effective),
+            "ac_components": dict(snapshot_ac_components),
+            "resistances": dict(effective_resistances),
+            "vulnerabilities": dict(effective_vulnerabilities),
+        }
 
         game_state.combat_snapshot.update(
             {
@@ -615,7 +626,7 @@ class GameEngine:
             rows = rows[-500:]
         tests["ac_hit_curve"] = rows
 
-    def _build_equipment_runtime(self, player: Character) -> Dict[str, Any]:
+    def _build_equipment_runtime(self, player: Character, game_state: Optional[GameState] = None) -> Dict[str, Any]:
         runtime = {
             "set_effects": [],
             "combat_bonuses": {
@@ -630,6 +641,8 @@ class GameEngine:
                 "regen_per_turn": 0,
             },
             "validation_warnings": [],
+            "trace": [],
+            "trace_id": f"equip-runtime-{datetime.utcnow().timestamp()}",
         }
 
         set_counts: Dict[str, int] = {}
@@ -639,14 +652,34 @@ class GameEngine:
             if set_id:
                 set_counts[set_id] = set_counts.get(set_id, 0) + 1
 
+        order_stages = {
+            "base": 10,
+            "equip_passive": 20,
+            "affix": 30,
+            "set": 40,
+            "status": 50,
+            "situational": 60,
+        }
+
+        def _record_trace(entry: Dict[str, Any]):
+            runtime["trace"].append(entry)
+
         for item in items:
             payloads: List[Dict[str, Any]] = []
-            for entry in getattr(item, "affixes", []) or []:
-                if isinstance(entry, dict):
-                    payloads.append(entry)
             for entry in getattr(item, "equip_passive_effects", []) or []:
                 if isinstance(entry, dict):
-                    payloads.append(entry)
+                    payload = dict(entry)
+                    payload.setdefault("effect_scope", "equip_passive")
+                    payload["_source"] = f"equip:{getattr(item, 'equip_slot', '')}:{getattr(item, 'id', '')}"
+                    payload["_stage"] = "equip_passive"
+                    payloads.append(payload)
+            for entry in getattr(item, "affixes", []) or []:
+                if isinstance(entry, dict):
+                    payload = dict(entry)
+                    payload.setdefault("effect_scope", "equip_passive")
+                    payload["_source"] = f"equip:{getattr(item, 'equip_slot', '')}:{getattr(item, 'id', '')}"
+                    payload["_stage"] = "affix"
+                    payloads.append(payload)
 
             set_id = str(getattr(item, "set_id", "") or "")
             thresholds = getattr(item, "set_thresholds", {}) or {}
@@ -666,7 +699,11 @@ class GameEngine:
                                 "effect": effect_payload,
                             }
                         )
-                        payloads.append(effect_payload)
+                        payload = dict(effect_payload)
+                        payload.setdefault("effect_scope", "equip_passive")
+                        payload["_source"] = f"equip:{getattr(item, 'equip_slot', '')}:{getattr(item, 'id', '')}"
+                        payload["_stage"] = "set"
+                        payloads.append(payload)
 
             for payload in payloads:
                 parsed = self._sanitize_equipment_affix_payload(payload)
@@ -677,6 +714,8 @@ class GameEngine:
                 key = parsed["key"]
                 value = parsed["value"]
                 mapping = parsed.get("mapping")
+                stage = str(payload.get("_stage", "equip_passive") or "equip_passive")
+                source = str(payload.get("_source", "") or "")
 
                 if key in {"resistance_bonus", "vulnerability_reduction"}:
                     if isinstance(mapping, dict):
@@ -685,14 +724,77 @@ class GameEngine:
                             dtype = str(damage_type or "")
                             if not dtype:
                                 continue
-                            target[dtype] = float(target.get(dtype, 0.0) or 0.0) + float(amount)
+                            before = float(target.get(dtype, 0.0) or 0.0)
+                            after = before + float(amount)
+                            target[dtype] = after
+                            _record_trace(
+                                {
+                                    "stage": stage,
+                                    "stage_order": order_stages.get(stage, 999),
+                                    "source": source,
+                                    "item_id": getattr(item, "id", ""),
+                                    "item_name": getattr(item, "name", ""),
+                                    "key": key,
+                                    "damage_type": dtype,
+                                    "before": before,
+                                    "delta": float(amount),
+                                    "after": after,
+                                }
+                            )
                     continue
 
                 if key in runtime["combat_bonuses"]:
                     if key in {"critical_bonus"}:
-                        runtime["combat_bonuses"][key] = float(runtime["combat_bonuses"][key]) + float(value)
+                        before = float(runtime["combat_bonuses"][key])
+                        after = before + float(value)
+                        runtime["combat_bonuses"][key] = after
                     else:
-                        runtime["combat_bonuses"][key] = int(runtime["combat_bonuses"][key]) + int(value)
+                        before = int(runtime["combat_bonuses"][key])
+                        after = before + int(value)
+                        runtime["combat_bonuses"][key] = after
+                    _record_trace(
+                        {
+                            "stage": stage,
+                            "stage_order": order_stages.get(stage, 999),
+                            "source": source,
+                            "item_id": getattr(item, "id", ""),
+                            "item_name": getattr(item, "name", ""),
+                            "key": key,
+                            "before": before,
+                            "delta": value,
+                            "after": after,
+                        }
+                    )
+
+        runtime["trace"] = sorted(
+            runtime["trace"],
+            key=lambda row: int(row.get("stage_order", 999) or 999),
+        )
+
+        if game_state is not None and bool(getattr(config.game, "debug_mode", False)):
+            snapshot = game_state.combat_snapshot if isinstance(game_state.combat_snapshot, dict) else {}
+            trace_samples = snapshot.get("equipment_trace_samples", [])
+            if not isinstance(trace_samples, list):
+                trace_samples = []
+            trace_samples.append(
+                {
+                    "trace_id": runtime["trace_id"],
+                    "game_id": str(getattr(game_state, "id", "") or ""),
+                    "turn": int(getattr(game_state, "turn_count", 0) or 0),
+                    "items": [
+                        {
+                            "item_id": getattr(item, "id", ""),
+                            "slot": getattr(item, "equip_slot", ""),
+                            "item_name": getattr(item, "name", ""),
+                        }
+                        for item in items
+                    ],
+                    "combat_bonuses": runtime["combat_bonuses"],
+                    "trace": runtime["trace"],
+                }
+            )
+            snapshot["equipment_trace_samples"] = trace_samples[-100:]
+            game_state.combat_snapshot = snapshot
 
         return runtime
 
@@ -1838,6 +1940,125 @@ class GameEngine:
 
         return True
 
+    def _apply_equipment_state_change(
+        self,
+        game_state: GameState,
+        item: Item,
+        slot: str,
+        action_trace_id: str,
+    ) -> Dict[str, Any]:
+        if slot not in game_state.player.equipped_items:
+            return self._make_action_result(
+                False,
+                f"{item.name} 的装备槽位无效: {slot}",
+                error_code="INVALID_EQUIP_SLOT",
+                retryable=False,
+                reason="invalid_equip_slot",
+                action_trace_id=action_trace_id,
+            )
+
+        req = getattr(item, "equip_requirements", {}) or {}
+        if isinstance(req, dict) and req:
+            min_level = int(req.get("level", 0) or 0)
+            player_level = int(getattr(game_state.player.stats, "level", 1) or 1)
+            if player_level < min_level:
+                return self._make_action_result(
+                    False,
+                    f"等级不足，需 {min_level} 级",
+                    error_code="EQUIP_REQUIREMENT_NOT_MET",
+                    retryable=False,
+                    reason="equip_requirement_not_met",
+                    impact_summary={"equip": {"slot": slot, "state": "rejected", "requirement": "level"}},
+                    action_trace_id=action_trace_id,
+                )
+
+            allowed_classes = req.get("classes", [])
+            if isinstance(allowed_classes, list) and allowed_classes:
+                cls = str(getattr(game_state.player.character_class, "value", "") or "")
+                allowed = {str(v).strip().lower() for v in allowed_classes if str(v).strip()}
+                if cls.lower() not in allowed:
+                    return self._make_action_result(
+                        False,
+                        "职业不满足装备要求",
+                        error_code="EQUIP_REQUIREMENT_NOT_MET",
+                        retryable=False,
+                        reason="equip_requirement_not_met",
+                        impact_summary={"equip": {"slot": slot, "state": "rejected", "requirement": "class"}},
+                        action_trace_id=action_trace_id,
+                    )
+
+            ability_req = req.get("abilities", {})
+            if isinstance(ability_req, dict):
+                for attr, need_raw in ability_req.items():
+                    if not hasattr(game_state.player.abilities, str(attr)):
+                        continue
+                    try:
+                        need = int(need_raw)
+                    except (TypeError, ValueError):
+                        continue
+                    cur = int(getattr(game_state.player.abilities, str(attr), 0) or 0)
+                    if cur < need:
+                        return self._make_action_result(
+                            False,
+                            f"属性不足：{attr} 需 {need}",
+                            error_code="EQUIP_REQUIREMENT_NOT_MET",
+                            retryable=False,
+                            reason="equip_requirement_not_met",
+                            impact_summary={"equip": {"slot": slot, "state": "rejected", "requirement": f"ability:{attr}"}},
+                            action_trace_id=action_trace_id,
+                        )
+
+        equipped = game_state.player.equipped_items.get(slot)
+        if equipped and equipped.id == item.id:
+            game_state.player.equipped_items[slot] = None
+            effect_engine.revert_effects_by_source(game_state.player, f"equip:{slot}:{item.id}")
+            self._rebuild_combat_snapshot(game_state)
+            return self._make_action_result(
+                True,
+                f"卸下了 {item.name}",
+                events=[f"{item.name} 已从 {slot} 卸下"],
+                llm_interaction_required=False,
+                item_name=item.name,
+                item_consumed=False,
+                effects=["unequip"],
+                impact_summary={"inventory": "unchanged", "equip": {"slot": slot, "state": "unequipped"}},
+                action_trace_id=action_trace_id,
+            )
+
+        if equipped and getattr(equipped, "id", None) != item.id:
+            effect_engine.revert_effects_by_source(game_state.player, f"equip:{slot}:{equipped.id}")
+            game_state.player.equipped_items[slot] = None
+            if equipped in game_state.player.inventory:
+                game_state.player.inventory.remove(equipped)
+            game_state.player.inventory.append(equipped)
+
+        unique_key = str(getattr(item, "unique_key", "") or "")
+        if unique_key:
+            for eq_slot, eq_item in list((game_state.player.equipped_items or {}).items()):
+                if eq_slot == slot or eq_item is None:
+                    continue
+                if str(getattr(eq_item, "unique_key", "") or "") == unique_key:
+                    effect_engine.revert_effects_by_source(game_state.player, f"equip:{eq_slot}:{eq_item.id}")
+                    game_state.player.equipped_items[eq_slot] = None
+                    if eq_item in game_state.player.inventory:
+                        game_state.player.inventory.remove(eq_item)
+                    game_state.player.inventory.append(eq_item)
+
+        game_state.player.equipped_items[slot] = item
+        effect_engine.apply_equipment_passive_effects(game_state.player, item, slot=slot)
+        self._rebuild_combat_snapshot(game_state)
+        return self._make_action_result(
+            True,
+            f"装备了 {item.name}",
+            events=[f"{item.name} 已装备到 {slot}"],
+            llm_interaction_required=False,
+            item_name=item.name,
+            item_consumed=False,
+            effects=["equip"],
+            impact_summary={"inventory": "unchanged", "equip": {"slot": slot, "state": "equipped"}},
+            action_trace_id=action_trace_id,
+        )
+
     async def _handle_use_item(self, game_state: GameState, parameters: Dict[str, Any]) -> Dict[str, Any]:
         """处理使用物品行动"""
         item_id = parameters.get("item_id", "")
@@ -1883,62 +2104,7 @@ class GameEngine:
         # 装备型物品：切换装备状态
         if getattr(item, "is_equippable", False):
             slot = getattr(item, "equip_slot", "") or "accessory_1"
-            if slot not in game_state.player.equipped_items:
-                return self._make_action_result(
-                    False,
-                    f"{item.name} 的装备槽位无效: {slot}",
-                    error_code="INVALID_EQUIP_SLOT",
-                    retryable=False,
-                    reason="invalid_equip_slot",
-                    action_trace_id=action_trace_id,
-                )
-
-            equipped = game_state.player.equipped_items.get(slot)
-            if equipped and equipped.id == item.id:
-                game_state.player.equipped_items[slot] = None
-                self._rebuild_combat_snapshot(game_state)
-                return self._make_action_result(
-                    True,
-                    f"卸下了 {item.name}",
-                    events=[f"{item.name} 已从 {slot} 卸下"],
-                    llm_interaction_required=False,
-                    item_name=item.name,
-                    item_consumed=False,
-                    effects=["unequip"],
-                    impact_summary={"inventory": "unchanged", "equip": {"slot": slot, "state": "unequipped"}},
-                    action_trace_id=action_trace_id,
-                )
-
-            if equipped and getattr(equipped, "id", None) != item.id:
-                game_state.player.equipped_items[slot] = None
-                if equipped in game_state.player.inventory:
-                    game_state.player.inventory.remove(equipped)
-                game_state.player.inventory.append(equipped)
-
-            unique_key = str(getattr(item, "unique_key", "") or "")
-            if unique_key:
-                for eq_slot, eq_item in list((game_state.player.equipped_items or {}).items()):
-                    if eq_slot == slot or eq_item is None:
-                        continue
-                    if str(getattr(eq_item, "unique_key", "") or "") == unique_key:
-                        game_state.player.equipped_items[eq_slot] = None
-                        if eq_item in game_state.player.inventory:
-                            game_state.player.inventory.remove(eq_item)
-                        game_state.player.inventory.append(eq_item)
-
-            game_state.player.equipped_items[slot] = item
-            self._rebuild_combat_snapshot(game_state)
-            return self._make_action_result(
-                True,
-                f"装备了 {item.name}",
-                events=[f"{item.name} 已装备到 {slot}"],
-                llm_interaction_required=False,
-                item_name=item.name,
-                item_consumed=False,
-                effects=["equip"],
-                impact_summary={"inventory": "unchanged", "equip": {"slot": slot, "state": "equipped"}},
-                action_trace_id=action_trace_id,
-            )
+            return self._apply_equipment_state_change(game_state, item, slot, action_trace_id)
 
         try:
             # 优先使用固定效果载荷（便于可测与可控）
