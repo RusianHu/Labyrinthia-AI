@@ -15,28 +15,41 @@ logger = logging.getLogger(__name__)
 
 class GameStateLock:
     """单个游戏状态的锁"""
-    
+
     def __init__(self, game_key: Tuple[str, str]):
         self.game_key = game_key
         self.lock = asyncio.Lock()
         self.last_access = time.time()
         self.access_count = 0
         self.current_operation: Optional[str] = None
-        
+        self.current_acquired_at: float = 0.0
+        self.last_wait_ms: int = 0
+        self.last_hold_ms: int = 0
+
     async def acquire(self, operation: str = "unknown"):
         """获取锁"""
         await self.lock.acquire()
-        self.last_access = time.time()
+        now_ts = time.time()
+        self.last_access = now_ts
         self.access_count += 1
         self.current_operation = operation
+        self.current_acquired_at = now_ts
         logger.debug(f"Lock acquired for {self.game_key} - operation: {operation}")
-        
+
     def release(self):
         """释放锁"""
         operation = self.current_operation
+        hold_ms = 0
+        if self.current_acquired_at > 0:
+            hold_ms = int(max(0.0, (time.time() - self.current_acquired_at) * 1000.0))
+
+        self.last_hold_ms = hold_ms
+        self.current_acquired_at = 0.0
         self.current_operation = None
-        self.lock.release()
-        logger.debug(f"Lock released for {self.game_key} - operation: {operation}")
+
+        if self.lock.locked():
+            self.lock.release()
+        logger.debug(f"Lock released for {self.game_key} - operation: {operation}, hold_ms={hold_ms}")
         
     def is_locked(self) -> bool:
         """检查是否已锁定"""
@@ -83,20 +96,24 @@ class GameStateLockManager:
         
         # 记录等待时间
         wait_start = time.time()
-        
+        lock_acquired = False
+
         try:
             await lock.acquire(operation)
+            lock_acquired = True
             wait_time = time.time() - wait_start
-            
+            lock.last_wait_ms = int(max(0.0, wait_time * 1000.0))
+
             if wait_time > 0.1:  # 如果等待超过100ms，记录警告
                 logger.warning(
                     f"Lock wait time for {game_key} ({operation}): {wait_time:.3f}s"
                 )
-            
+
             yield lock
-            
+
         finally:
-            lock.release()
+            if lock_acquired:
+                lock.release()
     
     async def cleanup_unused_locks(self, timeout_seconds: float = 3600):
         """
@@ -136,7 +153,9 @@ class GameStateLockManager:
                 "is_locked": lock.is_locked(),
                 "access_count": lock.access_count,
                 "last_access": datetime.fromtimestamp(lock.last_access).isoformat(),
-                "current_operation": lock.current_operation
+                "current_operation": lock.current_operation,
+                "last_wait_ms": lock.last_wait_ms,
+                "last_hold_ms": lock.last_hold_ms,
             })
         
         return stats

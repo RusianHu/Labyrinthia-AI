@@ -8,6 +8,19 @@ class LocalGameEngine {
         this.lastSyncTurn = 0;
     }
 
+    getCombatAuthorityMode() {
+        const mode = this.game?.config?.game?.combat_authority_mode;
+        if (typeof mode === 'string' && ['local', 'hybrid', 'server'].includes(mode)) {
+            return mode;
+        }
+        return 'local';
+    }
+
+    isServerAuthoritativeCombat() {
+        const mode = this.getCombatAuthorityMode();
+        return mode === 'hybrid' || mode === 'server';
+    }
+
     // ==================== 工具方法 ====================
 
     /**
@@ -778,6 +791,11 @@ class LocalGameEngine {
 
         console.log('[LocalGameEngine] Moving player:', direction);
 
+        if (this.isServerAuthoritativeCombat()) {
+            await this.game.performAction('move', { direction });
+            return;
+        }
+
         // 计算新位置
         const newPos = this.calculateNewPosition(direction);
         if (!newPos) {
@@ -944,6 +962,10 @@ class LocalGameEngine {
      * 怪物攻击玩家
      */
     monsterAttackPlayer(monster) {
+        if (this.isServerAuthoritativeCombat()) {
+            return;
+        }
+
         const gameState = this.getGameState();
         const player = gameState.player;
 
@@ -970,6 +992,10 @@ class LocalGameEngine {
      * 处理怪物回合
      */
     async processMonsterTurns() {
+        if (this.isServerAuthoritativeCombat()) {
+            return;
+        }
+
         const gameState = this.getGameState();
         if (!gameState || gameState.is_game_over) return;
 
@@ -1036,6 +1062,8 @@ class LocalGameEngine {
 
         try {
             // 【重要】先调用后端战斗结果管理器（此时怪物还在列表中）
+            const idempotencyKey = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+            const clientTraceId = `client-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
             const response = await fetch(`/api/game/${gameState.id}/combat-result`, {
                 method: 'POST',
                 headers: {
@@ -1043,7 +1071,9 @@ class LocalGameEngine {
                 },
                 body: JSON.stringify({
                     monster_id: monster.id,
-                    damage_dealt: damageDealt
+                    damage_dealt: damageDealt,
+                    idempotency_key: idempotencyKey,
+                    client_trace_id: clientTraceId
                 })
             });
 
@@ -1097,17 +1127,21 @@ class LocalGameEngine {
         } catch (error) {
             console.error('[LocalGameEngine] Error processing monster death:', error);
 
-            // 降级处理：使用本地逻辑
-            this.addMessage(`${monster.name} 被击败了！`, 'combat');
+            if (this.isServerAuthoritativeCombat()) {
+                this.addMessage('战斗结算失败，请稍后重试', 'error');
+            } else {
+                // 降级处理：使用本地逻辑
+                this.addMessage(`${monster.name} 被击败了！`, 'combat');
 
-            // 获得经验值
-            const expGain = Math.floor(monster.challenge_rating * 100);
-            player.stats.experience += expGain;
-            this.addMessage(`获得了 ${expGain} 点经验`, 'system');
+                // 获得经验值
+                const expGain = Math.floor(monster.challenge_rating * 100);
+                player.stats.experience += expGain;
+                this.addMessage(`获得了 ${expGain} 点经验`, 'system');
 
-            // 检查升级
-            if (this.checkLevelUp(player)) {
-                this.addMessage('恭喜升级！', 'success');
+                // 检查升级
+                if (this.checkLevelUp(player)) {
+                    this.addMessage('恭喜升级！', 'success');
+                }
             }
         } finally {
             // 【关键修复】在移除怪物之前触发特效（此时怪物图标还在DOM中）
@@ -1211,6 +1245,24 @@ class LocalGameEngine {
         const gameState = this.getGameState();
         const player = gameState.player;
         const monster = this.findMonster(monsterId);
+
+        if (this.isServerAuthoritativeCombat()) {
+            const idempotencyKey = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+            const clientTraceId = `client-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+            const predictedDamage = this.calculateDamage(player, monster);
+            await this.game.performAction('attack', {
+                target_id: monsterId,
+                idempotency_key: idempotencyKey,
+                client_trace_id: clientTraceId,
+                client_prediction: {
+                    hit: true,
+                    damage: Math.max(0, predictedDamage),
+                    death: monster.stats.hp - predictedDamage <= 0,
+                    exp: 0,
+                },
+            });
+            return;
+        }
 
         // 【修复】检查游戏是否正在加载中
         if (this.game.isLoading) {

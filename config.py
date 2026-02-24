@@ -188,6 +188,8 @@ class GameConfig:
     # 战斗设置
     max_combat_rounds: int = 50
     critical_hit_chance: float = 0.05
+    combat_authority_mode: str = "local"          # local | hybrid | server
+    combat_diff_threshold: int = 5                 # hybrid差异阈值（命中/伤害/死亡/经验）
 
     # 战斗叙述设置
     enable_combat_narrative: bool = True           # 启用战斗叙述生成
@@ -393,6 +395,17 @@ class Config:
             provider = map_provider.strip().lower()
             if provider in ("llm", "local"):
                 self.game.map_generation_provider = provider
+
+        if combat_authority_mode := os.getenv("COMBAT_AUTHORITY_MODE"):
+            mode = combat_authority_mode.strip().lower()
+            if mode in ("local", "hybrid", "server"):
+                self.game.combat_authority_mode = mode
+
+        if combat_diff_threshold := os.getenv("COMBAT_DIFF_THRESHOLD"):
+            try:
+                self.game.combat_diff_threshold = max(0, int(combat_diff_threshold))
+            except ValueError:
+                pass
 
         if map_fallback := os.getenv("MAP_GENERATION_FALLBACK_TO_LLM"):
             self.game.map_generation_fallback_to_llm = map_fallback.lower() in ("true", "1", "yes")

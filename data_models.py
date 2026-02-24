@@ -720,6 +720,8 @@ class GameState:
     """游戏状态"""
     id: str = field(default_factory=lambda: str(uuid.uuid4()))
     save_version: int = 2
+    combat_rule_version: int = 1
+    combat_authority_mode: str = "local"
     player: Character = field(default_factory=Character)
     current_map: GameMap = field(default_factory=GameMap)
     monsters: List[Monster] = field(default_factory=list)
@@ -742,6 +744,8 @@ class GameState:
         return {
             "id": self.id,
             "save_version": self.save_version,
+            "combat_rule_version": self.combat_rule_version,
+            "combat_authority_mode": self.combat_authority_mode,
             "player": self.player.to_dict(),
             "current_map": self.current_map.to_dict(),
             "monsters": [monster.to_dict() for monster in self.monsters],

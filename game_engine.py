@@ -7,6 +7,7 @@ import asyncio
 import random
 import logging
 import copy
+import json
 from typing import Dict, List, Optional, Tuple, Any
 from datetime import datetime, timedelta
 
@@ -42,8 +43,11 @@ class GameEngine:
         self.auto_save_tasks: Dict[Tuple[str, str], asyncio.Task] = {}
         self.last_access_time: Dict[Tuple[str, str], float] = {}  # 记录最后访问时间
         self.cleanup_task_started = False  # 标记清理任务是否已启动
-        # 幂等结果缓存：key=(user_id, game_id) -> {"{action}:{idempotency_key}": result}
+        # 幂等结果缓存：key=(user_id, game_id) -> {"{action}:{idempotency_key}": payload}
+        # payload 结构：{"result": Dict[str, Any], "fingerprint": str, "created_at": float}
         self.action_idempotency_cache: Dict[Tuple[str, str], Dict[str, Dict[str, Any]]] = {}
+        self.idempotency_cache_ttl_seconds: int = 120
+        self.idempotency_cache_max_entries: int = 256
         # 丢弃撤销缓存：key=(user_id, game_id) -> {undo_token: {item, position, expires_turn}}
         self.drop_undo_cache: Dict[Tuple[str, str], Dict[str, Dict[str, Any]]] = {}
 
@@ -80,6 +84,54 @@ class GameEngine:
             self.action_idempotency_cache[game_key] = {}
         return self.action_idempotency_cache[game_key]
 
+    def _make_idempotency_fingerprint(self, action: str, parameters: Dict[str, Any]) -> str:
+        safe_params: Dict[str, Any] = {}
+        if action == "attack":
+            safe_params["target_id"] = str(parameters.get("target_id", "") or "")
+        elif action in {"use_item", "drop_item"}:
+            safe_params["item_id"] = str(parameters.get("item_id", "") or "")
+            safe_params["force"] = bool(parameters.get("force", False))
+        elif action == "cast_spell":
+            safe_params["spell_id"] = str(parameters.get("spell_id", "") or "")
+            safe_params["target_id"] = str(parameters.get("target_id", "") or "")
+
+        return json.dumps(safe_params, sort_keys=True, ensure_ascii=False)
+
+    def _prune_idempotency_cache(self, game_key: Tuple[str, str]):
+        cache = self._get_idempotency_cache(game_key)
+        if not cache:
+            return
+
+        now_ts = datetime.utcnow().timestamp()
+        ttl = max(1, int(self.idempotency_cache_ttl_seconds))
+
+        expired_keys: List[str] = []
+        for key, payload in cache.items():
+            if not isinstance(payload, dict):
+                continue
+            created_at = payload.get("created_at")
+            if isinstance(created_at, (int, float)) and (now_ts - float(created_at)) > ttl:
+                expired_keys.append(key)
+
+        for key in expired_keys:
+            cache.pop(key, None)
+
+        max_entries = max(1, int(self.idempotency_cache_max_entries))
+        if len(cache) > max_entries:
+            sortable: List[Tuple[str, float]] = []
+            for key, payload in cache.items():
+                created_at = 0.0
+                if isinstance(payload, dict):
+                    created_val = payload.get("created_at")
+                    if isinstance(created_val, (int, float)):
+                        created_at = float(created_val)
+                sortable.append((key, created_at))
+
+            sortable.sort(key=lambda item: item[1])
+            trim_count = len(cache) - max_entries
+            for key, _ in sortable[:trim_count]:
+                cache.pop(key, None)
+
     def _get_cached_action_result(
         self,
         game_key: Tuple[str, str],
@@ -89,12 +141,39 @@ class GameEngine:
         idempotency_key = str(parameters.get("idempotency_key", "") or "").strip()
         if not idempotency_key:
             return None
+
+        self._prune_idempotency_cache(game_key)
+
         cache_key = f"{action}:{idempotency_key}"
         cached = self._get_idempotency_cache(game_key).get(cache_key)
         if not cached:
             return None
 
-        replay = copy.deepcopy(cached)
+        cached_result: Optional[Dict[str, Any]] = None
+        cached_fingerprint = ""
+        if isinstance(cached, dict) and "result" in cached:
+            maybe_result = cached.get("result")
+            if isinstance(maybe_result, dict):
+                cached_result = maybe_result
+            cached_fingerprint = str(cached.get("fingerprint", "") or "")
+        elif isinstance(cached, dict):
+            # 兼容旧结构
+            cached_result = cached
+
+        if cached_result is None:
+            return None
+
+        request_fingerprint = self._make_idempotency_fingerprint(action, parameters)
+        if cached_fingerprint and cached_fingerprint != request_fingerprint:
+            logger.warning(
+                "Idempotency key fingerprint mismatch for %s, action=%s, key=%s",
+                game_key,
+                action,
+                idempotency_key,
+            )
+            return None
+
+        replay = copy.deepcopy(cached_result)
         replay["idempotent_replay"] = True
         if "events" not in replay or not isinstance(replay["events"], list):
             replay["events"] = []
@@ -113,9 +192,14 @@ class GameEngine:
         if not idempotency_key:
             return
         cache_key = f"{action}:{idempotency_key}"
-        cached = copy.deepcopy(result)
-        cached.pop("idempotent_replay", None)
-        self._get_idempotency_cache(game_key)[cache_key] = cached
+        cached_result = copy.deepcopy(result)
+        cached_result.pop("idempotent_replay", None)
+        self._get_idempotency_cache(game_key)[cache_key] = {
+            "result": cached_result,
+            "fingerprint": self._make_idempotency_fingerprint(action, parameters),
+            "created_at": datetime.utcnow().timestamp(),
+        }
+        self._prune_idempotency_cache(game_key)
 
     def _get_drop_undo_cache(self, game_key: Tuple[str, str]) -> Dict[str, Dict[str, Any]]:
         if game_key not in self.drop_undo_cache:
@@ -143,6 +227,10 @@ class GameEngine:
             创建的游戏状态
         """
         game_state = GameState()
+        game_state.combat_rule_version = 1
+        game_state.combat_authority_mode = (config.game.combat_authority_mode or "local").strip().lower()
+        if game_state.combat_authority_mode not in {"local", "hybrid", "server"}:
+            game_state.combat_authority_mode = "local"
 
         # 创建玩家角色
         game_state.player = await self._create_player_character(player_name, character_class)
@@ -401,7 +489,7 @@ class GameEngine:
         result = self._make_action_result(True, "", events=[])
         self._cleanup_drop_undo_entries(game_key, game_state.turn_count)
 
-        if action in {"use_item", "drop_item"}:
+        if action in {"use_item", "drop_item", "attack"}:
             replay = self._get_cached_action_result(game_key, action, parameters)
             if replay is not None:
                 return replay
@@ -555,7 +643,7 @@ class GameEngine:
                 result.get("reason"),
             )
 
-        if action in {"use_item", "drop_item"} and bool(result.get("success", False)):
+        if action in {"use_item", "drop_item", "attack"} and bool(result.get("success", False)):
             self._store_action_result(game_key, action, parameters, result)
 
         return result

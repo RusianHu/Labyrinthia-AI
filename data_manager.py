@@ -93,6 +93,23 @@ class DataManager:
         # 基础属性
         game_state.id = data.get("id", game_state.id)
         game_state.save_version = int(data.get("save_version", 1) or 1)
+        game_state.combat_rule_version = int(data.get("combat_rule_version", 1) or 1)
+        game_state.combat_authority_mode = str(
+            data.get("combat_authority_mode", "local")
+            or "local"
+        ).strip().lower()
+        if game_state.combat_authority_mode not in {"local", "hybrid", "server"}:
+            game_state.combat_authority_mode = "local"
+
+        if "combat_rule_version" not in data:
+            logger.info("Load-time migration: game=%s missing combat_rule_version, backfill=1", game_state.id)
+        if "combat_authority_mode" not in data:
+            logger.info(
+                "Load-time migration: game=%s missing combat_authority_mode, backfill=%s",
+                game_state.id,
+                game_state.combat_authority_mode,
+            )
+
         game_state.turn_count = data.get("turn_count", 0)
         game_state.game_time = data.get("game_time", 0)
 

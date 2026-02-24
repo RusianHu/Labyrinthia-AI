@@ -39,8 +39,11 @@ Object.assign(LabyrinthiaGame.prototype, {
 
         try {
             const params = { ...(parameters || {}) };
-            if ((action === 'use_item' || action === 'drop_item') && !params.idempotency_key) {
+            if ((action === 'use_item' || action === 'drop_item' || action === 'attack') && !params.idempotency_key) {
                 params.idempotency_key = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+            }
+            if (!params.client_trace_id) {
+                params.client_trace_id = `client-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
             }
 
             const requestData = {

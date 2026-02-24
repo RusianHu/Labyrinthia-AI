@@ -8,12 +8,14 @@ import logging
 import random
 import time
 import json
+import re
 import tempfile
 import uuid
 from datetime import datetime
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Tuple
 from contextlib import asynccontextmanager
 from pathlib import Path
+import hashlib
 
 from fastapi import FastAPI, HTTPException, Request, Response, UploadFile, File
 from fastapi.staticfiles import StaticFiles
@@ -129,6 +131,181 @@ def _normalize_action_response(
 
 def _build_context_key(user_id: str, game_id: str) -> str:
     return f"{user_id}:{game_id}"
+
+
+def _safe_int(value: Any, default: int = 0) -> int:
+    try:
+        if value is None:
+            return default
+        return int(float(value))
+    except (TypeError, ValueError, OverflowError):
+        return default
+
+
+def _extract_experience(events: List[str]) -> int:
+    for event in events:
+        if "经验" not in event:
+            continue
+        match = re.search(r"(\d+)", str(event))
+        if match:
+            return _safe_int(match.group(1), 0)
+    return 0
+
+
+def _build_action_combat_projection(result: Dict[str, Any]) -> Dict[str, Any]:
+    events = result.get("events") if isinstance(result.get("events"), list) else []
+    damage = _safe_int(result.get("damage", 0), 0)
+    death = any("被击败" in str(evt) for evt in events)
+    return {
+        "hit": bool(result.get("success", False)),
+        "damage": damage,
+        "death": death,
+        "exp": _extract_experience(events),
+    }
+
+
+def _normalize_prediction(raw_prediction: Any) -> Dict[str, Any]:
+    if not isinstance(raw_prediction, dict):
+        return {}
+    normalized: Dict[str, Any] = {}
+    if "hit" in raw_prediction:
+        normalized["hit"] = bool(raw_prediction.get("hit"))
+    if "damage" in raw_prediction:
+        normalized["damage"] = _safe_int(raw_prediction.get("damage"), 0)
+    if "death" in raw_prediction:
+        normalized["death"] = bool(raw_prediction.get("death"))
+    if "exp" in raw_prediction:
+        normalized["exp"] = _safe_int(raw_prediction.get("exp"), 0)
+    return normalized
+
+
+def _safe_authority_mode(value: Any, fallback: str = "local") -> str:
+    mode = str(value or fallback or "local").strip().lower()
+    if mode not in {"local", "hybrid", "server"}:
+        return "local"
+    return mode
+
+
+def _build_http_exception_detail(
+    message: str,
+    trace_id: str,
+    error_code: str,
+    *,
+    extra: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    payload: Dict[str, Any] = {
+        "message": message,
+        "trace_id": trace_id,
+        "error_code": error_code,
+    }
+    if isinstance(extra, dict):
+        payload.update(extra)
+    return payload
+
+
+def _normalize_http_exception(
+    exc: HTTPException,
+    trace_id: str,
+    fallback_error_code: str,
+) -> Tuple[int, Dict[str, Any]]:
+    detail = exc.detail
+    if isinstance(detail, dict):
+        message = str(detail.get("message") or detail.get("detail") or "请求失败")
+        error_code = str(detail.get("error_code") or fallback_error_code)
+        payload = dict(detail)
+        payload["message"] = message
+        payload["trace_id"] = trace_id
+        payload["error_code"] = error_code
+        return exc.status_code, payload
+
+    if isinstance(detail, str) and detail.strip():
+        message = detail.strip()
+    else:
+        message = "请求失败"
+
+    return exc.status_code, _build_http_exception_detail(message, trace_id, fallback_error_code)
+
+
+def _emit_hybrid_diff_log(
+    *,
+    trace_id: str,
+    action: str,
+    user_id: str,
+    game_id: str,
+    client_trace_id: str,
+    idempotency_key: str,
+    predicted: Dict[str, Any],
+    authoritative: Dict[str, Any],
+    lock_wait_ms: int,
+    lock_hold_ms: int,
+    operation: str,
+    authority_mode: str,
+    rule_version: int,
+):
+    if action != "attack":
+        return
+    if _safe_authority_mode(authority_mode) != "hybrid":
+        return
+    if not config.game.debug_mode:
+        return
+
+    diff_metrics: Dict[str, Any] = {}
+    warning_flags: List[str] = []
+    threshold = max(0, int(getattr(config.game, "combat_diff_threshold", 5)))
+
+    for metric in ("hit", "damage", "death", "exp"):
+        if metric not in predicted:
+            continue
+
+        p_val = predicted.get(metric)
+        a_val = authoritative.get(metric)
+
+        if isinstance(p_val, bool):
+            delta = int(bool(a_val)) - int(bool(p_val))
+            diff_metrics[metric] = {
+                "predicted": bool(p_val),
+                "authoritative": bool(a_val),
+                "delta": delta,
+            }
+            if delta != 0:
+                warning_flags.append(f"{metric}_mismatch")
+            continue
+
+        p_num = _safe_int(p_val, 0)
+        a_num = _safe_int(a_val, 0)
+        delta = a_num - p_num
+        diff_metrics[metric] = {
+            "predicted": p_num,
+            "authoritative": a_num,
+            "delta": delta,
+        }
+        if abs(delta) > threshold:
+            warning_flags.append(f"{metric}_delta_exceeds_threshold")
+
+    log_payload = {
+        "timestamp": datetime.utcnow().isoformat(),
+        "trace_id": trace_id,
+        "client_trace_id": client_trace_id,
+        "game_id": game_id,
+        "user_id": user_id,
+        "phase": "phase_0_5_hybrid",
+        "authority_mode": _safe_authority_mode(authority_mode),
+        "rule_version": max(1, _safe_int(rule_version, 1)),
+        "action": action,
+        "idempotency_key": idempotency_key,
+        "predicted": predicted,
+        "authoritative": authoritative,
+        "diff_metrics": diff_metrics,
+        "warning_flags": warning_flags,
+        "lock_wait_ms": max(0, int(lock_wait_ms)),
+        "lock_hold_ms": max(0, int(lock_hold_ms)),
+        "operation": operation,
+    }
+
+    if warning_flags:
+        logger.warning("combat_hybrid_diff %s", json.dumps(log_payload, ensure_ascii=False))
+    else:
+        logger.debug("combat_hybrid_diff %s", json.dumps(log_payload, ensure_ascii=False))
 
 
 class SyncStateRequest(BaseModel):
@@ -562,7 +739,7 @@ async def perform_action(request: ActionRequest, http_request: Request, response
         if not isinstance(sanitized_params, dict):
             sanitized_params = {}
 
-        if request.action in {"use_item", "drop_item"}:
+        if request.action in {"use_item", "drop_item", "attack"}:
             idempotency_key = sanitized_params.get("idempotency_key")
             if not idempotency_key:
                 idempotency_key = str(uuid.uuid4())
@@ -576,7 +753,8 @@ async def perform_action(request: ActionRequest, http_request: Request, response
         # 更新访问时间
         game_engine.update_access_time(user_id, request.game_id)
 
-        async with game_state_lock_manager.lock_game_state(user_id, request.game_id, f"action:{request.action}"):
+        lock_operation = f"action:{request.action}"
+        async with game_state_lock_manager.lock_game_state(user_id, request.game_id, lock_operation) as state_lock:
             result = await game_engine.process_player_action(
                 user_id=user_id,
                 game_id=request.game_id,
@@ -584,10 +762,46 @@ async def perform_action(request: ActionRequest, http_request: Request, response
                 parameters=sanitized_params
             )
 
-        return _normalize_action_response(request.action, trace_id, result)
+        normalized_result = _normalize_action_response(request.action, trace_id, result)
 
-    except HTTPException:
-        raise
+        game_state_for_log = game_engine.active_games.get((user_id, request.game_id))
+        authority_mode_for_log = _safe_authority_mode(
+            getattr(game_state_for_log, "combat_authority_mode", config.game.combat_authority_mode)
+        )
+        rule_version_for_log = _safe_int(getattr(game_state_for_log, "combat_rule_version", 1), 1)
+
+        _emit_hybrid_diff_log(
+            trace_id=trace_id,
+            action=request.action,
+            user_id=user_id,
+            game_id=request.game_id,
+            client_trace_id=str(sanitized_params.get("client_trace_id", "") or ""),
+            idempotency_key=str(sanitized_params.get("idempotency_key", "") or ""),
+            predicted=_normalize_prediction(sanitized_params.get("client_prediction")),
+            authoritative=_build_action_combat_projection(normalized_result),
+            lock_wait_ms=getattr(state_lock, "last_wait_ms", 0),
+            lock_hold_ms=getattr(state_lock, "last_hold_ms", 0),
+            operation=lock_operation,
+            authority_mode=authority_mode_for_log,
+            rule_version=rule_version_for_log,
+        )
+
+        return normalized_result
+
+    except HTTPException as exc:
+        status_code, detail = _normalize_http_exception(exc, trace_id, "ACTION_BAD_REQUEST")
+        normalized = _normalize_action_response(
+            request.action,
+            trace_id,
+            {
+                "success": False,
+                "message": detail.get("message", "处理行动失败"),
+                "events": [detail.get("message", "处理行动失败")],
+                "error_code": detail.get("error_code", "ACTION_BAD_REQUEST"),
+                "retryable": status_code >= 500,
+            },
+        )
+        return JSONResponse(status_code=status_code, content=normalized)
     except Exception as e:
         logger.error(f"Failed to process action, trace_id={trace_id}: {e}")
         return _normalize_action_response(
@@ -1050,24 +1264,37 @@ async def sync_game_state(request: SyncStateRequest, http_request: Request, resp
             from data_manager import data_manager
             frontend_game_state = data_manager._dict_to_game_state(request.game_state)
 
-            # 【关键】合并前端和后端状态（仅同步允许前端主导的计算型字段）
-            backend_game_state.player.position = frontend_game_state.player.position
-            backend_game_state.monsters = frontend_game_state.monsters
-            backend_game_state.current_map = frontend_game_state.current_map
-            backend_game_state.turn_count = frontend_game_state.turn_count
+            # 【关键】按权威模式合并前后端状态
+            # local: 兼容旧客户端，同步更多前端计算字段
+            # hybrid/server: 后端权威，禁止前端覆盖战斗核心字段（position/monsters/current_map/turn_count）
+            authority_mode = _safe_authority_mode(
+                getattr(backend_game_state, "combat_authority_mode", None),
+                _safe_authority_mode(config.game.combat_authority_mode),
+            )
+            backend_game_state.combat_authority_mode = authority_mode
+            backend_game_state.combat_rule_version = max(
+                1,
+                _safe_int(getattr(backend_game_state, "combat_rule_version", 1), 1),
+            )
 
-            # 修复地图角色索引，避免客户端提交导致的 character_id 不一致
-            for tile in backend_game_state.current_map.tiles.values():
-                tile.character_id = None
-            player_tile = backend_game_state.current_map.get_tile(*backend_game_state.player.position)
-            if player_tile:
-                player_tile.character_id = backend_game_state.player.id
-                player_tile.is_explored = True
-                player_tile.is_visible = True
-            for monster in backend_game_state.monsters:
-                monster_tile = backend_game_state.current_map.get_tile(*monster.position)
-                if monster_tile:
-                    monster_tile.character_id = monster.id
+            if authority_mode == "local":
+                backend_game_state.player.position = frontend_game_state.player.position
+                backend_game_state.monsters = frontend_game_state.monsters
+                backend_game_state.current_map = frontend_game_state.current_map
+                backend_game_state.turn_count = frontend_game_state.turn_count
+
+                # 修复地图角色索引，避免客户端提交导致的 character_id 不一致
+                for tile in backend_game_state.current_map.tiles.values():
+                    tile.character_id = None
+                player_tile = backend_game_state.current_map.get_tile(*backend_game_state.player.position)
+                if player_tile:
+                    player_tile.character_id = backend_game_state.player.id
+                    player_tile.is_explored = True
+                    player_tile.is_visible = True
+                for monster in backend_game_state.monsters:
+                    monster_tile = backend_game_state.current_map.get_tile(*monster.position)
+                    if monster_tile:
+                        monster_tile.character_id = monster.id
 
             # 后端状态：任务进度、经验值、等级、物品栏（后端生成）
             # 这些数据保持后端的值，不被前端覆盖
@@ -1127,20 +1354,27 @@ async def sync_game_state(request: SyncStateRequest, http_request: Request, resp
 @app.post("/api/game/{game_id}/combat-result")
 async def process_combat_result(game_id: str, request: Request, response: Response):
     """处理战斗结果（怪物被击败）"""
+    trace_id = str(uuid.uuid4())
     try:
         # 获取用户ID
         user_id = user_session_manager.get_or_create_user_id(request, response)
         game_key = (user_id, game_id)
 
-        logger.info(f"Processing combat result for user {user_id}, game: {game_id}")
+        logger.info(f"Processing combat result for user {user_id}, game: {game_id}, trace_id={trace_id}")
 
         try:
             request_data = await request.json()
         except (json.JSONDecodeError, UnicodeDecodeError, ValueError):
-            raise HTTPException(status_code=400, detail="请求体不是合法JSON")
+            raise HTTPException(
+                status_code=400,
+                detail=_build_http_exception_detail("请求体不是合法JSON", trace_id, "INVALID_JSON_BODY"),
+            )
 
         if not isinstance(request_data, dict):
-            raise HTTPException(status_code=400, detail="请求体格式错误")
+            raise HTTPException(
+                status_code=400,
+                detail=_build_http_exception_detail("请求体格式错误", trace_id, "INVALID_REQUEST_BODY"),
+            )
 
         monster_id = request_data.get("monster_id")
         damage_raw = request_data.get("damage_dealt", 0)
@@ -1158,116 +1392,227 @@ async def process_combat_result(game_id: str, request: Request, response: Respon
         # 伤害值安全边界（防异常输入与极端值）
         damage_dealt = max(0, min(damage_dealt, 1_000_000))
 
+        idempotency_key = str(request_data.get("idempotency_key", "") or "").strip()
+        client_trace_id = str(request_data.get("client_trace_id", "") or "").strip()
+        if not idempotency_key:
+            if client_trace_id:
+                idempotency_key = f"ct:{client_trace_id}"
+            else:
+                fallback_seed = json.dumps(
+                    {
+                        "game_id": str(game_id),
+                        "user_id": str(user_id),
+                        "monster_id": str(monster_id or ""),
+                        "damage_dealt": int(damage_dealt),
+                    },
+                    sort_keys=True,
+                    ensure_ascii=False,
+                )
+                idempotency_key = f"auto:{hashlib.sha1(fallback_seed.encode('utf-8')).hexdigest()[:16]}"
+
         if not monster_id:
-            raise HTTPException(status_code=400, detail="缺少怪物ID")
+            raise HTTPException(
+                status_code=400,
+                detail=_build_http_exception_detail("缺少怪物ID", trace_id, "MISSING_MONSTER_ID"),
+            )
 
         # 使用锁保护战斗结算操作
-        async with game_state_lock_manager.lock_game_state(user_id, game_id, "combat_result"):
+        response_payload: Optional[Dict[str, Any]] = None
+        replay_hit = False
+        lock_wait_ms = 0
+
+        async with game_state_lock_manager.lock_game_state(user_id, game_id, "combat_result") as state_lock:
+            lock_wait_ms = getattr(state_lock, "last_wait_ms", 0)
+
             if game_key not in game_engine.active_games:
-                raise HTTPException(status_code=404, detail="游戏未找到")
+                raise HTTPException(
+                    status_code=404,
+                    detail=_build_http_exception_detail("游戏未找到", trace_id, "GAME_NOT_FOUND"),
+                )
 
             game_state = game_engine.active_games[game_key]
 
-            # 查找怪物
-            monster = None
-            for m in game_state.monsters:
-                if m.id == monster_id:
-                    monster = m
-                    break
-
-            if not monster:
-                raise HTTPException(status_code=404, detail="怪物未找到")
-
-            # 使用战斗结果管理器处理
-            from combat_result_manager import combat_result_manager
-            combat_result = await combat_result_manager.process_monster_defeat(
-                game_state, monster, damage_dealt
+            game_engine._prune_idempotency_cache(game_key)
+            cache = game_engine._get_idempotency_cache(game_key)
+            combat_cache_key = f"combat_result:{idempotency_key}"
+            cached_payload = cache.get(combat_cache_key)
+            expected_fingerprint = json.dumps(
+                {"monster_id": str(monster_id), "damage_dealt": int(damage_dealt)},
+                sort_keys=True,
+                ensure_ascii=False,
             )
-
-            # 【新增】从后端游戏状态中移除被击败的怪物，并清理地图标记
-            try:
-                tile = game_state.current_map.get_tile(monster.position[0], monster.position[1])
-                if tile:
-                    tile.character_id = None
-                if monster in game_state.monsters:
-                    game_state.monsters.remove(monster)
-                logger.info(f"Removed defeated monster from backend state: {monster.name}")
-            except Exception as e:
-                logger.error(f"Failed to remove monster from backend state: {e}")
-
-            # 【新增】如果是任务怪物，触发任务进度更新
-            if monster.quest_monster_id and combat_result.quest_progress > 0:
-                from progress_manager import progress_manager, ProgressEventType, ProgressContext
-
-                logger.info(f"Triggering quest progress update for quest monster: {monster.name}, progress: {combat_result.quest_progress}%")
-
-                # 创建进度上下文
-                context_data = {
-                    "monster_name": monster.name,
-                    "challenge_rating": monster.challenge_rating,
-                    "quest_monster_id": monster.quest_monster_id,
-                    "progress_value": combat_result.quest_progress
-                }
-
-                progress_context = ProgressContext(
-                    event_type=ProgressEventType.COMBAT_VICTORY,
-                    game_state=game_state,
-                    context_data=context_data
-                )
-
-                # 触发进度管理器处理战斗胜利事件，确保任务进度与完成逻辑生效
-                try:
-                    await progress_manager.process_event(progress_context)
-                except Exception as _e:
-                    logger.warning(f"Progress manager failed to process combat victory event: {_e}")
-
-            # 【新增】在进度更新之后检查任务进度补偿（确保在移除怪物后再检查）
-            from quest_progress_compensator import quest_progress_compensator
-            compensation_result = await quest_progress_compensator.check_and_compensate(game_state)
-            if compensation_result.get("compensated"):
-                logger.info(
-                    f"Progress compensated during combat-result: +{compensation_result['compensation_amount']:.1f}% ({compensation_result['reason']})"
-                )
-
-            # 【修复】检查是否有任务完成需要处理选择，立即创建选择上下文
-            has_pending_choice = False
-            if hasattr(game_state, 'pending_quest_completion') and game_state.pending_quest_completion:
-                completed_quest = game_state.pending_quest_completion
-                logger.info(f"Quest completion detected: {completed_quest.title}")
-
-                try:
-                    # 立即创建任务完成选择上下文
-                    from event_choice_system import event_choice_system
-                    choice_context = await event_choice_system.create_quest_completion_choice(
-                        game_state, completed_quest
+            if isinstance(cached_payload, dict):
+                cached_fingerprint = str(cached_payload.get("fingerprint", "") or "")
+                cached_result = cached_payload.get("result")
+                if cached_fingerprint == expected_fingerprint and isinstance(cached_result, dict):
+                    replay_result = dict(cached_result)
+                    replay_result["idempotent_replay"] = True
+                    replay_result["trace_id"] = trace_id
+                    response_payload = replay_result
+                    replay_hit = True
+                else:
+                    logger.warning(
+                        "combat_result_idempotency_fingerprint_mismatch game=%s key=%s trace_id=%s",
+                        game_key,
+                        idempotency_key,
+                        trace_id,
                     )
 
-                    # 将选择上下文存储到游戏状态中
-                    game_state.pending_choice_context = choice_context
-                    event_choice_system.active_contexts[choice_context.id] = choice_context
+            if not replay_hit:
+                # 查找怪物
+                monster = None
+                for m in game_state.monsters:
+                    if m.id == monster_id:
+                        monster = m
+                        break
 
-                    # 清理任务完成标志
-                    game_state.pending_quest_completion = None
+                if not monster:
+                    raise HTTPException(
+                        status_code=404,
+                        detail=_build_http_exception_detail("怪物未找到", trace_id, "MONSTER_NOT_FOUND"),
+                    )
 
-                    has_pending_choice = True
-                    logger.info(f"Created quest completion choice after monster defeat: {completed_quest.title}")
+                # 使用战斗结果管理器处理
+                from combat_result_manager import combat_result_manager
+                combat_result = await combat_result_manager.process_monster_defeat(
+                    game_state, monster, damage_dealt
+                )
 
+            if not replay_hit:
+                # 【新增】从后端游戏状态中移除被击败的怪物，并清理地图标记
+                try:
+                    tile = game_state.current_map.get_tile(monster.position[0], monster.position[1])
+                    if tile:
+                        tile.character_id = None
+                    if monster in game_state.monsters:
+                        game_state.monsters.remove(monster)
+                    logger.info(f"Removed defeated monster from backend state: {monster.name}")
                 except Exception as e:
-                    logger.error(f"Error creating quest completion choice: {e}")
-                    # 清理标志，避免重复处理
-                    game_state.pending_quest_completion = None
+                    logger.error(f"Failed to remove monster from backend state: {e}")
 
-            # 构建响应
-            result_dict = combat_result.to_dict()
-            result_dict["has_pending_choice"] = has_pending_choice
+                # 【新增】如果是任务怪物，触发任务进度更新
+                if monster.quest_monster_id and combat_result.quest_progress > 0:
+                    from progress_manager import progress_manager, ProgressEventType, ProgressContext
 
-            return result_dict
+                    logger.info(f"Triggering quest progress update for quest monster: {monster.name}, progress: {combat_result.quest_progress}%")
 
-    except HTTPException:
-        raise
+                    # 创建进度上下文
+                    context_data = {
+                        "monster_name": monster.name,
+                        "challenge_rating": monster.challenge_rating,
+                        "quest_monster_id": monster.quest_monster_id,
+                        "progress_value": combat_result.quest_progress
+                    }
+
+                    progress_context = ProgressContext(
+                        event_type=ProgressEventType.COMBAT_VICTORY,
+                        game_state=game_state,
+                        context_data=context_data
+                    )
+
+                    # 触发进度管理器处理战斗胜利事件，确保任务进度与完成逻辑生效
+                    try:
+                        await progress_manager.process_event(progress_context)
+                    except Exception as _e:
+                        logger.warning(f"Progress manager failed to process combat victory event: {_e}")
+
+                # 【新增】在进度更新之后检查任务进度补偿（确保在移除怪物后再检查）
+                from quest_progress_compensator import quest_progress_compensator
+                compensation_result = await quest_progress_compensator.check_and_compensate(game_state)
+                if compensation_result.get("compensated"):
+                    logger.info(
+                        f"Progress compensated during combat-result: +{compensation_result['compensation_amount']:.1f}% ({compensation_result['reason']})"
+                    )
+
+                # 【修复】检查是否有任务完成需要处理选择，立即创建选择上下文
+                has_pending_choice = False
+                if hasattr(game_state, 'pending_quest_completion') and game_state.pending_quest_completion:
+                    completed_quest = game_state.pending_quest_completion
+                    logger.info(f"Quest completion detected: {completed_quest.title}")
+
+                    try:
+                        # 立即创建任务完成选择上下文
+                        from event_choice_system import event_choice_system
+                        choice_context = await event_choice_system.create_quest_completion_choice(
+                            game_state, completed_quest
+                        )
+
+                        # 将选择上下文存储到游戏状态中
+                        game_state.pending_choice_context = choice_context
+                        event_choice_system.active_contexts[choice_context.id] = choice_context
+
+                        # 清理任务完成标志
+                        game_state.pending_quest_completion = None
+
+                        has_pending_choice = True
+                        logger.info(f"Created quest completion choice after monster defeat: {completed_quest.title}")
+
+                    except Exception as e:
+                        logger.error(f"Error creating quest completion choice: {e}")
+                        # 清理标志，避免重复处理
+                        game_state.pending_quest_completion = None
+
+                # 构建响应
+                result_dict = combat_result.to_dict()
+                result_dict["has_pending_choice"] = has_pending_choice
+                result_dict["trace_id"] = trace_id
+                result_dict["idempotency_key"] = idempotency_key
+                result_dict["client_trace_id"] = client_trace_id
+                response_payload = result_dict
+
+                cache[combat_cache_key] = {
+                    "result": dict(result_dict),
+                    "fingerprint": expected_fingerprint,
+                    "created_at": datetime.utcnow().timestamp(),
+                }
+                game_engine._prune_idempotency_cache(game_key)
+
+        lock_obj = await game_state_lock_manager._get_or_create_lock(game_key)
+        lock_hold_ms = getattr(lock_obj, "last_hold_ms", 0)
+
+        if response_payload is None:
+            raise HTTPException(
+                status_code=500,
+                detail=_build_http_exception_detail("战斗结算响应为空", trace_id, "COMBAT_RESULT_EMPTY"),
+            )
+
+        response_payload["lock_wait_ms"] = max(0, int(lock_wait_ms))
+        response_payload["lock_hold_ms"] = max(0, int(lock_hold_ms))
+        response_payload["trace_id"] = trace_id
+        response_payload["idempotency_key"] = idempotency_key
+        response_payload["client_trace_id"] = client_trace_id
+
+        if replay_hit:
+            logger.info(
+                "combat_result_idempotent_replay game=%s key=%s trace_id=%s lock_wait_ms=%s lock_hold_ms=%s",
+                game_key,
+                idempotency_key,
+                trace_id,
+                response_payload["lock_wait_ms"],
+                response_payload["lock_hold_ms"],
+            )
+        else:
+            logger.info(
+                "combat_result_trace trace_id=%s game_id=%s user_id=%s idempotency_key=%s lock_wait_ms=%s lock_hold_ms=%s",
+                trace_id,
+                game_id,
+                user_id,
+                idempotency_key,
+                response_payload["lock_wait_ms"],
+                response_payload["lock_hold_ms"],
+            )
+
+        return response_payload
+
+    except HTTPException as exc:
+        status_code, detail = _normalize_http_exception(exc, trace_id, "COMBAT_RESULT_BAD_REQUEST")
+        raise HTTPException(status_code=status_code, detail=detail)
     except Exception as e:
-        logger.exception("Failed to process combat result")
-        raise HTTPException(status_code=500, detail="处理战斗结果失败")
+        logger.exception("Failed to process combat result, trace_id=%s", trace_id)
+        raise HTTPException(
+            status_code=500,
+            detail={"message": "处理战斗结果失败", "trace_id": trace_id, "error_code": "COMBAT_RESULT_FAILED"},
+        )
 
 
 @app.post("/api/event-choice")
@@ -1659,6 +2004,8 @@ async def get_config():
                 "game": {
                     "debug_mode": config.game.debug_mode,
                     "show_llm_debug": config.game.show_llm_debug,
+                    "combat_authority_mode": config.game.combat_authority_mode,
+                    "combat_diff_threshold": config.game.combat_diff_threshold,
                     # 注意：任务进度始终显示，不再通过配置控制
                     "version": config.game.version,
                     "game_name": config.game.game_name,
