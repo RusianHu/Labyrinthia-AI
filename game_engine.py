@@ -8,6 +8,7 @@ import random
 import logging
 import copy
 import json
+import hashlib
 from typing import Dict, List, Optional, Tuple, Any
 from datetime import datetime, timedelta
 
@@ -22,6 +23,7 @@ from data_manager import data_manager
 from progress_manager import progress_manager, ProgressEventType, ProgressContext
 from item_effect_processor import item_effect_processor
 from effect_engine import effect_engine
+from combat_core import combat_core_evaluator
 from llm_interaction_manager import (
     llm_interaction_manager, InteractionType, InteractionContext
 )
@@ -829,17 +831,9 @@ class GameEngine:
                             tile.is_explored = True
 
     async def _handle_attack(self, game_state: GameState, parameters: Dict[str, Any]) -> Dict[str, Any]:
-        """处理攻击行动 - 后端仅处理生成型逻辑
-
-        注意：所有计算型逻辑(距离检查、视线检查、伤害计算、升级检查等)已由前端LocalGameEngine完成
-        后端专注于生成型逻辑：任务进度更新、LLM叙述生成
-        """
-        logger.warning("_handle_attack called - this should be handled by frontend LocalGameEngine")
-
-        # 这是一个遗留接口，主要用于不支持LocalGameEngine的旧版本客户端
+        """处理攻击行动（Phase 1：统一战斗求值最小闭环）"""
         target_id = parameters.get("target_id", "")
 
-        # 查找目标怪物
         target_monster = None
         for monster in game_state.monsters:
             if monster.id == target_id:
@@ -849,25 +843,69 @@ class GameEngine:
         if not target_monster:
             return {"success": False, "message": "目标未找到"}
 
-        # 简单的距离检查（前端应该已经做过）
         player_x, player_y = game_state.player.position
         monster_x, monster_y = target_monster.position
         max_distance = max(abs(player_x - monster_x), abs(player_y - monster_y))
-
         if max_distance > 1:
             return {"success": False, "message": "目标距离太远"}
 
-        # 计算伤害（前端也会计算，这里是备份）
-        damage = self._calculate_damage(game_state.player, target_monster)
-        target_monster.stats.hp -= damage
+        authority_mode = str(getattr(game_state, "combat_authority_mode", "local") or "local").strip().lower()
+        if authority_mode not in {"local", "hybrid", "server"}:
+            authority_mode = "local"
 
-        events = [f"对 {target_monster.name} 造成了 {damage} 点伤害"]
+        deterministic_seed = int(hashlib.sha1(
+            f"attack|{game_state.id}|{game_state.turn_count}|{game_state.player.id}|{target_monster.id}".encode("utf-8")
+        ).hexdigest()[:8], 16)
 
-        # 检查怪物是否死亡
-        if target_monster.stats.hp <= 0:
+        # local 模式仅给出后端预测，不写回战斗最终状态，避免与前端本地结算双落账
+        if authority_mode == "local":
+            eval_result = combat_core_evaluator.evaluate_attack(
+                game_state.player,
+                target_monster,
+                attack_type="melee",
+                deterministic_seed=deterministic_seed,
+            )
+            damage = int(eval_result.final_damage)
+            projection = eval_result.to_projection()
+            projection["exp"] = int(target_monster.challenge_rating * 100) if eval_result.death else 0
+            return {
+                "success": True,
+                "message": f"攻击了 {target_monster.name}",
+                "reason": "ok",
+                "events": ["local模式：后端仅返回预测，不落账"],
+                "damage": damage,
+                "impact_summary": {
+                    "target_id": target_monster.id,
+                    "hit": bool(eval_result.hit),
+                    "critical": bool(eval_result.critical),
+                    "death": bool(eval_result.death),
+                    "authoritative_applied": False,
+                },
+                "combat_breakdown": eval_result.breakdown,
+                "combat_projection": projection,
+            }
+
+        eval_result = combat_core_evaluator.evaluate_attack(
+            game_state.player,
+            target_monster,
+            attack_type="melee",
+            deterministic_seed=deterministic_seed,
+        )
+
+        damage = int(eval_result.final_damage)
+        events = []
+        if eval_result.hit:
+            events.append(f"对 {target_monster.name} 造成了 {damage} 点伤害")
+            for event_text in eval_result.events:
+                if event_text in {"造成 0 点伤害", f"造成 {damage} 点伤害", "目标被击败"}:
+                    continue
+                events.append(event_text)
+        else:
+            events.append(f"攻击 {target_monster.name} 未命中")
+
+        if eval_result.death:
             events.append(f"{target_monster.name} 被击败了！")
 
-            # 经验值和升级
             exp_gain = int(target_monster.challenge_rating * 100)
             game_state.player.stats.experience += exp_gain
             events.append(f"获得了 {exp_gain} 点经验")
@@ -875,13 +913,12 @@ class GameEngine:
             if self._check_level_up(game_state.player):
                 events.append("恭喜升级！")
 
-            # 移除怪物
-            game_state.monsters.remove(target_monster)
+            if target_monster in game_state.monsters:
+                game_state.monsters.remove(target_monster)
             tile = game_state.current_map.get_tile(monster_x, monster_y)
             if tile:
                 tile.character_id = None
 
-            # 【生成型逻辑】触发任务进度事件
             context_data = {
                 "monster_name": target_monster.name,
                 "challenge_rating": target_monster.challenge_rating
@@ -903,31 +940,41 @@ class GameEngine:
                 game_state, ProgressEventType.COMBAT_VICTORY, context_data
             )
 
-            # 【新增】检查是否需要进度补偿（击败怪物后）
             from quest_progress_compensator import quest_progress_compensator
             compensation_result = await quest_progress_compensator.check_and_compensate(game_state)
             if compensation_result["compensated"]:
                 logger.info(f"Progress compensated: +{compensation_result['compensation_amount']:.1f}% ({compensation_result['reason']})")
 
+        exp_projection = 0
+        if eval_result.death:
+            exp_projection = int(target_monster.challenge_rating * 100)
+
+        projection = eval_result.to_projection()
+        projection["exp"] = exp_projection
+
         return {
             "success": True,
             "message": f"攻击了 {target_monster.name}",
+            "reason": "ok",
             "events": events,
-            "damage": damage
+            "damage": damage,
+            "impact_summary": {
+                "target_id": target_monster.id,
+                "hit": bool(eval_result.hit),
+                "critical": bool(eval_result.critical),
+                "death": bool(eval_result.death),
+                "authoritative_applied": True,
+            },
+            "combat_breakdown": eval_result.breakdown,
+            "combat_projection": projection,
         }
 
     def _calculate_damage(self, attacker: Character, defender: Character) -> int:
-        """计算伤害"""
+        """兼容入口：仅估算伤害，不写回状态。"""
         base_damage = 10 + attacker.abilities.get_modifier("strength")
-
-        # 添加随机性
-        damage = random.randint(max(1, base_damage - 3), base_damage + 3)
-
-        # 护甲减免
+        rolled = random.randint(max(1, base_damage - 3), base_damage + 3)
         armor_reduction = max(0, defender.stats.ac - 10)
-        damage = max(1, damage - armor_reduction)
-
-        return damage
+        return max(1, rolled - armor_reduction)
 
     def _check_level_up(self, character: Character) -> bool:
         """检查是否升级"""
@@ -2357,21 +2404,37 @@ class GameEngine:
             # 检查怪物的攻击范围
             monster_attack_range = getattr(monster, 'attack_range', 1)
             if distance <= monster_attack_range:
-                # 攻击玩家
-                damage = self._calculate_damage(monster, game_state.player)
-                game_state.player.stats.hp -= damage
-                combat_events.append(f"{monster.name} 攻击了你，造成 {damage} 点伤害！")
-                logger.info(f"{monster.name} 攻击玩家造成 {damage} 点伤害")
+                deterministic_seed = int(hashlib.sha1(
+                    f"monster_attack|{game_state.id}|{game_state.turn_count}|{monster.id}|{game_state.player.id}".encode("utf-8")
+                ).hexdigest()[:8], 16)
+                eval_result = combat_core_evaluator.evaluate_attack(
+                    monster,
+                    game_state.player,
+                    attack_type="melee",
+                    deterministic_seed=deterministic_seed,
+                )
+                damage = int(eval_result.final_damage)
+                if eval_result.hit:
+                    combat_events.append(f"{monster.name} 攻击了你，造成 {damage} 点伤害！")
+                else:
+                    combat_events.append(f"{monster.name} 的攻击未命中！")
+
+                if eval_result.critical:
+                    combat_events.append(f"{monster.name} 发动了致命一击！")
+                logger.info(f"{monster.name} 攻击玩家结算 damage={damage}, hit={eval_result.hit}")
 
                 # 记录战斗数据用于LLM上下文
                 combat_data_list.append({
                     "type": "monster_attack",
                     "attacker": monster.name,
                     "damage": damage,
+                    "hit": bool(eval_result.hit),
+                    "critical": bool(eval_result.critical),
                     "player_hp_remaining": game_state.player.stats.hp,
                     "player_hp_max": game_state.player.stats.max_hp,
                     "monster_position": monster.position,
-                    "distance": distance
+                    "distance": distance,
+                    "combat_breakdown": eval_result.breakdown,
                 })
 
                 # 检查玩家是否死亡

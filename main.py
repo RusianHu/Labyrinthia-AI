@@ -112,6 +112,8 @@ def _normalize_action_response(
         "narrative",
         "new_position",
         "damage",
+        "combat_breakdown",
+        "combat_projection",
         "idempotent_replay",
         "requires_confirmation",
         "confirmation_token",
@@ -153,6 +155,15 @@ def _extract_experience(events: List[str]) -> int:
 
 
 def _build_action_combat_projection(result: Dict[str, Any]) -> Dict[str, Any]:
+    explicit_projection = result.get("combat_projection")
+    if isinstance(explicit_projection, dict):
+        return {
+            "hit": bool(explicit_projection.get("hit", False)),
+            "damage": _safe_int(explicit_projection.get("damage", 0), 0),
+            "death": bool(explicit_projection.get("death", False)),
+            "exp": _safe_int(explicit_projection.get("exp", 0), 0),
+        }
+
     events = result.get("events") if isinstance(result.get("events"), list) else []
     damage = _safe_int(result.get("damage", 0), 0)
     death = any("被击败" in str(evt) for evt in events)

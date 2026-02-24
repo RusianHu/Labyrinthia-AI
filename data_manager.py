@@ -185,6 +185,29 @@ class DataManager:
         if stats_data := data.get("stats"):
             character.stats = Stats(**stats_data)
 
+        # 战斗抗性字段（兼容旧存档）
+        raw_resistances = data.get("resistances", {})
+        if isinstance(raw_resistances, dict):
+            character.resistances = {}
+            for key, value in raw_resistances.items():
+                try:
+                    character.resistances[str(key)] = float(value)
+                except (TypeError, ValueError):
+                    continue
+
+        raw_vulnerabilities = data.get("vulnerabilities", {})
+        if isinstance(raw_vulnerabilities, dict):
+            character.vulnerabilities = {}
+            for key, value in raw_vulnerabilities.items():
+                try:
+                    character.vulnerabilities[str(key)] = float(value)
+                except (TypeError, ValueError):
+                    continue
+
+        raw_immunities = data.get("immunities", [])
+        if isinstance(raw_immunities, list):
+            character.immunities = [str(value) for value in raw_immunities]
+
         # 物品
         if inventory_data := data.get("inventory"):
             character.inventory = [self._dict_to_item(item_data) for item_data in inventory_data]

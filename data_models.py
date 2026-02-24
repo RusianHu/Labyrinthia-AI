@@ -138,6 +138,8 @@ class Stats:
     speed: int = 30  # 移动速度
     level: int = 1
     experience: int = 0
+    shield: int = 0
+    temporary_hp: int = 0
 
     def is_alive(self) -> bool:
         """检查是否存活"""
@@ -336,6 +338,9 @@ class Character:
     creature_type: CreatureType = CreatureType.HUMANOID
     abilities: Ability = field(default_factory=Ability)
     stats: Stats = field(default_factory=Stats)
+    resistances: Dict[str, float] = field(default_factory=dict)
+    vulnerabilities: Dict[str, float] = field(default_factory=dict)
+    immunities: List[str] = field(default_factory=list)
     inventory: List[Item] = field(default_factory=list)
     equipped_items: Dict[str, Optional[Item]] = field(default_factory=lambda: {
         "weapon": None,
@@ -402,6 +407,9 @@ class Character:
             "creature_type": self.creature_type.value,
             "abilities": self.abilities.__dict__,
             "stats": self.stats.__dict__,
+            "resistances": self.resistances,
+            "vulnerabilities": self.vulnerabilities,
+            "immunities": self.immunities,
             "inventory": [item.to_dict() for item in self.inventory],
             "equipped_items": {
                 slot: item.to_dict() if item else None
