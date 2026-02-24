@@ -331,24 +331,31 @@
                             </label>
                         </div>
 
-                        <div id="inventory-grid" class="inventory-grid"></div>
+                        <div class="inventory-main-row">
+                            <div id="inventory-grid" class="inventory-grid"></div>
 
-                        <div class="inventory-layout">
-                            <div class="equip-zone">
-                                <h4>装备区</h4>
-                                <div class="equip-grid" id="equip-grid">
-                                    <div class="equip-slot" data-slot="weapon">武器: 空</div>
-                                    <div class="equip-slot" data-slot="armor">防具: 空</div>
-                                    <div class="equip-slot" data-slot="accessory_1">饰品1: 空</div>
-                                    <div class="equip-slot" data-slot="accessory_2">饰品2: 空</div>
+                            <div class="inventory-layout">
+                                <div class="equip-zone">
+                                    <h4>装备区</h4>
+                                    <div class="equip-grid" id="equip-grid">
+                                        <div class="equip-slot" data-slot="weapon">武器: 空</div>
+                                        <div class="equip-slot" data-slot="armor">防具: 空</div>
+                                        <div class="equip-slot" data-slot="accessory_1">饰品1: 空</div>
+                                        <div class="equip-slot" data-slot="accessory_2">饰品2: 空</div>
+                                    </div>
                                 </div>
-                            </div>
-                            <div class="item-detail-zone">
-                                <h4>详情区</h4>
-                                <div id="inventory-detail" class="inventory-detail-empty">请选择一个物品查看详情</div>
-                                <div class="item-actions">
-                                    <button id="inventory-action-use" class="btn btn-primary" disabled>使用/装备</button>
-                                    <button id="inventory-action-drop" class="btn btn-warning" disabled>丢弃</button>
+                                <div class="item-detail-zone">
+                                    <h4>详情区</h4>
+                                    <div id="inventory-detail" class="inventory-detail-empty">请选择一个物品查看详情</div>
+                                    <div class="item-actions item-actions-primary">
+                                        <button id="inventory-action-equip" class="btn btn-primary" disabled>装备</button>
+                                        <button id="inventory-action-unequip" class="btn btn-secondary" disabled>卸下</button>
+                                        <button id="inventory-action-replace" class="btn btn-accent" disabled>替换</button>
+                                    </div>
+                                    <div class="item-actions item-actions-secondary">
+                                        <button id="inventory-action-use" class="btn btn-primary" disabled>使用</button>
+                                        <button id="inventory-action-drop" class="btn btn-warning" disabled>丢弃</button>
+                                    </div>
                                 </div>
                             </div>
                         </div>

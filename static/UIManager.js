@@ -781,7 +781,9 @@ Object.assign(LabyrinthiaGame.prototype, {
                     if (!currentItem) {
                         return;
                     }
-                    this.useItem(currentItem.id);
+                    if (!currentItem.is_equippable) {
+                        this.useItem(currentItem.id);
+                    }
                 });
             }
 
@@ -790,7 +792,11 @@ Object.assign(LabyrinthiaGame.prototype, {
 
         this.updateEquippedItemsPanel();
 
-        const selectedItem = this.gameState.player.inventory.find(it => it.id === selectedId);
+        let selectedItem = this.gameState.player.inventory.find(it => it.id === selectedId);
+        if (!selectedItem && selectedId) {
+            selectedItem = Object.values(this.gameState.player.equipped_items || {}).find(it => it && it.id === selectedId) || null;
+        }
+
         if (selectedItem) {
             this.renderInventoryDetail(selectedItem);
         } else {
@@ -818,9 +824,17 @@ Object.assign(LabyrinthiaGame.prototype, {
                 accessory_1: '饰品1',
                 accessory_2: '饰品2'
             };
+
+            slotEl.onclick = null;
             if (item) {
                 slotEl.textContent = `${labels[slotName]}: ${item.name}`;
                 slotEl.classList.add('filled');
+                slotEl.onclick = () => {
+                    const currentItem = (this.gameState.player.inventory || []).find(it => it.id === item.id) || item;
+                    this._inventorySelectedItemId = currentItem.id;
+                    this.renderInventoryDetail(currentItem);
+                    this.updateInventory();
+                };
             } else {
                 slotEl.textContent = `${labels[slotName]}: 空`;
                 slotEl.classList.remove('filled');
@@ -830,17 +844,26 @@ Object.assign(LabyrinthiaGame.prototype, {
 
     renderInventoryDetail(item) {
         const detail = document.getElementById('inventory-detail');
+        const equipBtn = document.getElementById('inventory-action-equip');
+        const unequipBtn = document.getElementById('inventory-action-unequip');
+        const replaceBtn = document.getElementById('inventory-action-replace');
         const useBtn = document.getElementById('inventory-action-use');
         const dropBtn = document.getElementById('inventory-action-drop');
-        if (!detail || !useBtn || !dropBtn) {
+        if (!detail || !equipBtn || !unequipBtn || !replaceBtn || !useBtn || !dropBtn) {
             return;
         }
 
         if (!item) {
             detail.className = 'inventory-detail-empty';
             detail.textContent = '请选择一个物品查看详情';
+            equipBtn.disabled = true;
+            unequipBtn.disabled = true;
+            replaceBtn.disabled = true;
             useBtn.disabled = true;
             dropBtn.disabled = true;
+            equipBtn.onclick = null;
+            unequipBtn.onclick = null;
+            replaceBtn.onclick = null;
             useBtn.onclick = null;
             dropBtn.onclick = null;
             return;
@@ -877,9 +900,22 @@ Object.assign(LabyrinthiaGame.prototype, {
         const itemTypeLabel = itemTypeLabelMap[itemTypeRaw] || itemTypeRaw;
         const itemRarityLabel = itemRarityLabelMap[itemRarityRaw] || itemRarityRaw;
 
+        const equippedItems = this.gameState.player.equipped_items || {};
+        const slot = String(item.equip_slot || '');
+        const slotItem = slot ? equippedItems[slot] : null;
+        const isEquippable = !!item.is_equippable;
+        const isCurrentlyEquipped = Object.values(equippedItems).some(e => e && e.id === item.id);
+        const hasOtherInSlot = isEquippable && !!slotItem && slotItem.id !== item.id;
+        const canEquip = isEquippable && !isCurrentlyEquipped && !hasOtherInSlot;
+        const canReplace = hasOtherInSlot;
+        const canUnequip = isCurrentlyEquipped;
+        const slotText = slot ? `槽位: ${slot}` : '槽位: 无';
+
         const lines = [
             `${item.name}`,
             `类型: ${itemTypeLabel} / 稀有度: ${itemRarityLabel}`,
+            `${slotText}`,
+            `装备状态: ${isCurrentlyEquipped ? '已装备' : '未装备'}`,
             `描述: ${item.description || '无'}`,
             `使用说明: ${item.usage_description || '无'}`,
             `充能: ${(item.max_charges || 0) > 0 ? `${item.charges || 0}/${item.max_charges}` : '无限'}`,
@@ -892,13 +928,31 @@ Object.assign(LabyrinthiaGame.prototype, {
         detail.className = '';
         detail.textContent = lines.join('\n');
 
-        useBtn.disabled = false;
+        equipBtn.disabled = !canEquip;
+        unequipBtn.disabled = !canUnequip;
+        replaceBtn.disabled = !canReplace;
+        useBtn.disabled = isEquippable;
         dropBtn.disabled = false;
-        useBtn.textContent = item.is_equippable ? '装备/卸下' : '使用';
+
+        equipBtn.textContent = '装备';
+        unequipBtn.textContent = '卸下';
+        replaceBtn.textContent = canReplace ? `替换(${slotItem?.name || '当前装备'})` : '替换';
+        useBtn.textContent = isEquippable ? '装备类请用上方按钮' : '使用';
         dropBtn.textContent = item.is_quest_item ? '尝试丢弃(保护)' : '丢弃';
 
-        useBtn.onclick = () => {
+        equipBtn.onclick = () => {
             this.useItem(item.id);
+        };
+        unequipBtn.onclick = () => {
+            this.useItem(item.id);
+        };
+        replaceBtn.onclick = () => {
+            this.useItem(item.id);
+        };
+        useBtn.onclick = () => {
+            if (!item.is_equippable) {
+                this.useItem(item.id);
+            }
         };
         dropBtn.onclick = () => {
             this.dropItem(item.id);
