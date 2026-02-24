@@ -45,6 +45,7 @@ class DamagePacket:
     penetration: Dict[str, float] = field(default_factory=dict)
     can_critical: bool = True
     true_damage: bool = False
+    damage_components: Dict[str, int] = field(default_factory=dict)
     metadata: Dict[str, Any] = field(default_factory=dict)
 
 
@@ -69,6 +70,7 @@ class MitigationResult:
     temporary_hp_absorbed: int = 0
     resistance_multiplier: float = 1.0
     vulnerability_multiplier: float = 1.0
+    damage_by_type: Dict[str, int] = field(default_factory=dict)
 
 
 @dataclass
@@ -117,10 +119,17 @@ class CombatCoreEvaluator:
         damage_bonus: int = 0,
         minimum_damage: int = 1,
         deterministic_seed: Optional[int] = None,
+        damage_components: Optional[Dict[str, int]] = None,
+        penetration: Optional[Dict[str, float]] = None,
+        true_damage: bool = False,
+        trace_id: str = "",
+        mitigation_policy: Optional[Dict[str, Any]] = None,
     ) -> CombatEvaluationResult:
         local_rng = self._rng
         if deterministic_seed is not None:
             local_rng = random.Random(int(deterministic_seed))
+
+        self._ensure_effective_ac(defender)
 
         attack_roll = self._roll_attack_with_seed(
             attacker,
@@ -134,12 +143,21 @@ class CombatCoreEvaluator:
         target_hp_before = int(getattr(defender.stats, "hp", 0) or 0)
 
         base = int(base_damage) if base_damage is not None else self._roll_base_damage(attacker, rng=local_rng)
+        normalized_damage_components = self._normalize_damage_components(
+            damage_type=str(damage_type or DamageType.PHYSICAL.value),
+            base_damage=max(0, base + int(damage_bonus)),
+            damage_components=damage_components,
+        )
         damage_packet = DamagePacket(
             source_id=str(getattr(attacker, "id", "")),
             target_id=str(getattr(defender, "id", "")),
             damage_type=str(damage_type or DamageType.PHYSICAL.value),
-            base_damage=max(0, base + int(damage_bonus)),
+            base_damage=max(0, sum(normalized_damage_components.values())),
             can_critical=bool(can_critical),
+            penetration=dict(penetration or {}),
+            true_damage=bool(true_damage),
+            damage_components=normalized_damage_components,
+            metadata={"trace_id": trace_id},
         )
 
         breakdown: List[Dict[str, Any]] = []
@@ -170,9 +188,13 @@ class CombatCoreEvaluator:
                 breakdown=breakdown,
             )
 
+        raw_damage_components = dict(damage_packet.damage_components)
         raw_damage = max(0, int(damage_packet.base_damage))
         if attack_roll.critical_success and damage_packet.can_critical:
-            raw_damage = int(raw_damage * 1.5)
+            raw_damage_components = {
+                k: int(max(0, int(v)) * 1.5) for k, v in raw_damage_components.items()
+            }
+            raw_damage = int(sum(raw_damage_components.values()))
             breakdown.append(
                 {
                     "stage": "critical",
@@ -193,11 +215,14 @@ class CombatCoreEvaluator:
                 }
             )
 
+        damage_packet.base_damage = raw_damage
+        damage_packet.damage_components = raw_damage_components
+
         mitigation = self._apply_mitigation(
             defender,
-            damage=raw_damage,
-            damage_type=damage_packet.damage_type,
             minimum_damage=max(0, int(minimum_damage)),
+            damage_packet=damage_packet,
+            mitigation_policy=mitigation_policy,
         )
 
         final_damage = max(0, int(mitigation.final_damage))
@@ -278,63 +303,75 @@ class CombatCoreEvaluator:
         attack_bonus: int,
         deterministic_seed: Optional[int],
     ) -> CheckResult:
-        if deterministic_seed is None:
-            return self.resolver.attack_roll(
-                attacker,
-                defender,
-                attack_type=attack_type,
-                proficient=True,
-                extra_bonus=attack_bonus,
-            )
+        attack_rng = None
+        if deterministic_seed is not None:
+            attack_rng = random.Random(int(deterministic_seed) ^ 0x9E3779B1)
 
-        global_state = random.getstate()
-        random.seed(int(deterministic_seed) ^ 0x9E3779B1)
-        try:
-            return self.resolver.attack_roll(
-                attacker,
-                defender,
-                attack_type=attack_type,
-                proficient=True,
-                extra_bonus=attack_bonus,
-            )
-        finally:
-            random.setstate(global_state)
+        return self.resolver.attack_roll(
+            attacker,
+            defender,
+            attack_type=attack_type,
+            proficient=True,
+            extra_bonus=attack_bonus,
+            rng=attack_rng,
+        )
 
     def _apply_mitigation(
         self,
         defender: Union[Character, Monster],
         *,
-        damage: int,
-        damage_type: str,
         minimum_damage: int,
+        damage_packet: Optional[DamagePacket] = None,
+        damage: int = 0,
+        damage_type: str = DamageType.PHYSICAL.value,
+        mitigation_policy: Optional[Dict[str, Any]] = None,
     ) -> MitigationResult:
         stages: List[MitigationStage] = []
-        remaining = max(0, int(damage))
 
-        resistances = getattr(defender, "resistances", {}) or {}
-        vulnerabilities = getattr(defender, "vulnerabilities", {}) or {}
-        immunities = getattr(defender, "immunities", []) or []
+        if damage_packet is None:
+            damage_packet = DamagePacket(
+                source_id="",
+                target_id="",
+                damage_type=damage_type,
+                base_damage=max(0, int(damage)),
+                damage_components={str(damage_type): max(0, int(damage))},
+            )
 
-        if str(damage_type) in [str(v) for v in immunities]:
-            stages.append(
-                MitigationStage(
-                    stage="immunity_short_circuit",
-                    before=remaining,
-                    after=0,
-                    delta=-remaining,
-                    reason=f"immunity:{damage_type}",
-                )
-            )
-            return MitigationResult(
-                stages=stages,
-                final_damage=0,
-                shield_absorbed=0,
-                temporary_hp_absorbed=0,
-                resistance_multiplier=0.0,
-                vulnerability_multiplier=1.0,
-            )
+        components = dict(damage_packet.damage_components or {})
+        if not components:
+            components = {str(damage_packet.damage_type): max(0, int(damage_packet.base_damage))}
+
+        total_incoming = max(0, int(sum(max(0, int(v)) for v in components.values())))
+        remaining = total_incoming
+
+        if total_incoming <= 0:
+            return MitigationResult(stages=stages, final_damage=0)
+
+        penetration = dict(damage_packet.penetration or {})
+        policy = mitigation_policy if isinstance(mitigation_policy, dict) else {}
 
         shield_val = max(0, int(getattr(defender.stats, "shield", 0) or 0))
+        allow_shield_pen = bool(policy.get("allow_shield_penetration", True))
+        shield_penetration = max(
+            0.0,
+            float(
+                penetration.get("shield", penetration.get("shield_penetration", 0.0)) or 0.0
+            ),
+        ) if allow_shield_pen else 0.0
+        if shield_penetration > 0.0 and shield_val > 0:
+            reduced = min(shield_val, int(shield_val * min(1.0, shield_penetration)))
+            shield_val = max(0, shield_val - reduced)
+            defender.stats.shield = shield_val
+            stages.append(
+                MitigationStage(
+                    stage="shield_penetration",
+                    before=shield_val + reduced,
+                    after=shield_val,
+                    delta=-reduced,
+                    reason=f"shield_penetration:{shield_penetration}",
+                )
+            )
+
         shield_absorbed = min(shield_val, remaining)
         if shield_absorbed > 0:
             before = remaining
@@ -351,6 +388,27 @@ class CombatCoreEvaluator:
             )
 
         temp_hp_val = max(0, int(getattr(defender.stats, "temporary_hp", 0) or 0))
+        allow_temp_hp_pen = bool(policy.get("allow_temporary_hp_penetration", True))
+        temp_hp_penetration = max(
+            0.0,
+            float(
+                penetration.get("temporary_hp", penetration.get("temporary_hp_penetration", 0.0)) or 0.0
+            ),
+        ) if allow_temp_hp_pen else 0.0
+        if temp_hp_penetration > 0.0 and temp_hp_val > 0:
+            reduced = min(temp_hp_val, int(temp_hp_val * min(1.0, temp_hp_penetration)))
+            temp_hp_val = max(0, temp_hp_val - reduced)
+            defender.stats.temporary_hp = temp_hp_val
+            stages.append(
+                MitigationStage(
+                    stage="temporary_hp_penetration",
+                    before=temp_hp_val + reduced,
+                    after=temp_hp_val,
+                    delta=-reduced,
+                    reason=f"temporary_hp_penetration:{temp_hp_penetration}",
+                )
+            )
+
         temporary_hp_absorbed = min(temp_hp_val, remaining)
         if temporary_hp_absorbed > 0:
             before = remaining
@@ -366,68 +424,140 @@ class CombatCoreEvaluator:
                 )
             )
 
-        resistance_multiplier = 1.0
-        resistance_value = resistances.get(str(damage_type))
-        if resistance_value is not None:
-            try:
-                resistance_multiplier = max(0.0, min(1.0, 1.0 - float(resistance_value)))
-            except (TypeError, ValueError):
+        if remaining <= 0:
+            return MitigationResult(
+                stages=stages,
+                final_damage=0,
+                shield_absorbed=shield_absorbed,
+                temporary_hp_absorbed=temporary_hp_absorbed,
+                resistance_multiplier=1.0,
+                vulnerability_multiplier=1.0,
+                damage_by_type={},
+            )
+
+        if total_incoming > 0 and remaining != total_incoming:
+            ratio = remaining / float(total_incoming)
+            scaled: Dict[str, int] = {}
+            for key, value in components.items():
+                scaled[key] = max(0, int(int(value) * ratio))
+            components = scaled
+
+        resistances = getattr(defender, "resistances", {}) or {}
+        vulnerabilities = getattr(defender, "vulnerabilities", {}) or {}
+        immunities = {str(v) for v in (getattr(defender, "immunities", []) or [])}
+
+        final_by_type: Dict[str, int] = {}
+        accum_before = 0
+        accum_after = 0
+
+        for comp_type, comp_damage in components.items():
+            comp_before = max(0, int(comp_damage))
+            accum_before += comp_before
+            alias_type = self._map_damage_type_alias(comp_type)
+
+            if alias_type in immunities and not damage_packet.true_damage:
+                stages.append(
+                    MitigationStage(
+                        stage="immunity",
+                        before=comp_before,
+                        after=0,
+                        delta=-comp_before,
+                        reason=f"immunity:{alias_type}",
+                    )
+                )
+                final_by_type[comp_type] = 0
+                continue
+
+            value = comp_before
+
+            if not damage_packet.true_damage:
                 resistance_multiplier = 1.0
+                resistance_value = resistances.get(comp_type)
+                if resistance_value is None:
+                    resistance_value = resistances.get(alias_type)
+                if resistance_value is not None:
+                    try:
+                        resistance_penetration = float(
+                            damage_packet.penetration.get(
+                                comp_type,
+                                damage_packet.penetration.get(
+                                    alias_type,
+                                    damage_packet.penetration.get("resistance", 0.0),
+                                ),
+                            )
+                            or 0.0
+                        )
+                        applied_res = max(0.0, float(resistance_value) - max(0.0, resistance_penetration))
+                        res_min = float(policy.get("resistance_clamp_min", 0.0) or 0.0)
+                        res_max = float(policy.get("resistance_clamp_max", 0.95) or 0.95)
+                        if res_max < res_min:
+                            res_min, res_max = res_max, res_min
+                        applied_res = max(res_min, min(res_max, applied_res))
+                        resistance_multiplier = max(0.0, min(1.0, 1.0 - applied_res))
+                    except (TypeError, ValueError):
+                        resistance_multiplier = 1.0
+                    before = value
+                    value = int(value * resistance_multiplier)
+                    stages.append(
+                        MitigationStage(
+                            stage="resistance",
+                            before=before,
+                            after=value,
+                            delta=value - before,
+                            reason=f"resistance:{comp_type}:{resistance_multiplier}",
+                        )
+                    )
 
-        vulnerability_multiplier = 1.0
-        vulnerability_value = vulnerabilities.get(str(damage_type))
-        if vulnerability_value is not None:
-            try:
-                vulnerability_multiplier = max(1.0, 1.0 + float(vulnerability_value))
-            except (TypeError, ValueError):
                 vulnerability_multiplier = 1.0
+                vulnerability_value = vulnerabilities.get(comp_type)
+                if vulnerability_value is None:
+                    vulnerability_value = vulnerabilities.get(alias_type)
+                if vulnerability_value is not None:
+                    try:
+                        vul_min = float(policy.get("vulnerability_min_multiplier", 1.0) or 1.0)
+                        vul_max = float(policy.get("vulnerability_max_multiplier", 3.0) or 3.0)
+                        if vul_max < vul_min:
+                            vul_min, vul_max = vul_max, vul_min
+                        vulnerability_multiplier = max(vul_min, min(vul_max, 1.0 + float(vulnerability_value)))
+                    except (TypeError, ValueError):
+                        vulnerability_multiplier = 1.0
+                    before = value
+                    value = int(value * vulnerability_multiplier)
+                    stages.append(
+                        MitigationStage(
+                            stage="vulnerability",
+                            before=before,
+                            after=value,
+                            delta=value - before,
+                            reason=f"vulnerability:{comp_type}:{vulnerability_multiplier}",
+                        )
+                    )
 
-        if resistance_multiplier != 1.0:
-            before = remaining
-            remaining = int(remaining * resistance_multiplier)
-            stages.append(
-                MitigationStage(
-                    stage="resistance",
-                    before=before,
-                    after=remaining,
-                    delta=remaining - before,
-                    reason=f"resistance:{damage_type}:{resistance_multiplier}",
-                )
-            )
+            final_by_type[comp_type] = max(0, int(value))
+            accum_after += final_by_type[comp_type]
 
-        if vulnerability_multiplier != 1.0:
-            before = remaining
-            remaining = int(remaining * vulnerability_multiplier)
-            stages.append(
-                MitigationStage(
-                    stage="vulnerability",
-                    before=before,
-                    after=remaining,
-                    delta=remaining - before,
-                    reason=f"vulnerability:{damage_type}:{vulnerability_multiplier}",
-                )
-            )
-
-        if damage > 0 and remaining < minimum_damage:
-            before = remaining
-            remaining = minimum_damage
+        final_total = max(0, int(sum(final_by_type.values())))
+        if total_incoming > 0 and final_total < max(0, int(minimum_damage)):
+            before = final_total
+            final_total = max(0, int(minimum_damage))
             stages.append(
                 MitigationStage(
                     stage="minimum_damage",
                     before=before,
-                    after=remaining,
-                    delta=remaining - before,
+                    after=final_total,
+                    delta=final_total - before,
                     reason=f"minimum_damage:{minimum_damage}",
                 )
             )
 
         return MitigationResult(
             stages=stages,
-            final_damage=max(0, int(remaining)),
+            final_damage=final_total,
             shield_absorbed=shield_absorbed,
             temporary_hp_absorbed=temporary_hp_absorbed,
-            resistance_multiplier=resistance_multiplier,
-            vulnerability_multiplier=vulnerability_multiplier,
+            resistance_multiplier=1.0 if accum_before <= 0 else max(0.0, min(2.0, accum_after / float(max(1, accum_before)))),
+            vulnerability_multiplier=1.0,
+            damage_by_type=final_by_type,
         )
 
     @staticmethod
@@ -450,6 +580,48 @@ class CombatCoreEvaluator:
             "breakdown": attack_roll.breakdown,
             "ui_text": attack_roll.ui_text,
         }
+
+    @staticmethod
+    def _map_damage_type_alias(damage_type: str) -> str:
+        value = str(damage_type or DamageType.PHYSICAL.value)
+        if value in {
+            DamageType.PHYSICAL_SLASH.value,
+            DamageType.PHYSICAL_PIERCE.value,
+            DamageType.PHYSICAL_BLUNT.value,
+        }:
+            return DamageType.PHYSICAL.value
+        return value
+
+    @staticmethod
+    def _normalize_damage_components(
+        *,
+        damage_type: str,
+        base_damage: int,
+        damage_components: Optional[Dict[str, int]],
+    ) -> Dict[str, int]:
+        if isinstance(damage_components, dict) and damage_components:
+            normalized: Dict[str, int] = {}
+            for key, value in damage_components.items():
+                safe_key = str(key or DamageType.PHYSICAL.value)
+                try:
+                    normalized[safe_key] = max(0, int(value))
+                except (TypeError, ValueError):
+                    normalized[safe_key] = 0
+            if normalized:
+                return normalized
+        return {str(damage_type or DamageType.PHYSICAL.value): max(0, int(base_damage))}
+
+    @staticmethod
+    def _ensure_effective_ac(entity: Union[Character, Monster]):
+        stats = getattr(entity, "stats", None)
+        if not stats:
+            return
+        get_effective = getattr(stats, "get_effective_ac", None)
+        if callable(get_effective):
+            try:
+                stats.ac = int(get_effective())
+            except Exception:
+                pass
 
 
 combat_core_evaluator = CombatCoreEvaluator()

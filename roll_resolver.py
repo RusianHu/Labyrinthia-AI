@@ -207,8 +207,8 @@ class RollResolver:
     
     def attack_roll(self, attacker: Union[Character, Monster], target: Union[Character, Monster],
                    attack_type: str = "melee", proficient: bool = True,
-                   advantage: bool = False, disadvantage: bool = False, 
-                   extra_bonus: int = 0) -> CheckResult:
+                   advantage: bool = False, disadvantage: bool = False,
+                   extra_bonus: int = 0, rng = None) -> CheckResult:
         """攻击检定
         
         Args:
@@ -238,11 +238,14 @@ class RollResolver:
         prof_bonus = getattr(attacker, 'proficiency_bonus', 2) if proficient else 0
         
         # 投掷1d20
-        dice_result = self.roller.roll_d20(advantage=advantage, disadvantage=disadvantage)
+        dice_result = self.roller.roll_d20(advantage=advantage, disadvantage=disadvantage, rng=rng)
         
         # 计算总值
         total = dice_result.picked_roll + ability_mod + prof_bonus + extra_bonus
-        target_ac = target.stats.ac
+        if hasattr(target.stats, "get_effective_ac") and callable(target.stats.get_effective_ac):
+            target_ac = int(target.stats.get_effective_ac())
+        else:
+            target_ac = int(getattr(target.stats, "ac", 10) or 10)
         hit = total >= target_ac
         
         # 构建详细描述

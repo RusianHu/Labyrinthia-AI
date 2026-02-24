@@ -114,6 +114,8 @@ def _normalize_action_response(
         "damage",
         "combat_breakdown",
         "combat_projection",
+        "effect_runtime",
+        "performance",
         "idempotent_replay",
         "requires_confirmation",
         "confirmation_token",

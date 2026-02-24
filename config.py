@@ -190,6 +190,11 @@ class GameConfig:
     critical_hit_chance: float = 0.05
     combat_authority_mode: str = "local"          # local | hybrid | server
     combat_diff_threshold: int = 5                 # hybrid差异阈值（命中/伤害/死亡/经验）
+    combat_release_stage: str = "debug"           # debug | canary | stable
+    combat_canary_percent: int = 0                 # 0-100
+    combat_auto_degrade_enabled: bool = True
+    combat_degrade_latency_p95_ms: int = 500
+    combat_degrade_error_rate: float = 0.05
 
     # 战斗叙述设置
     enable_combat_narrative: bool = True           # 启用战斗叙述生成
@@ -404,6 +409,32 @@ class Config:
         if combat_diff_threshold := os.getenv("COMBAT_DIFF_THRESHOLD"):
             try:
                 self.game.combat_diff_threshold = max(0, int(combat_diff_threshold))
+            except ValueError:
+                pass
+
+        if release_stage := os.getenv("COMBAT_RELEASE_STAGE"):
+            stage = release_stage.strip().lower()
+            if stage in ("debug", "canary", "stable"):
+                self.game.combat_release_stage = stage
+
+        if canary_percent := os.getenv("COMBAT_CANARY_PERCENT"):
+            try:
+                self.game.combat_canary_percent = max(0, min(100, int(canary_percent)))
+            except ValueError:
+                pass
+
+        if auto_degrade := os.getenv("COMBAT_AUTO_DEGRADE_ENABLED"):
+            self.game.combat_auto_degrade_enabled = auto_degrade.lower() in ("true", "1", "yes")
+
+        if degrade_latency := os.getenv("COMBAT_DEGRADE_LATENCY_P95_MS"):
+            try:
+                self.game.combat_degrade_latency_p95_ms = max(100, int(degrade_latency))
+            except ValueError:
+                pass
+
+        if degrade_error_rate := os.getenv("COMBAT_DEGRADE_ERROR_RATE"):
+            try:
+                self.game.combat_degrade_error_rate = max(0.0, min(1.0, float(degrade_error_rate)))
             except ValueError:
                 pass
 

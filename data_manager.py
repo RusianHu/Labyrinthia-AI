@@ -127,6 +127,10 @@ class DataManager:
         if map_data := data.get("current_map"):
             game_state.current_map = self._dict_to_game_map(map_data)
 
+        game_state.combat_rules = data.get("combat_rules", {}) if isinstance(data.get("combat_rules", {}), dict) else {}
+        game_state.combat_snapshot = data.get("combat_snapshot", {}) if isinstance(data.get("combat_snapshot", {}), dict) else {}
+        self._normalize_combat_rules(game_state)
+
         # 怪物列表
         if monsters_data := data.get("monsters"):
             game_state.monsters = [self._dict_to_monster(monster_data) for monster_data in monsters_data]
@@ -184,6 +188,16 @@ class DataManager:
         # 属性
         if stats_data := data.get("stats"):
             character.stats = Stats(**stats_data)
+            if not isinstance(character.stats.ac_components, dict) or not character.stats.ac_components:
+                character.stats.ac_components = {
+                    "base": int(getattr(character.stats, "ac", 10) or 10),
+                    "armor": 0,
+                    "shield": 0,
+                    "status": 0,
+                    "situational": 0,
+                    "penalty": 0,
+                }
+            character.stats.ac = character.stats.get_effective_ac()
 
         # 战斗抗性字段（兼容旧存档）
         raw_resistances = data.get("resistances", {})
@@ -308,6 +322,12 @@ class DataManager:
         item.effect_payload = data.get("effect_payload", {}) if isinstance(data.get("effect_payload", {}), dict) else {}
         item.use_mode = data.get("use_mode", "active")
         item.is_equippable = bool(data.get("is_equippable", False))
+        item.equip_passive_effects = data.get("equip_passive_effects", []) if isinstance(data.get("equip_passive_effects", []), list) else []
+        item.affixes = data.get("affixes", []) if isinstance(data.get("affixes", []), list) else []
+        item.trigger_affixes = data.get("trigger_affixes", []) if isinstance(data.get("trigger_affixes", []), list) else []
+        item.set_id = str(data.get("set_id", "") or "")
+        item.set_thresholds = data.get("set_thresholds", {}) if isinstance(data.get("set_thresholds", {}), dict) else {}
+        item.unique_key = str(data.get("unique_key", "") or "")
 
         equip_slot = str(data.get("equip_slot", "") or "")
         allowed_slots = {"", "weapon", "armor", "accessory_1", "accessory_2"}
@@ -509,6 +529,100 @@ class DataManager:
             context.created_at = datetime.fromisoformat(created_at)
 
         return context
+
+    def _normalize_combat_rules(self, game_state: GameState):
+        if not isinstance(game_state.combat_rules, dict):
+            game_state.combat_rules = {}
+
+        rules = game_state.combat_rules
+        rule_version = max(1, int(getattr(game_state, "combat_rule_version", 1) or 1))
+        rules.setdefault("rule_version", rule_version)
+        rules.setdefault("damage_order", ["hit", "shield", "temporary_hp", "resistance", "vulnerability", "hp"])
+        rules.setdefault("critical_multiplier", 1.5)
+        rules.setdefault("minimum_damage", 1)
+
+        damage_types = rules.get("damage_types")
+        if not isinstance(damage_types, list) or not damage_types:
+            rules["damage_types"] = [
+                "physical",
+                "physical_slash",
+                "physical_pierce",
+                "physical_blunt",
+                "fire",
+                "cold",
+                "lightning",
+                "acid",
+                "poison",
+                "necrotic",
+                "radiant",
+                "psychic",
+                "force",
+                "thunder",
+                "arcane",
+                "true",
+            ]
+
+        mitigation = rules.get("mitigation")
+        if not isinstance(mitigation, dict):
+            rules["mitigation"] = {
+                "allow_multi_damage_components": True,
+                "allow_penetration": True,
+                "allow_true_damage": True,
+                "allow_shield_penetration": True,
+                "allow_temporary_hp_penetration": True,
+                "resistance_clamp_min": 0.0,
+                "resistance_clamp_max": 0.95,
+                "vulnerability_min_multiplier": 1.0,
+                "vulnerability_max_multiplier": 3.0,
+            }
+
+        release_strategy = rules.get("release_strategy")
+        if not isinstance(release_strategy, dict):
+            rules["release_strategy"] = {
+                "stage": str(getattr(config.game, "combat_release_stage", "debug") or "debug"),
+                "canary_percent": int(getattr(config.game, "combat_canary_percent", 0) or 0),
+                "auto_degrade_enabled": bool(getattr(config.game, "combat_auto_degrade_enabled", True)),
+                "degrade_diff_threshold": int(getattr(config.game, "combat_diff_threshold", 5) or 5),
+                "degrade_latency_p95_ms": int(getattr(config.game, "combat_degrade_latency_p95_ms", 500) or 500),
+                "degrade_error_rate": float(getattr(config.game, "combat_degrade_error_rate", 0.05) or 0.05),
+            }
+
+        rollback = rules.get("rollback")
+        if not isinstance(rollback, dict):
+            rules["rollback"] = {
+                "enabled": True,
+                "last_stable_rule_version": rule_version,
+                "fallback_authority_mode": "local",
+                "last_reason": "",
+                "last_trace_id": "",
+            }
+
+        equipment_affix_policy = rules.get("equipment_affix_policy")
+        if not isinstance(equipment_affix_policy, dict):
+            rules["equipment_affix_policy"] = {
+                "allowed_keys": [
+                    "hit_bonus",
+                    "critical_bonus",
+                    "damage_bonus",
+                    "ac_bonus",
+                    "shield_bonus",
+                    "resistance_bonus",
+                    "vulnerability_reduction",
+                    "heal_on_kill",
+                    "regen_per_turn",
+                ],
+                "value_bounds": {
+                    "hit_bonus": [-20, 20],
+                    "critical_bonus": [0, 1],
+                    "damage_bonus": [-100, 300],
+                    "ac_bonus": [-10, 20],
+                    "shield_bonus": [0, 200],
+                    "resistance_bonus": [0, 0.8],
+                    "vulnerability_reduction": [0, 0.8],
+                    "heal_on_kill": [0, 100],
+                    "regen_per_turn": [0, 50],
+                },
+            }
 
     def list_saves(self) -> List[Dict[str, Any]]:
         """列出所有存档"""

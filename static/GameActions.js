@@ -56,8 +56,9 @@ Object.assign(LabyrinthiaGame.prototype, {
                 this.lastLLMRequest = {
                     timestamp: new Date().toISOString(),
                     action: action,
-                    parameters: parameters,
-                    game_id: this.gameId
+                    parameters: params,
+                    game_id: this.gameId,
+                    endpoint: '/api/action'
                 };
             }
 
@@ -74,10 +75,20 @@ Object.assign(LabyrinthiaGame.prototype, {
             if (this.debugMode) {
                 this.lastLLMResponse = {
                     timestamp: new Date().toISOString(),
+                    action: action,
+                    trace_id: result.trace_id,
                     success: result.success,
                     message: result.message,
+                    reason: result.reason,
+                    error_code: result.error_code,
+                    retryable: result.retryable,
                     events: result.events,
-                    narrative: result.narrative
+                    narrative: result.narrative,
+                    impact_summary: result.impact_summary,
+                    combat_breakdown: result.combat_breakdown,
+                    combat_projection: result.combat_projection,
+                    effect_runtime: result.effect_runtime,
+                    performance: result.performance
                 };
                 this.updateDebugInfo();
             }

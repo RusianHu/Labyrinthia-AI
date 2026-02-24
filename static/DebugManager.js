@@ -184,9 +184,21 @@ const DebugMethods = {
                 player_level: this.gameState.player.stats.level,
                 map_name: this.gameState.current_map.name,
                 turn_count: this.gameState.turn_count,
-                monsters_count: this.gameState.monsters.length
+                monsters_count: this.gameState.monsters.length,
+                combat_rule_version: this.gameState.combat_rule_version,
+                combat_authority_mode: this.gameState.combat_authority_mode,
             };
             gameStateElement.textContent = JSON.stringify(debugGameState, null, 2);
+        }
+
+        const combatJsonElement = document.getElementById('debug-combat-json');
+        if (combatJsonElement) {
+            const payload = {
+                action_request: this.lastLLMRequest || null,
+                action_response: this.lastLLMResponse || null,
+                combat_snapshot: (this.gameState && this.gameState.combat_snapshot) || {},
+            };
+            combatJsonElement.textContent = JSON.stringify(payload, null, 2);
         }
     },
 

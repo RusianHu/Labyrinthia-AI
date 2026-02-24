@@ -39,6 +39,20 @@ logger = logging.getLogger(__name__)
 class GameEngine:
     """游戏引擎类"""
 
+    _EQUIPMENT_AFFIX_DEFAULT_BOUNDS: Dict[str, Tuple[float, float]] = {
+        "hit_bonus": (-20.0, 20.0),
+        "critical_bonus": (0.0, 1.0),
+        "damage_bonus": (-100.0, 300.0),
+        "ac_bonus": (-10.0, 20.0),
+        "shield_bonus": (0.0, 200.0),
+        "resistance_bonus": (0.0, 0.8),
+        "vulnerability_reduction": (0.0, 0.8),
+        "heal_on_kill": (0.0, 100.0),
+        "regen_per_turn": (0.0, 50.0),
+    }
+    _COMBAT_OVERRIDE_COMPONENT_LIMIT: int = 6
+    _COMBAT_OVERRIDE_COMPONENT_MAX_VALUE: int = 5000
+
     def __init__(self):
         # 使用 (user_id, game_id) 作为键，实现用户级别的游戏状态隔离
         self.active_games: Dict[Tuple[str, str], GameState] = {}
@@ -217,6 +231,580 @@ class GameEngine:
         for token in expired:
             cache.pop(token, None)
 
+    def _ensure_combat_defaults(self, game_state: GameState):
+        if not isinstance(game_state.combat_rules, dict) or not game_state.combat_rules:
+            game_state.combat_rules = {
+                "damage_order": ["hit", "shield", "temporary_hp", "resistance", "vulnerability", "hp"],
+                "critical_multiplier": 1.5,
+                "minimum_damage": 1,
+                "rule_version": int(getattr(game_state, "combat_rule_version", 1) or 1),
+                "damage_types": [
+                    "physical",
+                    "physical_slash",
+                    "physical_pierce",
+                    "physical_blunt",
+                    "fire",
+                    "cold",
+                    "lightning",
+                    "acid",
+                    "poison",
+                    "necrotic",
+                    "radiant",
+                    "psychic",
+                    "force",
+                    "thunder",
+                    "arcane",
+                    "true",
+                ],
+                "mitigation": {
+                    "allow_multi_damage_components": True,
+                    "allow_penetration": True,
+                    "allow_true_damage": True,
+                    "allow_shield_penetration": True,
+                    "allow_temporary_hp_penetration": True,
+                    "resistance_clamp_min": 0.0,
+                    "resistance_clamp_max": 0.95,
+                    "vulnerability_min_multiplier": 1.0,
+                    "vulnerability_max_multiplier": 3.0,
+                },
+                "release_strategy": {
+                    "stage": "debug",
+                    "canary_percent": 0,
+                    "auto_degrade_enabled": True,
+                    "degrade_diff_threshold": int(getattr(config.game, "combat_diff_threshold", 5) or 5),
+                    "degrade_latency_p95_ms": 500,
+                    "degrade_error_rate": 0.05,
+                },
+                "rollback": {
+                    "enabled": True,
+                    "last_stable_rule_version": max(1, int(getattr(game_state, "combat_rule_version", 1) or 1)),
+                    "fallback_authority_mode": "local",
+                    "last_reason": "",
+                    "last_trace_id": "",
+                },
+                "ac_policy": {
+                    "mode": "components",
+                    "legacy_single_value_compatible": True,
+                    "semantic_boundary": "hit_threshold_only",
+                },
+                "equipment_affix_policy": {
+                    "allowed_keys": [
+                        "hit_bonus",
+                        "critical_bonus",
+                        "damage_bonus",
+                        "ac_bonus",
+                        "shield_bonus",
+                        "resistance_bonus",
+                        "vulnerability_reduction",
+                        "heal_on_kill",
+                        "regen_per_turn",
+                    ],
+                    "value_bounds": {
+                        "hit_bonus": [-20, 20],
+                        "critical_bonus": [0, 1],
+                        "damage_bonus": [-100, 300],
+                        "ac_bonus": [-10, 20],
+                        "shield_bonus": [0, 200],
+                        "resistance_bonus": [0, 0.8],
+                        "vulnerability_reduction": [0, 0.8],
+                        "heal_on_kill": [0, 100],
+                        "regen_per_turn": [0, 50],
+                    },
+                },
+            }
+
+        if not isinstance(game_state.combat_snapshot, dict):
+            game_state.combat_snapshot = {}
+
+        if not isinstance(game_state.combat_snapshot.get("latency_metrics", {}), dict):
+            game_state.combat_snapshot["latency_metrics"] = {
+                "samples_ms": [],
+                "p50_ms": 0,
+                "p95_ms": 0,
+                "max_samples": 200,
+            }
+
+        ac_policy = game_state.combat_rules.get("ac_policy")
+        if not isinstance(ac_policy, dict):
+            game_state.combat_rules["ac_policy"] = {
+                "mode": "components",
+                "legacy_single_value_compatible": True,
+                "semantic_boundary": "hit_threshold_only",
+            }
+        else:
+            ac_policy.setdefault("mode", "components")
+            ac_policy.setdefault("legacy_single_value_compatible", True)
+            ac_policy.setdefault("semantic_boundary", "hit_threshold_only")
+
+        combat_tests = game_state.combat_snapshot.get("combat_tests")
+        if not isinstance(combat_tests, dict):
+            game_state.combat_snapshot["combat_tests"] = {
+                "ac_baseline": [],
+                "ac_hit_curve": [],
+            }
+
+        telemetry = game_state.combat_snapshot.get("telemetry")
+        if not isinstance(telemetry, dict):
+            game_state.combat_snapshot["telemetry"] = {
+                "wins": 0,
+                "losses": 0,
+                "total_turns": 0,
+                "completed_combats": 0,
+                "combat_attempts": 0,
+                "burst_peak": 0,
+                "death_sources": {},
+                "win_rate": 0.0,
+                "avg_turns": 0.0,
+                "errors": 0,
+            }
+
+        mitigation = game_state.combat_rules.get("mitigation")
+        if not isinstance(mitigation, dict):
+            game_state.combat_rules["mitigation"] = {
+                "allow_multi_damage_components": True,
+                "allow_penetration": True,
+                "allow_true_damage": True,
+                "allow_shield_penetration": True,
+                "allow_temporary_hp_penetration": True,
+                "resistance_clamp_min": 0.0,
+                "resistance_clamp_max": 0.95,
+                "vulnerability_min_multiplier": 1.0,
+                "vulnerability_max_multiplier": 3.0,
+            }
+        else:
+            mitigation.setdefault("allow_multi_damage_components", True)
+            mitigation.setdefault("allow_penetration", True)
+            mitigation.setdefault("allow_true_damage", True)
+            mitigation.setdefault("allow_shield_penetration", True)
+            mitigation.setdefault("allow_temporary_hp_penetration", True)
+            mitigation.setdefault("resistance_clamp_min", 0.0)
+            mitigation.setdefault("resistance_clamp_max", 0.95)
+            mitigation.setdefault("vulnerability_min_multiplier", 1.0)
+            mitigation.setdefault("vulnerability_max_multiplier", 3.0)
+
+        release_strategy = game_state.combat_rules.get("release_strategy")
+        if not isinstance(release_strategy, dict):
+            game_state.combat_rules["release_strategy"] = {
+                "stage": "debug",
+                "canary_percent": 0,
+                "auto_degrade_enabled": True,
+                "degrade_diff_threshold": int(getattr(config.game, "combat_diff_threshold", 5) or 5),
+                "degrade_latency_p95_ms": 500,
+                "degrade_error_rate": 0.05,
+            }
+        else:
+            release_strategy.setdefault("stage", "debug")
+            release_strategy.setdefault("canary_percent", 0)
+            release_strategy.setdefault("auto_degrade_enabled", True)
+            release_strategy.setdefault("degrade_diff_threshold", int(getattr(config.game, "combat_diff_threshold", 5) or 5))
+            release_strategy.setdefault("degrade_latency_p95_ms", 500)
+            release_strategy.setdefault("degrade_error_rate", 0.05)
+
+        rollback = game_state.combat_rules.get("rollback")
+        if not isinstance(rollback, dict):
+            game_state.combat_rules["rollback"] = {
+                "enabled": True,
+                "last_stable_rule_version": max(1, int(getattr(game_state, "combat_rule_version", 1) or 1)),
+                "fallback_authority_mode": "local",
+                "last_reason": "",
+                "last_trace_id": "",
+            }
+        else:
+            rollback.setdefault("enabled", True)
+            rollback.setdefault("last_stable_rule_version", max(1, int(getattr(game_state, "combat_rule_version", 1) or 1)))
+            rollback.setdefault("fallback_authority_mode", "local")
+            rollback.setdefault("last_reason", "")
+            rollback.setdefault("last_trace_id", "")
+
+    def _percentile(self, values: List[int], ratio: float) -> int:
+        if not values:
+            return 0
+        sorted_vals = sorted(int(v) for v in values)
+        idx = int(max(0, min(len(sorted_vals) - 1, round((len(sorted_vals) - 1) * ratio))))
+        return int(sorted_vals[idx])
+
+    def _record_combat_latency(self, game_state: GameState, elapsed_ms: int):
+        self._ensure_combat_defaults(game_state)
+        metrics = game_state.combat_snapshot.setdefault("latency_metrics", {})
+        samples = metrics.setdefault("samples_ms", [])
+        samples.append(max(0, int(elapsed_ms)))
+        max_samples = max(20, int(metrics.get("max_samples", 200) or 200))
+        if len(samples) > max_samples:
+            del samples[: len(samples) - max_samples]
+        metrics["p50_ms"] = self._percentile(samples, 0.5)
+        metrics["p95_ms"] = self._percentile(samples, 0.95)
+
+    def _rebuild_combat_snapshot(self, game_state: GameState):
+        self._ensure_combat_defaults(game_state)
+        player = game_state.player
+        stats = player.stats
+
+        total_set_counts: Dict[str, int] = {}
+        passive_effects: List[Dict[str, Any]] = []
+        trigger_affixes: List[Dict[str, Any]] = []
+        rarity_profile: Dict[str, int] = {}
+        for _, equipped in (player.equipped_items or {}).items():
+            if not equipped:
+                continue
+            set_id = str(getattr(equipped, "set_id", "") or "")
+            if set_id:
+                total_set_counts[set_id] = total_set_counts.get(set_id, 0) + 1
+            rarity = str(getattr(equipped, "rarity", "common") or "common")
+            rarity_profile[rarity] = rarity_profile.get(rarity, 0) + 1
+
+            for payload in getattr(equipped, "equip_passive_effects", []) or []:
+                if isinstance(payload, dict):
+                    passive_effects.append(payload)
+
+            for payload in getattr(equipped, "trigger_affixes", []) or []:
+                if isinstance(payload, dict):
+                    trigger_affixes.append(payload)
+
+        ac_components = dict(getattr(stats, "ac_components", {}) or {})
+        while True:
+            before = set(ac_components.keys())
+            for key in ("base", "armor", "shield", "status", "situational", "penalty"):
+                ac_components.setdefault(key, 0)
+            if before == set(ac_components.keys()):
+                break
+        ac_components["armor"] = 0
+        ac_components["shield"] = 0
+        for _, equipped in (player.equipped_items or {}).items():
+            if not equipped:
+                continue
+            props = getattr(equipped, "properties", {}) or {}
+            ac_components["armor"] += int(props.get("ac_bonus", 0) or 0)
+            ac_components["shield"] += int(props.get("shield_bonus", 0) or 0)
+
+        stats.ac_components = ac_components
+        stats.ac = stats.get_effective_ac()
+
+        equipment_runtime = self._build_equipment_runtime(player)
+        runtime_bonuses = equipment_runtime.get("combat_bonuses", {}) if isinstance(equipment_runtime, dict) else {}
+
+        # 让装备 runtime 的防御向增益进入快照口径（不覆写基础存档字段）
+        base_ac_components = dict(stats.ac_components)
+        snapshot_ac_components = dict(base_ac_components)
+        if isinstance(runtime_bonuses, dict):
+            snapshot_ac_components["status"] = int(snapshot_ac_components.get("status", 0) or 0) + int(runtime_bonuses.get("ac_bonus", 0) or 0)
+
+        snapshot_ac_effective = (
+            int(snapshot_ac_components.get("base", 10) or 10)
+            + int(snapshot_ac_components.get("armor", 0) or 0)
+            + int(snapshot_ac_components.get("shield", 0) or 0)
+            + int(snapshot_ac_components.get("status", 0) or 0)
+            + int(snapshot_ac_components.get("situational", 0) or 0)
+            - int(snapshot_ac_components.get("penalty", 0) or 0)
+        )
+        snapshot_ac_effective = max(int(getattr(stats, "ac_min", 1) or 1), min(int(getattr(stats, "ac_max", 50) or 50), snapshot_ac_effective))
+
+        effective_resistances = dict(getattr(player, "resistances", {}) or {})
+        effective_vulnerabilities = dict(getattr(player, "vulnerabilities", {}) or {})
+        if isinstance(runtime_bonuses, dict):
+            for damage_type, delta in (runtime_bonuses.get("resistance_bonus", {}) or {}).items():
+                dtype = str(damage_type or "")
+                if not dtype:
+                    continue
+                current = float(effective_resistances.get(dtype, 0.0) or 0.0)
+                effective_resistances[dtype] = max(0.0, min(0.95, current + float(delta or 0.0)))
+            for damage_type, delta in (runtime_bonuses.get("vulnerability_reduction", {}) or {}).items():
+                dtype = str(damage_type or "")
+                if not dtype:
+                    continue
+                current = float(effective_vulnerabilities.get(dtype, 0.0) or 0.0)
+                effective_vulnerabilities[dtype] = max(0.0, current - float(delta or 0.0))
+
+        control = effect_engine.get_action_availability(player)
+        status_view = effect_engine.build_status_debug_view(player)
+        conflicts = effect_engine.detect_status_conflicts(player)
+
+        game_state.combat_snapshot.update(
+            {
+                "player": {
+                    "hp": int(stats.hp),
+                    "max_hp": int(stats.max_hp),
+                    "ac_effective": int(snapshot_ac_effective),
+                    "ac_legacy": int(getattr(stats, "ac", 10) or 10),
+                    "ac_bounds": {
+                        "min": int(getattr(stats, "ac_min", 1) or 1),
+                        "max": int(getattr(stats, "ac_max", 50) or 50),
+                    },
+                    "ac_components": snapshot_ac_components,
+                    "ac_policy": "hit_threshold_only",
+                    "shield": int(getattr(stats, "shield", 0) or 0),
+                    "temporary_hp": int(getattr(stats, "temporary_hp", 0) or 0),
+                    "resistances": effective_resistances,
+                    "vulnerabilities": effective_vulnerabilities,
+                    "immunities": list(getattr(player, "immunities", []) or []),
+                },
+                "equipment": {
+                    "set_counts": total_set_counts,
+                    "passive_effects": passive_effects,
+                    "trigger_affixes": trigger_affixes,
+                    "rarity_profile": rarity_profile,
+                    "affixes": [
+                        {
+                            "item_id": item.id,
+                            "affixes": getattr(item, "affixes", []),
+                            "set_id": str(getattr(item, "set_id", "") or ""),
+                            "set_thresholds": getattr(item, "set_thresholds", {}),
+                        }
+                        for item in (player.equipped_items or {}).values()
+                        if item is not None
+                    ],
+                    "runtime": equipment_runtime,
+                },
+                "status_runtime": {
+                    "status_view": status_view,
+                    "conflicts": conflicts,
+                    "blocked_actions": control.get("blocked_actions", {}),
+                    "action_gate": {
+                        "can_move": bool(control.get("can_move", True)),
+                        "can_attack": bool(control.get("can_attack", True)),
+                        "can_cast_spell": bool(control.get("can_cast_spell", True)),
+                        "can_use_item": bool(control.get("can_use_item", True)),
+                    },
+                },
+                "defense_layers": {
+                    "shield": int(getattr(stats, "shield", 0) or 0),
+                    "temporary_hp": int(getattr(stats, "temporary_hp", 0) or 0),
+                    "order": list(game_state.combat_rules.get("damage_order", ["hit", "shield", "temporary_hp", "resistance", "vulnerability", "hp"])),
+                    "true_damage_enabled": True,
+                },
+            }
+        )
+
+    def _append_ac_baseline_sample(self, game_state: GameState, trace_id: str):
+        self._ensure_combat_defaults(game_state)
+        tests = game_state.combat_snapshot.setdefault("combat_tests", {})
+        baseline = tests.setdefault("ac_baseline", [])
+        samples: List[Dict[str, Any]] = list(baseline) if isinstance(baseline, list) else []
+
+        player = game_state.player
+        sample = {
+            "trace_id": str(trace_id or ""),
+            "class": str(getattr(player.character_class, "value", "unknown") or "unknown"),
+            "level": int(getattr(player.stats, "level", 1) or 1),
+            "ac_effective": int(getattr(player.stats, "ac", 10) or 10),
+            "ac_components": dict(getattr(player.stats, "ac_components", {}) or {}),
+        }
+
+        samples.append(sample)
+        if len(samples) > 120:
+            samples = samples[-120:]
+        tests["ac_baseline"] = samples
+
+    def _record_ac_hit_curve(self, game_state: GameState, attack_log: Dict[str, Any]):
+        self._ensure_combat_defaults(game_state)
+        tests = game_state.combat_snapshot.setdefault("combat_tests", {})
+        curve = tests.setdefault("ac_hit_curve", [])
+        rows: List[Dict[str, Any]] = list(curve) if isinstance(curve, list) else []
+
+        rows.append(
+            {
+                "trace_id": str(attack_log.get("trace_id", "") or ""),
+                "phase": str(attack_log.get("phase", "") or ""),
+                "attacker": str(attack_log.get("attacker", "") or ""),
+                "target": str(attack_log.get("target", "") or ""),
+                "target_ac": int(attack_log.get("target_ac", 10) or 10),
+                "attack_total": int(attack_log.get("attack_total", 0) or 0),
+                "hit": bool(attack_log.get("hit", False)),
+            }
+        )
+        if len(rows) > 500:
+            rows = rows[-500:]
+        tests["ac_hit_curve"] = rows
+
+    def _build_equipment_runtime(self, player: Character) -> Dict[str, Any]:
+        runtime = {
+            "set_effects": [],
+            "combat_bonuses": {
+                "hit_bonus": 0,
+                "critical_bonus": 0.0,
+                "damage_bonus": 0,
+                "ac_bonus": 0,
+                "shield_bonus": 0,
+                "resistance_bonus": {},
+                "vulnerability_reduction": {},
+                "heal_on_kill": 0,
+                "regen_per_turn": 0,
+            },
+            "validation_warnings": [],
+        }
+
+        set_counts: Dict[str, int] = {}
+        items = [item for item in (player.equipped_items or {}).values() if item is not None]
+        for item in items:
+            set_id = str(getattr(item, "set_id", "") or "")
+            if set_id:
+                set_counts[set_id] = set_counts.get(set_id, 0) + 1
+
+        for item in items:
+            payloads: List[Dict[str, Any]] = []
+            for entry in getattr(item, "affixes", []) or []:
+                if isinstance(entry, dict):
+                    payloads.append(entry)
+            for entry in getattr(item, "equip_passive_effects", []) or []:
+                if isinstance(entry, dict):
+                    payloads.append(entry)
+
+            set_id = str(getattr(item, "set_id", "") or "")
+            thresholds = getattr(item, "set_thresholds", {}) or {}
+            if set_id and isinstance(thresholds, dict):
+                count = int(set_counts.get(set_id, 0) or 0)
+                for raw_need, effect_payload in thresholds.items():
+                    try:
+                        need = int(raw_need)
+                    except (TypeError, ValueError):
+                        continue
+                    if count >= need and isinstance(effect_payload, dict):
+                        runtime["set_effects"].append(
+                            {
+                                "set_id": set_id,
+                                "threshold": need,
+                                "item_id": getattr(item, "id", ""),
+                                "effect": effect_payload,
+                            }
+                        )
+                        payloads.append(effect_payload)
+
+            for payload in payloads:
+                parsed = self._sanitize_equipment_affix_payload(payload)
+                if not parsed:
+                    runtime["validation_warnings"].append(f"ignored_affix:{getattr(item, 'id', 'unknown')}")
+                    continue
+
+                key = parsed["key"]
+                value = parsed["value"]
+                mapping = parsed.get("mapping")
+
+                if key in {"resistance_bonus", "vulnerability_reduction"}:
+                    if isinstance(mapping, dict):
+                        target = runtime["combat_bonuses"][key]
+                        for damage_type, amount in mapping.items():
+                            dtype = str(damage_type or "")
+                            if not dtype:
+                                continue
+                            target[dtype] = float(target.get(dtype, 0.0) or 0.0) + float(amount)
+                    continue
+
+                if key in runtime["combat_bonuses"]:
+                    if key in {"critical_bonus"}:
+                        runtime["combat_bonuses"][key] = float(runtime["combat_bonuses"][key]) + float(value)
+                    else:
+                        runtime["combat_bonuses"][key] = int(runtime["combat_bonuses"][key]) + int(value)
+
+        return runtime
+
+    def _record_combat_telemetry(
+        self,
+        game_state: GameState,
+        *,
+        damage: int = 0,
+        win: bool = False,
+        loss: bool = False,
+        death_source: str = "",
+        attempt: bool = False,
+    ):
+        self._ensure_combat_defaults(game_state)
+        telemetry = game_state.combat_snapshot.setdefault("telemetry", {})
+
+        telemetry["burst_peak"] = max(
+            int(telemetry.get("burst_peak", 0) or 0),
+            max(0, int(damage or 0)),
+        )
+        telemetry["combat_attempts"] = int(telemetry.get("combat_attempts", 0) or 0)
+        if attempt:
+            telemetry["combat_attempts"] = telemetry["combat_attempts"] + 1
+
+        if win:
+            telemetry["wins"] = int(telemetry.get("wins", 0) or 0) + 1
+            telemetry["completed_combats"] = int(telemetry.get("completed_combats", 0) or 0) + 1
+            telemetry["total_turns"] = int(telemetry.get("total_turns", 0) or 0) + int(
+                max(0, int(getattr(game_state, "turn_count", 0) or 0))
+            )
+
+        if loss:
+            telemetry["losses"] = int(telemetry.get("losses", 0) or 0) + 1
+            telemetry["completed_combats"] = int(telemetry.get("completed_combats", 0) or 0) + 1
+            if death_source:
+                sources = telemetry.get("death_sources", {})
+                if not isinstance(sources, dict):
+                    sources = {}
+                key = str(death_source)
+                sources[key] = int(sources.get(key, 0) or 0) + 1
+                telemetry["death_sources"] = sources
+
+        completed = int(telemetry.get("completed_combats", 0) or 0)
+        wins = int(telemetry.get("wins", 0) or 0)
+        total_turns = int(telemetry.get("total_turns", 0) or 0)
+        telemetry["win_rate"] = 0.0 if completed <= 0 else round(wins / float(completed), 4)
+        telemetry["avg_turns"] = 0.0 if completed <= 0 else round(total_turns / float(completed), 2)
+
+    def _evaluate_release_gate_and_degrade(self, game_state: GameState, trace_id: str = ""):
+        self._ensure_combat_defaults(game_state)
+        rules = game_state.combat_rules or {}
+        release_strategy = rules.get("release_strategy", {}) if isinstance(rules, dict) else {}
+        rollback = rules.get("rollback", {}) if isinstance(rules, dict) else {}
+        telemetry = game_state.combat_snapshot.get("telemetry", {}) if isinstance(game_state.combat_snapshot, dict) else {}
+        latency = game_state.combat_snapshot.get("latency_metrics", {}) if isinstance(game_state.combat_snapshot, dict) else {}
+
+        if not isinstance(release_strategy, dict):
+            return
+        if not bool(release_strategy.get("auto_degrade_enabled", True)):
+            return
+
+        degrade_latency = int(release_strategy.get("degrade_latency_p95_ms", 500) or 500)
+        degrade_error_rate = float(release_strategy.get("degrade_error_rate", 0.05) or 0.05)
+        p95_ms = int(latency.get("p95_ms", 0) or 0)
+        errors = max(0, int(telemetry.get("errors", 0) or 0))
+        raw_attempts = max(0, int(telemetry.get("combat_attempts", 0) or 0))
+        completed = max(0, int(telemetry.get("completed_combats", 0) or 0))
+        attempts = max(raw_attempts, completed)
+        effective_errors = min(errors, attempts) if attempts > 0 else errors
+        denominator = max(1, attempts)
+        error_rate = effective_errors / float(denominator)
+
+        should_degrade = p95_ms > degrade_latency or error_rate > degrade_error_rate
+        if not should_degrade:
+            return
+
+        fallback_mode = str(rollback.get("fallback_authority_mode", "local") or "local")
+        if fallback_mode not in {"local", "hybrid", "server"}:
+            fallback_mode = "local"
+
+        previous_mode = str(getattr(game_state, "combat_authority_mode", "local") or "local")
+        game_state.combat_authority_mode = fallback_mode
+        rollback["last_reason"] = f"auto_degrade:p95={p95_ms},error_rate={round(error_rate, 4)}"
+        rollback["last_trace_id"] = str(trace_id or "")
+        release_strategy["stage"] = "debug"
+        self._capture_combat_anomaly(
+            game_state,
+            trace_id=str(trace_id or "auto-degrade"),
+            error_code="COMBAT_AUTO_DEGRADE",
+            message="触发自动降级",
+            context={
+                "previous_mode": previous_mode,
+                "fallback_mode": fallback_mode,
+                "p95_ms": p95_ms,
+                "error_rate": round(error_rate, 6),
+                "errors": errors,
+                "effective_errors": effective_errors,
+                "attempts": attempts,
+                "raw_attempts": raw_attempts,
+                "completed_combats": completed,
+            },
+        )
+
+        logger.warning(
+            "Combat auto degrade triggered trace=%s mode=%s->%s p95=%s error_rate=%.4f",
+            trace_id,
+            previous_mode,
+            fallback_mode,
+            p95_ms,
+            error_rate,
+        )
+
     async def create_new_game(self, user_id: str, player_name: str, character_class: str = "fighter") -> GameState:
         """创建新游戏
 
@@ -294,6 +882,8 @@ class GameEngine:
             game_state.monsters.append(monster)
 
 
+
+        self._rebuild_combat_snapshot(game_state)
 
         # 生成开场叙述
         try:
@@ -490,6 +1080,7 @@ class GameEngine:
 
         result = self._make_action_result(True, "", events=[])
         self._cleanup_drop_undo_entries(game_key, game_state.turn_count)
+        self._ensure_combat_defaults(game_state)
 
         if action in {"use_item", "drop_item", "attack"}:
             replay = self._get_cached_action_result(game_key, action, parameters)
@@ -497,6 +1088,18 @@ class GameEngine:
                 return replay
 
         try:
+            action_gate = effect_engine.get_action_availability(game_state.player)
+            blocked_actions = action_gate.get("blocked_actions", {})
+            if action in blocked_actions:
+                return self._make_action_result(
+                    False,
+                    f"当前无法执行 {action}：受 {', '.join(blocked_actions[action])} 影响",
+                    error_code="ACTION_BLOCKED_BY_STATUS",
+                    retryable=False,
+                    reason="action_blocked_by_status",
+                    impact_summary={"blocked_by": blocked_actions[action]},
+                )
+
             if action == "move":
                 result = await self._handle_move(game_state, parameters)
             elif action == "attack":
@@ -523,6 +1126,7 @@ class GameEngine:
 
             # 增加回合数
             if result["success"]:
+                turn_start_ms = int(datetime.utcnow().timestamp() * 1000)
                 game_state.turn_count += 1
                 game_state.game_time += 1  # 每回合1分钟
 
@@ -609,6 +1213,19 @@ class GameEngine:
                 # 添加LLM交互标识到结果中
                 result["llm_interaction_required"] = llm_interaction_required
 
+                self._rebuild_combat_snapshot(game_state)
+                turn_elapsed_ms = int(datetime.utcnow().timestamp() * 1000) - turn_start_ms
+                self._record_combat_latency(game_state, turn_elapsed_ms)
+                self._evaluate_release_gate_and_degrade(
+                    game_state,
+                    trace_id=str(result.get("action_trace_id", "") or parameters.get("idempotency_key", "") or ""),
+                )
+                result["performance"] = {
+                    "turn_elapsed_ms": max(0, int(turn_elapsed_ms)),
+                    "p50_ms": int(game_state.combat_snapshot.get("latency_metrics", {}).get("p50_ms", 0)),
+                    "p95_ms": int(game_state.combat_snapshot.get("latency_metrics", {}).get("p95_ms", 0)),
+                }
+
                 # 使用LLM交互管理器生成上下文相关的叙述
                 if should_generate_narrative and not game_state.is_game_over:
                     # 创建交互上下文
@@ -627,12 +1244,31 @@ class GameEngine:
 
         except Exception as e:
             logger.error(f"Error processing action {action}: {e}")
+            trace_id = str(parameters.get("idempotency_key", "") or f"{action}-{game_state.turn_count}")
+            try:
+                telemetry = game_state.combat_snapshot.setdefault("telemetry", {})
+                telemetry["errors"] = int(telemetry.get("errors", 0) or 0) + 1
+                if str(action or "") in {"attack", "use_item", "combat_result"}:
+                    telemetry["combat_attempts"] = int(telemetry.get("combat_attempts", 0) or 0) + 1
+            except Exception:
+                pass
+            self._capture_combat_anomaly(
+                game_state,
+                trace_id=trace_id,
+                error_code="ACTION_PROCESS_ERROR",
+                message=f"行动处理异常: {action}",
+                context={
+                    "action": action,
+                    "error": str(e),
+                },
+            )
             result = self._make_action_result(
                 False,
                 f"处理行动时发生错误: {str(e)}",
                 events=[f"处理行动时发生错误: {str(e)}"],
                 error_code="ACTION_PROCESS_ERROR",
                 retryable=True,
+                action_trace_id=trace_id,
             )
 
         if action in {"use_item", "drop_item"}:
@@ -841,13 +1477,27 @@ class GameEngine:
                 break
 
         if not target_monster:
-            return {"success": False, "message": "目标未找到"}
+            return self._make_action_result(
+                False,
+                "目标未找到",
+                error_code="TARGET_NOT_FOUND",
+                retryable=False,
+                reason="target_not_found",
+                action_trace_id=str(parameters.get("idempotency_key", "") or ""),
+            )
 
         player_x, player_y = game_state.player.position
         monster_x, monster_y = target_monster.position
         max_distance = max(abs(player_x - monster_x), abs(player_y - monster_y))
         if max_distance > 1:
-            return {"success": False, "message": "目标距离太远"}
+            return self._make_action_result(
+                False,
+                "目标距离太远",
+                error_code="TARGET_OUT_OF_RANGE",
+                retryable=False,
+                reason="target_out_of_range",
+                action_trace_id=str(parameters.get("idempotency_key", "") or ""),
+            )
 
         authority_mode = str(getattr(game_state, "combat_authority_mode", "local") or "local").strip().lower()
         if authority_mode not in {"local", "hybrid", "server"}:
@@ -856,6 +1506,100 @@ class GameEngine:
         deterministic_seed = int(hashlib.sha1(
             f"attack|{game_state.id}|{game_state.turn_count}|{game_state.player.id}|{target_monster.id}".encode("utf-8")
         ).hexdigest()[:8], 16)
+        trace_id = str(parameters.get("idempotency_key", "") or f"attack-{game_state.turn_count}")
+        self._append_ac_baseline_sample(game_state, trace_id)
+
+        equipment_runtime = (((game_state.combat_snapshot or {}).get("equipment", {}) or {}).get("runtime", {}) or {})
+        combat_bonuses = equipment_runtime.get("combat_bonuses", {}) if isinstance(equipment_runtime, dict) else {}
+        attack_bonus = int(combat_bonuses.get("hit_bonus", 0) or 0)
+        damage_bonus = int(combat_bonuses.get("damage_bonus", 0) or 0)
+        critical_bonus = float(combat_bonuses.get("critical_bonus", 0.0) or 0.0)
+        critical_bonus = max(0.0, min(1.0, critical_bonus))
+        critical_rng = random.Random(int(deterministic_seed) ^ 0xA5A5A5A5)
+        can_critical = critical_rng.random() < max(0.0, min(1.0, 0.05 + critical_bonus))
+
+        mitigation_rules = (game_state.combat_rules or {}).get("mitigation", {}) if isinstance(game_state.combat_rules, dict) else {}
+        if not isinstance(mitigation_rules, dict):
+            mitigation_rules = {}
+
+        damage_types = (game_state.combat_rules or {}).get("damage_types", []) if isinstance(game_state.combat_rules, dict) else []
+        allowed_damage_types = {str(v) for v in damage_types if str(v)}
+        if not allowed_damage_types:
+            allowed_damage_types = {"physical"}
+
+        configured_damage_type = str((game_state.combat_rules or {}).get("default_damage_type", "physical") or "physical")
+        if configured_damage_type not in allowed_damage_types:
+            logger.warning(
+                "invalid default_damage_type fallback trace=%s configured=%s",
+                trace_id,
+                configured_damage_type,
+            )
+            configured_damage_type = "physical"
+        damage_type = configured_damage_type
+
+        if "damage_type" in parameters:
+            logger.warning(
+                "external damage_type override blocked trace=%s requested=%s applied=%s",
+                trace_id,
+                str(parameters.get("damage_type", "") or ""),
+                damage_type,
+            )
+
+        allow_external_override = bool(config.game.debug_mode) and bool(parameters.get("debug_override_combat", False))
+        if not allow_external_override:
+            damage_components = None
+            penetration = {}
+            true_damage = False
+        else:
+            damage_components = parameters.get("damage_components")
+            if not isinstance(damage_components, dict):
+                damage_components = None
+            else:
+                sanitized_components: Dict[str, int] = {}
+                for key, raw_val in damage_components.items():
+                    safe_key = str(key or "")
+                    if safe_key not in allowed_damage_types:
+                        continue
+                    try:
+                        safe_val = int(raw_val)
+                    except (TypeError, ValueError):
+                        continue
+                    safe_val = max(0, min(self._COMBAT_OVERRIDE_COMPONENT_MAX_VALUE, safe_val))
+                    if safe_val <= 0:
+                        continue
+                    sanitized_components[safe_key] = safe_val
+                    if len(sanitized_components) >= self._COMBAT_OVERRIDE_COMPONENT_LIMIT:
+                        break
+                damage_components = sanitized_components or None
+                if not bool(mitigation_rules.get("allow_multi_damage_components", True)) and damage_components:
+                    first_key = next(iter(damage_components.keys()))
+                    damage_components = {first_key: int(damage_components[first_key])}
+
+            penetration = parameters.get("penetration")
+            if not isinstance(penetration, dict):
+                penetration = {}
+            sanitized_penetration: Dict[str, float] = {}
+            if bool(mitigation_rules.get("allow_penetration", True)):
+                for key, raw_val in penetration.items():
+                    safe_key = str(key or "")
+                    if not safe_key:
+                        continue
+                    if safe_key in {"shield", "shield_penetration"} and not bool(mitigation_rules.get("allow_shield_penetration", True)):
+                        continue
+                    if safe_key in {"temporary_hp", "temporary_hp_penetration"} and not bool(mitigation_rules.get("allow_temporary_hp_penetration", True)):
+                        continue
+                    try:
+                        safe_val = float(raw_val)
+                    except (TypeError, ValueError):
+                        continue
+                    if safe_val <= 0:
+                        continue
+                    sanitized_penetration[safe_key] = max(0.0, min(1.0, safe_val))
+            penetration = sanitized_penetration
+
+            true_damage = bool(parameters.get("true_damage", False))
+            if not bool(mitigation_rules.get("allow_true_damage", True)):
+                true_damage = False
 
         # local 模式仅给出后端预测，不写回战斗最终状态，避免与前端本地结算双落账
         if authority_mode == "local":
@@ -863,11 +1607,21 @@ class GameEngine:
                 game_state.player,
                 target_monster,
                 attack_type="melee",
+                attack_bonus=attack_bonus,
+                damage_bonus=damage_bonus,
+                can_critical=can_critical,
+                damage_type=damage_type,
+                damage_components=damage_components,
+                penetration=penetration,
+                true_damage=true_damage,
                 deterministic_seed=deterministic_seed,
+                trace_id=trace_id,
+                mitigation_policy=mitigation_rules,
             )
             damage = int(eval_result.final_damage)
             projection = eval_result.to_projection()
             projection["exp"] = int(target_monster.challenge_rating * 100) if eval_result.death else 0
+            self._record_combat_telemetry(game_state, damage=damage, attempt=True)
             return {
                 "success": True,
                 "message": f"攻击了 {target_monster.name}",
@@ -880,6 +1634,14 @@ class GameEngine:
                     "critical": bool(eval_result.critical),
                     "death": bool(eval_result.death),
                     "authoritative_applied": False,
+                    "damage_type": damage_type,
+                    "penetration": penetration,
+                    "true_damage": bool(true_damage),
+                    "equipment_bonuses": {
+                        "hit_bonus": attack_bonus,
+                        "damage_bonus": damage_bonus,
+                        "critical_bonus": critical_bonus,
+                    },
                 },
                 "combat_breakdown": eval_result.breakdown,
                 "combat_projection": projection,
@@ -889,7 +1651,16 @@ class GameEngine:
             game_state.player,
             target_monster,
             attack_type="melee",
+            attack_bonus=attack_bonus,
+            damage_bonus=damage_bonus,
+            can_critical=can_critical,
+            damage_type=damage_type,
+            damage_components=damage_components,
+            penetration=penetration,
+            true_damage=true_damage,
             deterministic_seed=deterministic_seed,
+            trace_id=trace_id,
+            mitigation_policy=mitigation_rules,
         )
 
         damage = int(eval_result.final_damage)
@@ -905,6 +1676,14 @@ class GameEngine:
 
         if eval_result.death:
             events.append(f"{target_monster.name} 被击败了！")
+            heal_on_kill = int(combat_bonuses.get("heal_on_kill", 0) or 0)
+            if heal_on_kill > 0:
+                before_heal = int(game_state.player.stats.hp)
+                game_state.player.stats.hp = min(int(game_state.player.stats.max_hp), before_heal + heal_on_kill)
+                healed = int(game_state.player.stats.hp) - before_heal
+                if healed > 0:
+                    events.append(f"装备击杀回复触发，恢复 {healed} 点生命")
+            self._record_combat_telemetry(game_state, damage=damage, win=True, attempt=True)
 
             exp_gain = int(target_monster.challenge_rating * 100)
             game_state.player.stats.experience += exp_gain
@@ -952,6 +1731,29 @@ class GameEngine:
         projection = eval_result.to_projection()
         projection["exp"] = exp_projection
 
+        hook_result = effect_engine.process_effect_hooks(
+            game_state,
+            hook="on_hit" if eval_result.hit else "on_attack",
+            actor=game_state.player,
+            target=target_monster,
+            context={"trace_id": trace_id},
+        )
+        if hook_result.get("events"):
+            events.extend(hook_result["events"])
+
+        self._record_ac_hit_curve(
+            game_state,
+            {
+                "trace_id": trace_id,
+                "phase": "player_attack",
+                "attacker": str(getattr(game_state.player, "id", "") or ""),
+                "target": str(getattr(target_monster, "id", "") or ""),
+                "target_ac": int(eval_result.attack_roll.get("target_ac", 10) or 10),
+                "attack_total": int(eval_result.attack_roll.get("total", 0) or 0),
+                "hit": bool(eval_result.hit),
+            },
+        )
+
         return {
             "success": True,
             "message": f"攻击了 {target_monster.name}",
@@ -964,17 +1766,32 @@ class GameEngine:
                 "critical": bool(eval_result.critical),
                 "death": bool(eval_result.death),
                 "authoritative_applied": True,
+                "ac_semantic_boundary": "hit_threshold_only",
+                "target_ac": int(eval_result.attack_roll.get("target_ac", 10) or 10),
+                "attack_total": int(eval_result.attack_roll.get("total", 0) or 0),
+                "damage_type": damage_type,
+                "penetration": penetration,
+                "true_damage": bool(true_damage),
+                "equipment_bonuses": {
+                    "hit_bonus": attack_bonus,
+                    "damage_bonus": damage_bonus,
+                    "critical_bonus": critical_bonus,
+                },
             },
             "combat_breakdown": eval_result.breakdown,
             "combat_projection": projection,
+            "effect_runtime": hook_result,
         }
 
     def _calculate_damage(self, attacker: Character, defender: Character) -> int:
-        """兼容入口：仅估算伤害，不写回状态。"""
+        """兼容入口：仅估算伤害，不写回状态。
+
+        Phase 2 后 AC 仅用于命中门槛，不再承担减伤语义。
+        """
+        _ = defender
         base_damage = 10 + attacker.abilities.get_modifier("strength")
         rolled = random.randint(max(1, base_damage - 3), base_damage + 3)
-        armor_reduction = max(0, defender.stats.ac - 10)
-        return max(1, rolled - armor_reduction)
+        return max(1, rolled)
 
     def _check_level_up(self, character: Character) -> bool:
         """检查是否升级"""
@@ -1079,6 +1896,7 @@ class GameEngine:
             equipped = game_state.player.equipped_items.get(slot)
             if equipped and equipped.id == item.id:
                 game_state.player.equipped_items[slot] = None
+                self._rebuild_combat_snapshot(game_state)
                 return self._make_action_result(
                     True,
                     f"卸下了 {item.name}",
@@ -1091,7 +1909,25 @@ class GameEngine:
                     action_trace_id=action_trace_id,
                 )
 
+            if equipped and getattr(equipped, "id", None) != item.id:
+                game_state.player.equipped_items[slot] = None
+                if equipped in game_state.player.inventory:
+                    game_state.player.inventory.remove(equipped)
+                game_state.player.inventory.append(equipped)
+
+            unique_key = str(getattr(item, "unique_key", "") or "")
+            if unique_key:
+                for eq_slot, eq_item in list((game_state.player.equipped_items or {}).items()):
+                    if eq_slot == slot or eq_item is None:
+                        continue
+                    if str(getattr(eq_item, "unique_key", "") or "") == unique_key:
+                        game_state.player.equipped_items[eq_slot] = None
+                        if eq_item in game_state.player.inventory:
+                            game_state.player.inventory.remove(eq_item)
+                        game_state.player.inventory.append(eq_item)
+
             game_state.player.equipped_items[slot] = item
+            self._rebuild_combat_snapshot(game_state)
             return self._make_action_result(
                 True,
                 f"装备了 {item.name}",
@@ -2407,12 +3243,75 @@ class GameEngine:
                 deterministic_seed = int(hashlib.sha1(
                     f"monster_attack|{game_state.id}|{game_state.turn_count}|{monster.id}|{game_state.player.id}".encode("utf-8")
                 ).hexdigest()[:8], 16)
-                eval_result = combat_core_evaluator.evaluate_attack(
-                    monster,
-                    game_state.player,
-                    attack_type="melee",
-                    deterministic_seed=deterministic_seed,
+                trace_id = f"monster-{game_state.turn_count}-{monster.id}"
+                mitigation_rules = (game_state.combat_rules or {}).get("mitigation", {}) if isinstance(game_state.combat_rules, dict) else {}
+                if not isinstance(mitigation_rules, dict):
+                    mitigation_rules = {}
+
+                # 防御向装备效果在怪物攻击时生效（不污染基础存档字段）
+                original_resistances = dict(getattr(game_state.player, "resistances", {}) or {})
+                original_vulnerabilities = dict(getattr(game_state.player, "vulnerabilities", {}) or {})
+                original_ac_components = dict(getattr(game_state.player.stats, "ac_components", {}) or {})
+                original_ac = int(getattr(game_state.player.stats, "ac", 10) or 10)
+
+                runtime_bonuses = (
+                    (((game_state.combat_snapshot or {}).get("equipment", {}) or {}).get("runtime", {}) or {}).get("combat_bonuses", {})
                 )
+                if not isinstance(runtime_bonuses, dict):
+                    runtime_bonuses = {}
+
+                try:
+                    res_min = float(mitigation_rules.get("resistance_clamp_min", 0.0) or 0.0)
+                    res_max = float(mitigation_rules.get("resistance_clamp_max", 0.95) or 0.95)
+                    if res_max < res_min:
+                        res_min, res_max = res_max, res_min
+                    vul_min_mul = float(mitigation_rules.get("vulnerability_min_multiplier", 1.0) or 1.0)
+                    vul_max_mul = float(mitigation_rules.get("vulnerability_max_multiplier", 3.0) or 3.0)
+                    if vul_max_mul < vul_min_mul:
+                        vul_min_mul, vul_max_mul = vul_max_mul, vul_min_mul
+                    vul_value_max = max(0.0, vul_max_mul - 1.0)
+
+                    for dtype, delta in (runtime_bonuses.get("resistance_bonus", {}) or {}).items():
+                        key = str(dtype or "")
+                        if not key:
+                            continue
+                        game_state.player.resistances[key] = max(
+                            res_min,
+                            min(
+                                res_max,
+                                float(game_state.player.resistances.get(key, 0.0) or 0.0) + float(delta or 0.0),
+                            ),
+                        )
+                    for dtype, delta in (runtime_bonuses.get("vulnerability_reduction", {}) or {}).items():
+                        key = str(dtype or "")
+                        if not key:
+                            continue
+                        game_state.player.vulnerabilities[key] = max(
+                            0.0,
+                            min(
+                                vul_value_max,
+                                float(game_state.player.vulnerabilities.get(key, 0.0) or 0.0) - float(delta or 0.0),
+                            ),
+                        )
+
+                    game_state.player.stats.ac_components = dict(original_ac_components)
+                    game_state.player.stats.ac_components["status"] = int(game_state.player.stats.ac_components.get("status", 0) or 0) + int(runtime_bonuses.get("ac_bonus", 0) or 0)
+                    game_state.player.stats.ac = game_state.player.stats.get_effective_ac()
+
+                    eval_result = combat_core_evaluator.evaluate_attack(
+                        monster,
+                        game_state.player,
+                        attack_type="melee",
+                        deterministic_seed=deterministic_seed,
+                        trace_id=trace_id,
+                        mitigation_policy=mitigation_rules,
+                    )
+                finally:
+                    game_state.player.resistances = original_resistances
+                    game_state.player.vulnerabilities = original_vulnerabilities
+                    game_state.player.stats.ac_components = original_ac_components
+                    game_state.player.stats.ac = original_ac
+
                 damage = int(eval_result.final_damage)
                 if eval_result.hit:
                     combat_events.append(f"{monster.name} 攻击了你，造成 {damage} 点伤害！")
@@ -2422,6 +3321,19 @@ class GameEngine:
                 if eval_result.critical:
                     combat_events.append(f"{monster.name} 发动了致命一击！")
                 logger.info(f"{monster.name} 攻击玩家结算 damage={damage}, hit={eval_result.hit}")
+                self._record_combat_telemetry(game_state, damage=damage, attempt=True)
+                self._record_ac_hit_curve(
+                    game_state,
+                    {
+                        "trace_id": trace_id,
+                        "phase": "monster_attack",
+                        "attacker": str(getattr(monster, "id", "") or ""),
+                        "target": str(getattr(game_state.player, "id", "") or ""),
+                        "target_ac": int(eval_result.attack_roll.get("target_ac", 10) or 10),
+                        "attack_total": int(eval_result.attack_roll.get("total", 0) or 0),
+                        "hit": bool(eval_result.hit),
+                    },
+                )
 
                 # 记录战斗数据用于LLM上下文
                 combat_data_list.append({
@@ -2437,11 +3349,34 @@ class GameEngine:
                     "combat_breakdown": eval_result.breakdown,
                 })
 
+                hook_result = effect_engine.process_effect_hooks(
+                    game_state,
+                    hook="on_damage_taken",
+                    actor=monster,
+                    target=game_state.player,
+                    context={"trace_id": trace_id},
+                )
+                regen_bonus = int(
+                    ((((game_state.combat_snapshot or {}).get("equipment", {}) or {}).get("runtime", {}) or {})
+                    .get("combat_bonuses", {})
+                    .get("regen_per_turn", 0)
+                    or 0)
+                )
+                if regen_bonus > 0 and game_state.player.stats.hp > 0:
+                    before_hp = int(game_state.player.stats.hp)
+                    game_state.player.stats.hp = min(int(game_state.player.stats.max_hp), before_hp + regen_bonus)
+                    healed = int(game_state.player.stats.hp) - before_hp
+                    if healed > 0:
+                        combat_events.append(f"装备回复触发，恢复 {healed} 点生命")
+                if hook_result.get("events"):
+                    combat_events.extend(hook_result["events"])
+
                 # 检查玩家是否死亡
                 if game_state.player.stats.hp <= 0:
                     combat_events.append("你被击败了！游戏结束！")
                     game_state.is_game_over = True
                     game_state.game_over_reason = "被怪物击败"
+                    self._record_combat_telemetry(game_state, loss=True, death_source="monster_attack")
                     break  # 玩家死亡，停止处理其他怪物
 
             elif distance <= 5:
@@ -2626,6 +3561,87 @@ class GameEngine:
 
         # 清理游戏状态锁
         await game_state_lock_manager.remove_lock(user_id, game_id)
+
+    def _sanitize_equipment_affix_payload(self, payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        if not isinstance(payload, dict):
+            return None
+
+        if "key" in payload:
+            key = str(payload.get("key", "") or "")
+            value = payload.get("value", 0)
+        elif "stat" in payload:
+            key = str(payload.get("stat", "") or "")
+            value = payload.get("value", payload.get("delta", 0))
+        elif "type" in payload:
+            key = str(payload.get("type", "") or "")
+            value = payload.get("value", payload.get("amount", 0))
+        else:
+            return None
+
+        if not key:
+            return None
+
+        bounds = self._EQUIPMENT_AFFIX_DEFAULT_BOUNDS
+        if key not in bounds:
+            return None
+
+        min_v, max_v = bounds[key]
+
+        if key in {"resistance_bonus", "vulnerability_reduction"}:
+            mapping = payload.get("mapping", payload.get("types", {}))
+            if not isinstance(mapping, dict):
+                return None
+            safe_mapping: Dict[str, float] = {}
+            for dtype, raw in mapping.items():
+                dtype_s = str(dtype or "")
+                if not dtype_s:
+                    continue
+                try:
+                    val = float(raw)
+                except (TypeError, ValueError):
+                    continue
+                safe_mapping[dtype_s] = max(min_v, min(max_v, val))
+            return {"key": key, "value": 0, "mapping": safe_mapping}
+
+        try:
+            numeric = float(value)
+        except (TypeError, ValueError):
+            return None
+
+        clamped = max(min_v, min(max_v, numeric))
+        if key == "critical_bonus":
+            return {"key": key, "value": float(clamped)}
+        return {"key": key, "value": int(clamped)}
+
+    def _capture_combat_anomaly(
+        self,
+        game_state: GameState,
+        *,
+        trace_id: str,
+        error_code: str,
+        message: str,
+        context: Optional[Dict[str, Any]] = None,
+    ):
+        self._ensure_combat_defaults(game_state)
+        if not isinstance(game_state.combat_snapshot, dict):
+            game_state.combat_snapshot = {}
+
+        anomaly = {
+            "timestamp": datetime.utcnow().isoformat(),
+            "trace_id": str(trace_id or ""),
+            "error_code": str(error_code or "UNKNOWN"),
+            "message": str(message or ""),
+            "turn_count": int(getattr(game_state, "turn_count", 0) or 0),
+            "rule_version": int(getattr(game_state, "combat_rule_version", 1) or 1),
+            "authority_mode": str(getattr(game_state, "combat_authority_mode", "local") or "local"),
+            "context": context or {},
+        }
+
+        captures = game_state.combat_snapshot.get("anomaly_captures", [])
+        if not isinstance(captures, list):
+            captures = []
+        captures.append(anomaly)
+        game_state.combat_snapshot["anomaly_captures"] = captures[-100:]
 
     def update_access_time(self, user_id: str, game_id: str):
         """更新游戏的最后访问时间"""

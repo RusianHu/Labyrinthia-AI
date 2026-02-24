@@ -25,10 +25,20 @@ class EffectExecutionResult:
     events: List[str] = field(default_factory=list)
     item_consumed: bool = True
     position_change: Optional[Tuple[int, int]] = None
+    warning_flags: List[str] = field(default_factory=list)
+    runtime_debug: List[Dict[str, Any]] = field(default_factory=list)
+    replay_logs: List[Dict[str, Any]] = field(default_factory=list)
 
 
 class EffectEngine:
     """统一处理即时效果与持续效果"""
+
+    CONTROL_ACTION_BLOCKERS: Dict[str, List[str]] = {
+        "stun": ["move", "attack", "cast_spell", "use_item", "interact"],
+        "silence": ["cast_spell"],
+        "disarm": ["attack"],
+        "root": ["move"],
+    }
 
     @staticmethod
     def _safe_int(value: Any, default: int = 0) -> int:
@@ -64,6 +74,7 @@ class EffectEngine:
         self._apply_status_remove(game_state.player, effects.get("remove_status_effects", []), result)
         self._apply_special_effects(game_state, item, effects.get("special_effects", []), result)
 
+        self._sync_runtime_logs(game_state, result.replay_logs)
         return result
 
     def process_turn_effects(self, game_state: GameState, trigger: str = "turn_end") -> List[str]:
@@ -88,16 +99,139 @@ class EffectEngine:
                 tick_events = self._tick_status_effect(game_state, effect)
                 events.extend(tick_events)
 
-            if effect.duration_turns > 0:
+            if effect.runtime_type != "one_shot" and effect.duration_turns > 0:
                 effect.duration_turns -= 1
 
-            if effect.duration_turns <= 0:
+            if effect.runtime_type == "one_shot" or effect.duration_turns <= 0:
                 events.append(f"状态结束：{effect.name}")
             else:
                 kept.append(effect)
 
         player.active_effects = kept
+        self._sync_runtime_logs(game_state, [{"hook": trigger, "events": list(events)}])
         return events
+
+    def process_effect_hooks(
+        self,
+        game_state: GameState,
+        *,
+        hook: str,
+        actor: Optional[Character] = None,
+        target: Optional[Character] = None,
+        context: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """运行时钩子处理（on_attack/on_hit/on_damage_taken/on_kill 等）"""
+        context = context or {}
+        events: List[str] = []
+        runtime_logs: List[Dict[str, Any]] = []
+
+        entities: List[Character] = []
+        if actor is not None:
+            entities.append(actor)
+        if target is not None and target is not actor:
+            entities.append(target)
+
+        for entity in entities:
+            normalized = self._normalize_effect_list(entity)
+            for effect in normalized:
+                trigger_mode = effect.triggers.get("on") if isinstance(effect.triggers, dict) else None
+                if trigger_mode not in {hook, "both"}:
+                    continue
+                payload = effect.hook_payloads.get(hook, {}) if isinstance(effect.hook_payloads, dict) else {}
+                if isinstance(payload.get("stat_changes"), dict):
+                    for stat_name, delta in payload.get("stat_changes", {}).items():
+                        if hasattr(entity.stats, stat_name):
+                            before = int(getattr(entity.stats, stat_name) or 0)
+                            after = before + self._safe_int(delta, 0) * max(1, int(effect.stacks or 1))
+                            setattr(entity.stats, stat_name, after)
+                            events.append(f"{effect.name} 触发 {hook}: {stat_name} {after - before:+d}")
+                if isinstance(payload.get("events"), list):
+                    events.extend([str(v) for v in payload.get("events", [])])
+                runtime_logs.append(
+                    {
+                        "hook": hook,
+                        "effect": effect.name,
+                        "entity": getattr(entity, "id", ""),
+                        "trace_id": str(context.get("trace_id", "") or ""),
+                    }
+                )
+
+            entity.active_effects = normalized
+            self._clamp_primary_stats(entity)
+
+        self._sync_runtime_logs(game_state, runtime_logs)
+        return {
+            "events": events,
+            "runtime_logs": runtime_logs,
+        }
+
+    def get_action_availability(self, player: Character) -> Dict[str, Any]:
+        """控制类状态导致的行动限制"""
+        blocked: Dict[str, List[str]] = {}
+        for effect in self._normalize_effect_list(player):
+            for flag in (effect.control_flags or []):
+                for action in self.CONTROL_ACTION_BLOCKERS.get(str(flag), []):
+                    blocked.setdefault(action, []).append(effect.name)
+        return {
+            "blocked_actions": blocked,
+            "can_move": "move" not in blocked,
+            "can_attack": "attack" not in blocked,
+            "can_cast_spell": "cast_spell" not in blocked,
+            "can_use_item": "use_item" not in blocked,
+        }
+
+    def build_status_debug_view(self, player: Character) -> List[Dict[str, Any]]:
+        """状态调试视图：来源、剩余回合、叠层、即时贡献"""
+        view: List[Dict[str, Any]] = []
+        for effect in self._normalize_effect_list(player):
+            view.append(
+                {
+                    "id": effect.id,
+                    "name": effect.name,
+                    "source": effect.source,
+                    "remaining_turns": int(effect.duration_turns),
+                    "stacks": int(effect.stacks),
+                    "control_flags": list(effect.control_flags),
+                    "modifiers": dict(effect.modifiers),
+                    "tick_effects": dict(effect.tick_effects),
+                    "runtime_type": effect.runtime_type,
+                }
+            )
+        return view
+
+    def detect_status_conflicts(self, player: Character) -> List[Dict[str, Any]]:
+        """检测互斥状态冲突"""
+        conflicts: List[Dict[str, Any]] = []
+        grouped: Dict[str, List[str]] = {}
+        for effect in self._normalize_effect_list(player):
+            key = str(effect.group_mutex or "").strip()
+            if not key:
+                continue
+            grouped.setdefault(key, []).append(effect.name)
+        for key, names in grouped.items():
+            if len(names) > 1:
+                conflicts.append({"group_mutex": key, "effects": names})
+        return conflicts
+
+    def dispel_effects(self, player: Character, *, dispel_type: str = "", max_remove: int = 999) -> List[str]:
+        """驱散状态，按优先级从高到低"""
+        normalized = self._normalize_effect_list(player)
+        removable = []
+        for effect in normalized:
+            if not dispel_type or effect.dispel_type in {dispel_type, "all"}:
+                removable.append(effect)
+        removable.sort(key=lambda e: int(e.dispel_priority or 0), reverse=True)
+
+        removed_ids = {e.id for e in removable[: max(0, int(max_remove))]}
+        removed_names: List[str] = []
+        kept: List[StatusEffect] = []
+        for effect in normalized:
+            if effect.id in removed_ids:
+                removed_names.append(effect.name)
+            else:
+                kept.append(effect)
+        player.active_effects = kept
+        return removed_names
 
     def _apply_stat_changes(
         self,
@@ -337,8 +471,8 @@ class EffectEngine:
                             result.events.append(f"{inv_item.name} 充能 +{amount}")
             elif code == "grant_shield":
                 shield = self._safe_int(payload.get("value", 5), 5)
-                game_state.player.stats.ac = min(50, game_state.player.stats.ac + shield)
-                result.events.append(f"获得临时护甲 +{shield}")
+                game_state.player.stats.shield = max(0, int(getattr(game_state.player.stats, "shield", 0) or 0) + shield)
+                result.events.append(f"获得护盾 +{shield}")
             elif code == "refresh_cooldowns":
                 for inv_item in game_state.player.inventory:
                     inv_item.current_cooldown = 0
@@ -398,7 +532,41 @@ class EffectEngine:
                 normalized.append(StatusEffect.from_dict(effect))
         player.active_effects = normalized
 
-        candidates = [e for e in player.active_effects if e.name == incoming.name]
+        incoming.metadata = incoming.metadata or {}
+        if incoming.snapshot_mode == "snapshot" and "snapshot_stats" not in incoming.metadata:
+            incoming.metadata["snapshot_stats"] = {
+                "hp": int(getattr(player.stats, "hp", 0) or 0),
+                "max_hp": int(getattr(player.stats, "max_hp", 0) or 0),
+                "ac": int(getattr(player.stats, "ac", 10) or 10),
+            }
+
+        # 互斥组：同组只保留一个（默认强覆盖弱）
+        mutex_group = str(incoming.group_mutex or "").strip()
+        if mutex_group:
+            same_mutex = [e for e in player.active_effects if str(e.group_mutex or "").strip() == mutex_group]
+            if same_mutex:
+                strongest = max(same_mutex + [incoming], key=self._potency_score)
+                player.active_effects = [e for e in player.active_effects if str(e.group_mutex or "").strip() != mutex_group]
+                player.active_effects.append(strongest)
+                return strongest is not incoming
+
+        # 覆盖组：同组强覆盖弱
+        override_group = str(incoming.group_override or "").strip()
+        if override_group:
+            same_override = [e for e in player.active_effects if str(e.group_override or "").strip() == override_group]
+            if same_override:
+                strongest = max(same_override + [incoming], key=self._potency_score)
+                player.active_effects = [e for e in player.active_effects if str(e.group_override or "").strip() != override_group]
+                player.active_effects.append(strongest)
+                return strongest is not incoming
+
+        # 独立叠层组：按 group_stack 聚合，不要求同名
+        stack_group = str(incoming.group_stack or "").strip()
+        if stack_group:
+            candidates = [e for e in player.active_effects if str(e.group_stack or "").strip() == stack_group]
+        else:
+            candidates = [e for e in player.active_effects if e.name == incoming.name]
+
         if not candidates:
             player.active_effects.append(incoming)
             return False
@@ -439,6 +607,30 @@ class EffectEngine:
             if hasattr(player.stats, stat_name):
                 cur = getattr(player.stats, stat_name)
                 delta_value = self._safe_int(delta, 0) * multiplier
+
+                if str(stat_name) == "hp" and delta_value < 0:
+                    damage_type = str(effect.metadata.get("damage_type", "physical") if isinstance(effect.metadata, dict) else "physical")
+                    immune = set(str(v) for v in (getattr(player, "immunities", []) or []))
+                    alias = "physical" if damage_type in {"physical_slash", "physical_pierce", "physical_blunt"} else damage_type
+                    if damage_type in immune or alias in immune:
+                        delta_value = 0
+                    else:
+                        resistance = 0.0
+                        vulnerability = 0.0
+                        raw_res = getattr(player, "resistances", {}) or {}
+                        raw_vul = getattr(player, "vulnerabilities", {}) or {}
+                        try:
+                            resistance = float(raw_res.get(damage_type, raw_res.get(alias, 0.0)) or 0.0)
+                        except (TypeError, ValueError):
+                            resistance = 0.0
+                        try:
+                            vulnerability = float(raw_vul.get(damage_type, raw_vul.get(alias, 0.0)) or 0.0)
+                        except (TypeError, ValueError):
+                            vulnerability = 0.0
+                        effective = int(abs(delta_value) * max(0.0, 1.0 - max(0.0, resistance)))
+                        effective = int(effective * max(1.0, 1.0 + vulnerability))
+                        delta_value = -max(0, effective)
+
                 setattr(player.stats, stat_name, cur + delta_value)
                 events.append(f"{effect.name} 影响 {stat_name} {delta_value:+d}")
 
@@ -470,6 +662,40 @@ class EffectEngine:
                 if isinstance(value, (int, float)):
                     score += abs(float(value))
         return score
+
+    def _normalize_effect_list(self, player: Character) -> List[StatusEffect]:
+        if player.active_effects is None:
+            player.active_effects = []
+        normalized: List[StatusEffect] = []
+        for effect in player.active_effects:
+            if isinstance(effect, StatusEffect):
+                normalized.append(effect)
+            elif isinstance(effect, dict):
+                try:
+                    normalized.append(StatusEffect.from_dict(effect))
+                except Exception:
+                    continue
+        player.active_effects = normalized
+        return normalized
+
+    def _clamp_primary_stats(self, entity: Character):
+        entity.stats.hp = max(0, min(int(entity.stats.hp), int(entity.stats.max_hp)))
+        entity.stats.mp = max(0, min(int(entity.stats.mp), int(entity.stats.max_mp)))
+        entity.stats.ac = max(int(getattr(entity.stats, "ac_min", 1) or 1), min(int(getattr(entity.stats, "ac_max", 50) or 50), int(entity.stats.ac)))
+
+    def _sync_runtime_logs(self, game_state: GameState, logs: List[Dict[str, Any]]):
+        if not isinstance(logs, list) or not logs:
+            return
+        if not isinstance(game_state.pending_effects, list):
+            game_state.pending_effects = []
+        game_state.pending_effects.append({"effect_runtime_logs": logs})
+        if not isinstance(game_state.combat_snapshot, dict):
+            game_state.combat_snapshot = {}
+        replay_logs = game_state.combat_snapshot.get("effect_replay_logs", [])
+        if not isinstance(replay_logs, list):
+            replay_logs = []
+        replay_logs.extend(logs)
+        game_state.combat_snapshot["effect_replay_logs"] = replay_logs[-200:]
 
 
 # 全局实例

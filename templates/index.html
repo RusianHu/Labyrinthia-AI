@@ -8,9 +8,9 @@
     <!-- Google Fonts -->
     <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap" rel="stylesheet">
     <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
-    
+
     <!-- 样式表 -->
-    <link rel="stylesheet" href="/static/style.css?v=13">
+    <link rel="stylesheet" href="/static/style.css?v=14">
     <link rel="stylesheet" href="/static/css/dungeon_border.css">
     <link rel="stylesheet" href="/static/css/floor_layers.css">
     <link rel="stylesheet" href="/static/css/fog_canvas.css">
@@ -220,6 +220,42 @@
                     </div>
                 </div>
 
+                <!-- 战斗详情 -->
+                <div class="panel elevation-2 runtime-panel runtime-panel-combat">
+                    <h3>
+                        <i class="material-icons">sports_martial_arts</i>
+                        战斗详情
+                    </h3>
+                    <div id="combat-detail-panel" class="runtime-panel-content runtime-panel-content-combat">暂无战斗明细</div>
+                </div>
+
+                <!-- 状态运行时 -->
+                <div class="panel elevation-2 runtime-panel runtime-panel-status">
+                    <h3>
+                        <i class="material-icons">auto_fix_high</i>
+                        状态运行时
+                    </h3>
+                    <div id="status-runtime-panel" class="runtime-panel-content runtime-panel-content-status">当前无状态效果</div>
+                </div>
+
+                <!-- 装备词缀 -->
+                <div class="panel elevation-2 runtime-panel runtime-panel-affix">
+                    <h3>
+                        <i class="material-icons">shield</i>
+                        装备词缀与套装
+                    </h3>
+                    <div id="equipment-affix-panel" class="runtime-panel-content runtime-panel-content-affix">无装备词缀</div>
+                </div>
+
+                <!-- 本回合生效效果 -->
+                <div class="panel elevation-2 runtime-panel runtime-panel-turn">
+                    <h3>
+                        <i class="material-icons">bolt</i>
+                        本回合生效效果
+                    </h3>
+                    <div id="turn-effect-summary" class="runtime-panel-content runtime-panel-content-turn">本回合无额外生效效果</div>
+                </div>
+
                 <!-- 控制面板 -->
                 <div class="panel elevation-2 controls-panel">
                     <h3>
@@ -269,43 +305,51 @@
                         物品栏
                     </h3>
 
-                    <div class="inventory-toolbar">
-                        <select id="inventory-filter" class="inventory-select">
-                            <option value="all">全部类型</option>
-                            <option value="weapon">武器</option>
-                            <option value="armor">防具</option>
-                            <option value="consumable">消耗品</option>
-                            <option value="misc">杂项</option>
-                            <option value="equippable">仅可装备</option>
-                            <option value="cooldown">冷却中</option>
-                            <option value="quest_locked">任务锁定</option>
-                        </select>
-                        <select id="inventory-sort" class="inventory-select">
-                            <option value="recent">最近获得</option>
-                            <option value="rarity">按稀有度</option>
-                            <option value="value">按价值</option>
-                            <option value="name">按名称</option>
-                        </select>
-                    </div>
-
-                    <div id="inventory-grid" class="inventory-grid"></div>
-
-                    <div class="inventory-layout">
-                        <div class="equip-zone">
-                            <h4>装备区</h4>
-                            <div class="equip-grid" id="equip-grid">
-                                <div class="equip-slot" data-slot="weapon">武器: 空</div>
-                                <div class="equip-slot" data-slot="armor">防具: 空</div>
-                                <div class="equip-slot" data-slot="accessory_1">饰品1: 空</div>
-                                <div class="equip-slot" data-slot="accessory_2">饰品2: 空</div>
-                            </div>
+                    <div class="inventory-shell">
+                        <div class="inventory-toolbar">
+                            <label class="inventory-select-wrap">
+                                <span class="inventory-select-label">筛选</span>
+                                <select id="inventory-filter" class="inventory-select">
+                                    <option value="all">全部类型</option>
+                                    <option value="weapon">武器</option>
+                                    <option value="armor">防具</option>
+                                    <option value="consumable">消耗品</option>
+                                    <option value="misc">杂项</option>
+                                    <option value="equippable">仅可装备</option>
+                                    <option value="cooldown">冷却中</option>
+                                    <option value="quest_locked">任务锁定</option>
+                                </select>
+                            </label>
+                            <label class="inventory-select-wrap">
+                                <span class="inventory-select-label">排序</span>
+                                <select id="inventory-sort" class="inventory-select">
+                                    <option value="recent">最近获得</option>
+                                    <option value="rarity">按稀有度</option>
+                                    <option value="value">按价值</option>
+                                    <option value="name">按名称</option>
+                                </select>
+                            </label>
                         </div>
-                        <div class="item-detail-zone">
-                            <h4>详情区</h4>
-                            <div id="inventory-detail" class="inventory-detail-empty">请选择一个物品查看详情</div>
-                            <div class="item-actions">
-                                <button id="inventory-action-use" class="btn btn-primary" disabled>使用/装备</button>
-                                <button id="inventory-action-drop" class="btn btn-warning" disabled>丢弃</button>
+
+                        <div id="inventory-grid" class="inventory-grid"></div>
+
+                        <div class="inventory-layout">
+                            <div class="equip-zone">
+                                <h4>装备区</h4>
+                                <div class="equip-grid" id="equip-grid">
+                                    <div class="equip-slot" data-slot="weapon">武器: 空</div>
+                                    <div class="equip-slot" data-slot="armor">防具: 空</div>
+                                    <div class="equip-slot" data-slot="accessory_1">饰品1: 空</div>
+                                    <div class="equip-slot" data-slot="accessory_2">饰品2: 空</div>
+                                </div>
+                            </div>
+                            <div class="item-detail-zone">
+                                <h4>详情区</h4>
+                                <div id="inventory-detail" class="inventory-detail-empty">请选择一个物品查看详情</div>
+                                <div class="item-actions">
+                                    <button id="inventory-action-use" class="btn btn-primary" disabled>使用/装备</button>
+                                    <button id="inventory-action-drop" class="btn btn-warning" disabled>丢弃</button>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -534,6 +578,11 @@
         <div class="debug-section">
             <h4>游戏状态</h4>
             <div id="debug-gamestate" class="debug-content">暂无数据</div>
+        </div>
+
+        <div class="debug-section">
+            <h4>战斗求值 JSON</h4>
+            <div id="debug-combat-json" class="debug-content">暂无战斗数据</div>
         </div>
 
         <div class="debug-section">

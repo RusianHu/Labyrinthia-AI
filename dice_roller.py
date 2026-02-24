@@ -44,11 +44,10 @@ class DiceRoller:
         Args:
             seed: 随机数种子（用于测试）
         """
-        if seed is not None:
-            random.seed(seed)
+        self._rng = random.Random(seed)
     
     def roll_d20(self, advantage: bool = False, disadvantage: bool = False,
-                 reroll_ones: bool = False) -> DiceRollResult:
+                 reroll_ones: bool = False, rng: Optional[random.Random] = None) -> DiceRollResult:
         """投掷1d20（最常用的检定骰）
         
         Args:
@@ -59,12 +58,20 @@ class DiceRoller:
         Returns:
             投掷结果
         """
-        return self.roll_dice(1, 20, modifier=0, advantage=advantage, 
-                            disadvantage=disadvantage, reroll_ones=reroll_ones)
+        return self.roll_dice(
+            1,
+            20,
+            modifier=0,
+            advantage=advantage,
+            disadvantage=disadvantage,
+            reroll_ones=reroll_ones,
+            rng=rng,
+        )
     
     def roll_dice(self, count: int, sides: int, modifier: int = 0,
                   advantage: bool = False, disadvantage: bool = False,
-                  reroll_ones: bool = False, drop_lowest: bool = False) -> DiceRollResult:
+                  reroll_ones: bool = False, drop_lowest: bool = False,
+                  rng: Optional[random.Random] = None) -> DiceRollResult:
         """投掷骰子
         
         Args:
@@ -86,21 +93,22 @@ class DiceRoller:
                 advantage = disadvantage = False
         
         # 投掷骰子
+        roller = rng or self._rng
         rolls = []
         for _ in range(count):
-            roll = random.randint(1, sides)
+            roll = roller.randint(1, sides)
             # Halfling Lucky: 重投1
             if reroll_ones and roll == 1:
-                reroll = random.randint(1, sides)
+                reroll = roller.randint(1, sides)
                 logger.debug(f"Rerolled 1 -> {reroll}")
                 roll = reroll
             rolls.append(roll)
         
         # 处理优势/劣势（投第二次）
         if advantage or disadvantage:
-            second_roll = random.randint(1, sides)
+            second_roll = roller.randint(1, sides)
             if reroll_ones and second_roll == 1:
-                second_roll = random.randint(1, sides)
+                second_roll = roller.randint(1, sides)
             
             if advantage:
                 picked = max(rolls[0], second_roll)

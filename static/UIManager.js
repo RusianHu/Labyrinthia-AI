@@ -66,6 +66,11 @@ Object.assign(LabyrinthiaGame.prototype, {
             document.getElementById('player-floor').textContent = this.gameState.current_map.depth || 1;
             document.getElementById('current-map-name').textContent = this.gameState.current_map.name || '未知区域';
         }
+
+        this.updateStatusRuntimePanel();
+        this.updateEquipmentAffixPanel();
+        this.updateTurnEffectSummary();
+        this.updateCombatDetailPanel();
     },
 
     /**
@@ -106,6 +111,116 @@ Object.assign(LabyrinthiaGame.prototype, {
                 modElement.style.color = modifier >= 0 ? '#4caf50' : '#e74c3c';
             }
         });
+    },
+
+    updateStatusRuntimePanel() {
+        const panel = document.getElementById('status-runtime-panel');
+        if (!panel) return;
+
+        const snapshot = (this.gameState && this.gameState.combat_snapshot) || {};
+        const statusRuntime = snapshot.status_runtime || {};
+        const statusView = Array.isArray(statusRuntime.status_view) ? statusRuntime.status_view : [];
+        const blockedActions = statusRuntime.blocked_actions || {};
+        const conflicts = Array.isArray(statusRuntime.conflicts) ? statusRuntime.conflicts : [];
+
+        if (statusView.length === 0) {
+            panel.textContent = '当前无状态效果';
+            return;
+        }
+
+        const lines = statusView.map((effect) => {
+            const turns = Number(effect.remaining_turns || 0);
+            const stacks = Number(effect.stacks || 1);
+            const source = effect.source || 'unknown';
+            return `${effect.name} | ${effect.runtime_type} | 剩余${turns}回合 | 层数${stacks} | 来源:${source}`;
+        });
+
+        const blockedLine = Object.keys(blockedActions).length > 0
+            ? `行动限制: ${Object.keys(blockedActions).map((k) => `${k}(${blockedActions[k].join('/')})`).join(', ')}`
+            : '行动限制: 无';
+        const conflictLine = conflicts.length > 0
+            ? `冲突告警: ${conflicts.map((c) => `${c.group_mutex}:${(c.effects || []).join('/')}`).join(' ; ')}`
+            : '冲突告警: 无';
+
+        panel.textContent = `${lines.join('\n')}\n${blockedLine}\n${conflictLine}`;
+    },
+
+    updateEquipmentAffixPanel() {
+        const panel = document.getElementById('equipment-affix-panel');
+        if (!panel) return;
+
+        const snapshot = (this.gameState && this.gameState.combat_snapshot) || {};
+        const equipment = snapshot.equipment || {};
+        const setCounts = equipment.set_counts || {};
+        const affixes = Array.isArray(equipment.affixes) ? equipment.affixes : [];
+        const triggerAffixes = Array.isArray(equipment.trigger_affixes) ? equipment.trigger_affixes : [];
+        const passiveEffects = Array.isArray(equipment.passive_effects) ? equipment.passive_effects : [];
+
+        const setText = Object.keys(setCounts).length > 0
+            ? Object.entries(setCounts).map(([setId, count]) => `${setId}: ${count}`).join(' | ')
+            : '无套装进度';
+
+        const affixText = affixes.length > 0
+            ? affixes.map((entry) => {
+                const items = Array.isArray(entry.affixes) ? entry.affixes : [];
+                const names = items.map((a) => a.name || a.id || 'unknown').join(', ') || '无词缀';
+                return `${entry.item_id}: ${names}`;
+            }).join('\n')
+            : '无装备词缀';
+
+        const triggerText = triggerAffixes.length > 0
+            ? `触发词缀: ${triggerAffixes.length} 条`
+            : '触发词缀: 无';
+
+        const passiveText = passiveEffects.length > 0
+            ? `常驻效果: ${passiveEffects.length} 条`
+            : '常驻效果: 无';
+
+        panel.textContent = `套装: ${setText}\n${affixText}\n${triggerText}\n${passiveText}`;
+    },
+
+    updateTurnEffectSummary() {
+        const panel = document.getElementById('turn-effect-summary');
+        if (!panel) return;
+
+        const replayLogs = (((this.gameState || {}).combat_snapshot || {}).effect_replay_logs || []);
+        if (!Array.isArray(replayLogs) || replayLogs.length === 0) {
+            panel.textContent = '本回合无额外生效效果';
+            return;
+        }
+
+        const tail = replayLogs.slice(-6).map((log) => {
+            const hook = log.hook || 'tick';
+            const effect = log.effect || 'effect';
+            const trace = log.trace_id || 'no-trace';
+            return `${hook} -> ${effect} (${trace})`;
+        });
+
+        panel.textContent = tail.join('\n');
+    },
+
+    updateCombatDetailPanel() {
+        const panel = document.getElementById('combat-detail-panel');
+        if (!panel) return;
+
+        const response = this.lastLLMResponse || {};
+        const breakdown = Array.isArray(response.combat_breakdown) ? response.combat_breakdown : [];
+        const performance = response.performance || {};
+
+        if (breakdown.length === 0) {
+            panel.textContent = '暂无战斗明细';
+            return;
+        }
+
+        const lines = breakdown.slice(0, 10).map((stage) => {
+            return `${stage.stage}: ${stage.before} -> ${stage.after} (Δ${stage.delta}) | ${stage.reason}`;
+        });
+
+        if (Object.keys(performance).length > 0) {
+            lines.push(`耗时: turn=${performance.turn_elapsed_ms || 0}ms p50=${performance.p50_ms || 0}ms p95=${performance.p95_ms || 0}ms`);
+        }
+
+        panel.textContent = lines.join('\n');
     },
     
     async updateMap() {

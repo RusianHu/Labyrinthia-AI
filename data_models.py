@@ -42,6 +42,9 @@ class CreatureType(Enum):
 class DamageType(Enum):
     """伤害类型枚举"""
     PHYSICAL = "physical"
+    PHYSICAL_SLASH = "physical_slash"
+    PHYSICAL_PIERCE = "physical_pierce"
+    PHYSICAL_BLUNT = "physical_blunt"
     FIRE = "fire"
     COLD = "cold"
     LIGHTNING = "lightning"
@@ -50,6 +53,10 @@ class DamageType(Enum):
     NECROTIC = "necrotic"
     RADIANT = "radiant"
     PSYCHIC = "psychic"
+    FORCE = "force"
+    THUNDER = "thunder"
+    ARCANE = "arcane"
+    TRUE = "true"
 
 
 class TerrainType(Enum):
@@ -135,11 +142,51 @@ class Stats:
     mp: int = 50
     max_mp: int = 50
     ac: int = 10  # 护甲等级 (Armor Class)
+    ac_components: Dict[str, int] = field(default_factory=lambda: {
+        "base": 10,
+        "armor": 0,
+        "shield": 0,
+        "status": 0,
+        "situational": 0,
+        "penalty": 0,
+    })
+    ac_min: int = 1
+    ac_max: int = 50
     speed: int = 30  # 移动速度
     level: int = 1
     experience: int = 0
     shield: int = 0
     temporary_hp: int = 0
+
+    def __post_init__(self):
+        self._normalize_ac_components()
+        self.ac = self.get_effective_ac()
+
+    def _normalize_ac_components(self):
+        required_keys = ("base", "armor", "shield", "status", "situational", "penalty")
+
+        raw_components = self.ac_components if isinstance(self.ac_components, dict) else {}
+        normalized: Dict[str, int] = {}
+        fallback_base = int(self.ac or 10)
+
+        for key in required_keys:
+            default_value = fallback_base if key == "base" else 0
+            try:
+                normalized[key] = int(raw_components.get(key, default_value) or default_value)
+            except (TypeError, ValueError):
+                normalized[key] = default_value
+
+        self.ac_components = normalized
+
+        try:
+            self.ac_min = max(1, int(self.ac_min or 1))
+        except (TypeError, ValueError):
+            self.ac_min = 1
+
+        try:
+            self.ac_max = max(int(self.ac_min), int(self.ac_max or 50))
+        except (TypeError, ValueError):
+            self.ac_max = max(int(self.ac_min), 50)
 
     def is_alive(self) -> bool:
         """检查是否存活"""
@@ -167,10 +214,27 @@ class Stats:
 
         # 根据敏捷调整护甲等级
         dex_modifier = abilities.get_modifier("dexterity")
-        self.ac = 10 + dex_modifier
+        self._normalize_ac_components()
+        self.ac_components["base"] = 10 + dex_modifier
+        self.ac = self.get_effective_ac()
 
         # 根据敏捷调整速度
         self.speed = 30 + dex_modifier
+
+    def get_effective_ac(self) -> int:
+        """计算分层 AC 的聚合值（兼容旧字段 ac）"""
+        self._normalize_ac_components()
+        components = self.ac_components
+        value = (
+            int(components.get("base", 10) or 10)
+            + int(components.get("armor", 0) or 0)
+            + int(components.get("shield", 0) or 0)
+            + int(components.get("status", 0) or 0)
+            + int(components.get("situational", 0) or 0)
+            - int(components.get("penalty", 0) or 0)
+        )
+        value = max(int(self.ac_min or 1), min(int(self.ac_max or 50), value))
+        return value
 
 
 @dataclass
@@ -179,16 +243,26 @@ class StatusEffect:
     id: str = field(default_factory=lambda: str(uuid.uuid4()))
     name: str = ""
     effect_type: str = "buff"  # buff, debuff, neutral
+    runtime_type: str = "duration"  # duration, trigger, one_shot, aura
     duration_turns: int = 1
     stacks: int = 1
     max_stacks: int = 1
     stack_policy: str = "replace"  # replace, stack, refresh, keep_highest
     source: str = ""
+    source_trace_id: str = ""
     tags: List[str] = field(default_factory=list)
+    group_mutex: str = ""
+    group_override: str = ""
+    group_stack: str = ""
+    dispel_type: str = ""  # curse, poison, magic, physical, all
+    dispel_priority: int = 0
+    snapshot_mode: str = "realtime"  # realtime, snapshot
+    control_flags: List[str] = field(default_factory=list)  # stun, silence, disarm, root
     potency: Dict[str, Any] = field(default_factory=dict)
     modifiers: Dict[str, Any] = field(default_factory=dict)
     tick_effects: Dict[str, Any] = field(default_factory=dict)
     triggers: Dict[str, Any] = field(default_factory=dict)
+    hook_payloads: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     metadata: Dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
@@ -196,16 +270,26 @@ class StatusEffect:
             "id": self.id,
             "name": self.name,
             "effect_type": self.effect_type,
+            "runtime_type": self.runtime_type,
             "duration_turns": self.duration_turns,
             "stacks": self.stacks,
             "max_stacks": self.max_stacks,
             "stack_policy": self.stack_policy,
             "source": self.source,
+            "source_trace_id": self.source_trace_id,
             "tags": self.tags,
+            "group_mutex": self.group_mutex,
+            "group_override": self.group_override,
+            "group_stack": self.group_stack,
+            "dispel_type": self.dispel_type,
+            "dispel_priority": self.dispel_priority,
+            "snapshot_mode": self.snapshot_mode,
+            "control_flags": self.control_flags,
             "potency": self.potency,
             "modifiers": self.modifiers,
             "tick_effects": self.tick_effects,
             "triggers": self.triggers,
+            "hook_payloads": self.hook_payloads,
             "metadata": self.metadata,
         }
 
@@ -222,12 +306,21 @@ class StatusEffect:
         effect.id = data.get("id", effect.id)
         effect.name = data.get("name", "")
         effect.effect_type = data.get("effect_type", "buff")
+        effect.runtime_type = str(data.get("runtime_type", "duration") or "duration")
         effect.duration_turns = _safe_int(data.get("duration_turns", 1), 1)
         effect.stacks = _safe_int(data.get("stacks", 1), 1)
         effect.max_stacks = _safe_int(data.get("max_stacks", max(effect.stacks, 1)), max(effect.stacks, 1))
         effect.stack_policy = data.get("stack_policy", "replace")
         effect.source = data.get("source", "")
+        effect.source_trace_id = str(data.get("source_trace_id", "") or "")
         effect.tags = data.get("tags", []) or []
+        effect.group_mutex = str(data.get("group_mutex", "") or "")
+        effect.group_override = str(data.get("group_override", "") or "")
+        effect.group_stack = str(data.get("group_stack", "") or "")
+        effect.dispel_type = str(data.get("dispel_type", "") or "")
+        effect.dispel_priority = _safe_int(data.get("dispel_priority", 0), 0)
+        effect.snapshot_mode = str(data.get("snapshot_mode", "realtime") or "realtime")
+        effect.control_flags = [str(v) for v in (data.get("control_flags", []) or [])]
         effect.potency = data.get("potency", {}) or {}
         effect.modifiers = data.get("modifiers", {}) or {}
         effect.tick_effects = data.get("tick_effects", {}) or {}
@@ -241,6 +334,7 @@ class StatusEffect:
                 triggers = {}
         effect.triggers = triggers
 
+        effect.hook_payloads = data.get("hook_payloads", {}) or {}
         effect.metadata = data.get("metadata", {}) or {}
         return effect
 
@@ -264,6 +358,12 @@ class Item:
     use_mode: str = "active"  # active, passive, toggle
     is_equippable: bool = False
     equip_slot: str = ""  # weapon, armor, accessory_1, accessory_2
+    equip_passive_effects: List[Dict[str, Any]] = field(default_factory=list)
+    affixes: List[Dict[str, Any]] = field(default_factory=list)
+    trigger_affixes: List[Dict[str, Any]] = field(default_factory=list)
+    set_id: str = ""
+    set_thresholds: Dict[str, Any] = field(default_factory=dict)
+    unique_key: str = ""
     max_charges: int = 0
     charges: int = 0
     cooldown_turns: int = 0
@@ -288,6 +388,12 @@ class Item:
             "use_mode": self.use_mode,
             "is_equippable": self.is_equippable,
             "equip_slot": self.equip_slot,
+            "equip_passive_effects": self.equip_passive_effects,
+            "affixes": self.affixes,
+            "trigger_affixes": self.trigger_affixes,
+            "set_id": self.set_id,
+            "set_thresholds": self.set_thresholds,
+            "unique_key": self.unique_key,
             "max_charges": self.max_charges,
             "charges": self.charges,
             "cooldown_turns": self.cooldown_turns,
@@ -732,6 +838,8 @@ class GameState:
     combat_authority_mode: str = "local"
     player: Character = field(default_factory=Character)
     current_map: GameMap = field(default_factory=GameMap)
+    combat_rules: Dict[str, Any] = field(default_factory=dict)
+    combat_snapshot: Dict[str, Any] = field(default_factory=dict)
     monsters: List[Monster] = field(default_factory=list)
     quests: List[Quest] = field(default_factory=list)
     turn_count: int = 0
@@ -756,6 +864,8 @@ class GameState:
             "combat_authority_mode": self.combat_authority_mode,
             "player": self.player.to_dict(),
             "current_map": self.current_map.to_dict(),
+            "combat_rules": self.combat_rules,
+            "combat_snapshot": self.combat_snapshot,
             "monsters": [monster.to_dict() for monster in self.monsters],
             "quests": [quest.to_dict() for quest in self.quests],
             "turn_count": self.turn_count,
