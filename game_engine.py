@@ -11,6 +11,7 @@ import json
 import hashlib
 from typing import Dict, List, Optional, Tuple, Any
 from datetime import datetime, timedelta
+from collections import Counter
 
 from config import config
 from data_models import (
@@ -67,6 +68,7 @@ class GameEngine:
         self.idempotency_cache_max_entries: int = 256
         # 丢弃撤销缓存：key=(user_id, game_id) -> {undo_token: {item, position, expires_turn}}
         self.drop_undo_cache: Dict[Tuple[str, str], Dict[str, Dict[str, Any]]] = {}
+        self._map_release_hash_seed = str(getattr(config.game, "map_generation_canary_seed", "labyrinthia-map-canary") or "labyrinthia-map-canary")
 
     def _make_action_result(
         self,
@@ -968,7 +970,9 @@ class GameEngine:
             depth=1,
             theme="起始区域",
             quest_context=quest_context,
-            source="create_new_game"
+            source="create_new_game",
+            user_id=user_id,
+            game_state=game_state,
         )
 
         # 设置玩家初始位置
@@ -3011,6 +3015,12 @@ class GameEngine:
             else:
                 return "发现了一个空的宝藏箱..."
 
+    def _resolve_user_id_for_game_state(self, game_state: GameState) -> str:
+        for (user_id, _game_id), gs in self.active_games.items():
+            if gs is game_state:
+                return user_id
+        return ""
+
     async def _descend_stairs(self, game_state: GameState) -> str:
         """下楼梯"""
         # 记录旧的楼层深度
@@ -3041,13 +3051,16 @@ class GameEngine:
         if active_quest:
             quest_context = active_quest.to_dict()
 
+        user_id = self._resolve_user_id_for_game_state(game_state)
         new_map = await self._generate_map_with_provider(
             width=game_state.current_map.width,
             height=game_state.current_map.height,
             depth=new_depth,
             theme=f"冒险区域（第{new_depth}阶段/层级）",
             quest_context=quest_context,
-            source="descend_stairs"
+            source="descend_stairs",
+            user_id=user_id,
+            game_state=game_state,
         )
 
         # 更新游戏状态 - 确保正确更新
@@ -3133,13 +3146,16 @@ class GameEngine:
 
         # 这里可以实现返回上一层的逻辑
         # 简化实现：重新生成上一层
+        user_id = self._resolve_user_id_for_game_state(game_state)
         new_map = await self._generate_map_with_provider(
             width=game_state.current_map.width,
             height=game_state.current_map.height,
             depth=new_depth,
             theme=f"冒险区域（第{new_depth}阶段/层级）",
             quest_context=quest_context,
-            source="ascend_stairs"
+            source="ascend_stairs",
+            user_id=user_id,
+            game_state=game_state,
         )
 
         # 更新游戏状态 - 确保正确更新
@@ -3196,6 +3212,259 @@ class GameEngine:
         logger.info(f"Ascended to floor {new_depth}: {new_map.name}")
         return f"返回到了{new_map.name}"
 
+    def _build_generation_alert_snapshot(self, game_state: Optional[GameState]) -> Dict[str, Any]:
+        snapshot: Dict[str, Any] = {
+            "has_p1": False,
+            "items": [],
+            "rates": {},
+        }
+        if game_state is None or not isinstance(getattr(game_state, "generation_metrics", None), dict):
+            return snapshot
+
+        generation_metrics = game_state.generation_metrics
+        map_metrics = generation_metrics.get("map_generation") if isinstance(generation_metrics.get("map_generation"), dict) else {}
+        progress_metrics = generation_metrics.get("progress_metrics") if isinstance(generation_metrics.get("progress_metrics"), dict) else {}
+
+        map_total = max(1, int(map_metrics.get("total", 0) or 0))
+        unreachable_rate = float(map_metrics.get("unreachable_reports", 0) or 0) / float(map_total)
+        stairs_violation_rate = float(map_metrics.get("stairs_violations", 0) or 0) / float(map_total)
+
+        progress_total = max(1, int(progress_metrics.get("total_events", 0) or 0))
+        anomaly_rate = float(progress_metrics.get("anomaly_events", 0) or 0) / float(progress_total)
+
+        guard_hit = int(progress_metrics.get("final_objective_direct_completion", 0) or 0)
+        guard_blocked = int(progress_metrics.get("final_objective_guard_blocked", 0) or 0)
+        guard_total = max(1, guard_hit + guard_blocked)
+        final_guard_block_rate = float(guard_blocked) / float(guard_total)
+
+        snapshot["rates"] = {
+            "key_objective_unreachable_rate": round(unreachable_rate, 6),
+            "stairs_violation_rate": round(stairs_violation_rate, 6),
+            "progress_anomaly_rate": round(anomaly_rate, 6),
+            "final_objective_guard_block_rate": round(final_guard_block_rate, 6),
+        }
+
+        def _push(metric: str, value: float, warn: float, block: float):
+            severity = "ok"
+            if value >= block:
+                severity = "p1"
+            elif value >= warn:
+                severity = "p2"
+            if severity != "ok":
+                snapshot["items"].append(
+                    {
+                        "metric": metric,
+                        "severity": severity,
+                        "value": round(value, 6),
+                        "warn_threshold": warn,
+                        "block_threshold": block,
+                    }
+                )
+
+        _push(
+            "key_objective_unreachable_rate",
+            unreachable_rate,
+            float(getattr(config.game, "map_unreachable_rate_warn", 0.001)),
+            float(getattr(config.game, "map_unreachable_rate_block", 0.01)),
+        )
+        _push(
+            "stairs_violation_rate",
+            stairs_violation_rate,
+            float(getattr(config.game, "map_stairs_violation_warn", 0.001)),
+            float(getattr(config.game, "map_stairs_violation_block", 0.01)),
+        )
+        _push(
+            "progress_anomaly_rate",
+            anomaly_rate,
+            float(getattr(config.game, "progress_anomaly_rate_warn", 0.02)),
+            float(getattr(config.game, "progress_anomaly_rate_block", 0.1)),
+        )
+        _push(
+            "final_objective_guard_block_rate",
+            final_guard_block_rate,
+            float(getattr(config.game, "final_objective_guard_block_warn", 0.1)),
+            float(getattr(config.game, "final_objective_guard_block_block", 0.3)),
+        )
+
+        snapshot["has_p1"] = any(item.get("severity") == "p1" for item in snapshot["items"])
+        return snapshot
+
+    def _resolve_map_generation_release_strategy(
+        self,
+        user_id: str,
+        game_state: Optional[GameState],
+        source: str,
+    ) -> Dict[str, Any]:
+        provider = str(getattr(config.game, "map_generation_provider", "llm") or "llm").lower()
+        fallback_to_llm = bool(getattr(config.game, "map_generation_fallback_to_llm", True))
+        stage = str(getattr(config.game, "map_generation_release_stage", "debug") or "debug").lower()
+        if stage not in {"debug", "canary", "stable"}:
+            stage = "debug"
+        canary_percent = int(getattr(config.game, "map_generation_canary_percent", 0) or 0)
+        canary_percent = max(0, min(100, canary_percent))
+        force_legacy = bool(getattr(config.game, "map_generation_force_legacy_chain", False))
+        disable_high_risk_patch = bool(getattr(config.game, "map_generation_disable_high_risk_patch", True))
+
+        if force_legacy:
+            return {
+                "provider": provider,
+                "fallback_to_llm": fallback_to_llm,
+                "release_stage": stage,
+                "canary_percent": canary_percent,
+                "force_legacy": True,
+                "selected_chain": "legacy",
+                "canary_hit": False,
+                "disable_high_risk_patch": disable_high_risk_patch,
+            }
+
+        bucket_base = f"{self._map_release_hash_seed}:{user_id}:{source}"
+        bucket = int(hashlib.sha256(bucket_base.encode("utf-8")).hexdigest()[:8], 16) % 100
+        canary_hit = bucket < canary_percent
+
+        selected_chain = "contract_v2"
+        if stage == "debug":
+            selected_chain = "contract_v2"
+        elif stage == "canary":
+            selected_chain = "contract_v2" if canary_hit else "legacy"
+        elif stage == "stable":
+            selected_chain = "contract_v2"
+
+        alert_snapshot = self._build_generation_alert_snapshot(game_state)
+        if bool(getattr(config.game, "map_alert_blocking_enabled", False)) and alert_snapshot.get("has_p1", False):
+            selected_chain = "legacy"
+
+        return {
+            "provider": provider,
+            "fallback_to_llm": fallback_to_llm,
+            "release_stage": stage,
+            "canary_percent": canary_percent,
+            "canary_bucket": bucket,
+            "canary_hit": canary_hit,
+            "selected_chain": selected_chain,
+            "force_legacy": False,
+            "disable_high_risk_patch": disable_high_risk_patch,
+            "alerts": alert_snapshot,
+        }
+
+    def _record_map_generation_metric(
+        self,
+        game_state: GameState,
+        *,
+        release_stage: str,
+        selected_chain: str,
+        provider: str,
+        source: str,
+        success: bool,
+        fallback_used: bool,
+        rollback_used: bool,
+        generation_metadata: Optional[Dict[str, Any]] = None,
+        error_code: str = "",
+    ) -> None:
+        if not isinstance(game_state.generation_metrics, dict):
+            game_state.generation_metrics = {}
+
+        metrics = game_state.generation_metrics.get("map_generation")
+        if not isinstance(metrics, dict):
+            metrics = {
+                "total": 0,
+                "success": 0,
+                "failed": 0,
+                "fallback_used": 0,
+                "rollback_used": 0,
+                "repairs": 0,
+                "unreachable_reports": 0,
+                "stairs_violations": 0,
+                "by_stage": {},
+                "by_provider": {},
+                "error_codes": {},
+            }
+
+        metrics["total"] = int(metrics.get("total", 0) or 0) + 1
+        if success:
+            metrics["success"] = int(metrics.get("success", 0) or 0) + 1
+        else:
+            metrics["failed"] = int(metrics.get("failed", 0) or 0) + 1
+        if fallback_used:
+            metrics["fallback_used"] = int(metrics.get("fallback_used", 0) or 0) + 1
+        if rollback_used:
+            metrics["rollback_used"] = int(metrics.get("rollback_used", 0) or 0) + 1
+
+        by_stage = metrics.get("by_stage") if isinstance(metrics.get("by_stage"), dict) else {}
+        by_stage[release_stage] = int(by_stage.get(release_stage, 0) or 0) + 1
+        metrics["by_stage"] = by_stage
+
+        provider_key = f"{provider}:{selected_chain}"
+        by_provider = metrics.get("by_provider") if isinstance(metrics.get("by_provider"), dict) else {}
+        by_provider[provider_key] = int(by_provider.get(provider_key, 0) or 0) + 1
+        metrics["by_provider"] = by_provider
+
+        if error_code:
+            error_codes = metrics.get("error_codes") if isinstance(metrics.get("error_codes"), dict) else {}
+            error_codes[error_code] = int(error_codes.get(error_code, 0) or 0) + 1
+            metrics["error_codes"] = error_codes
+
+        meta = generation_metadata if isinstance(generation_metadata, dict) else {}
+        repairs = 0
+        corridor_report = meta.get("corridor_report") if isinstance(meta.get("corridor_report"), dict) else {}
+        if isinstance(corridor_report.get("repairs"), list):
+            repairs += len(corridor_report.get("repairs", []))
+        local_validation = meta.get("local_validation") if isinstance(meta.get("local_validation"), dict) else {}
+        local_repairs = local_validation.get("repairs") if isinstance(local_validation.get("repairs"), list) else []
+        repairs += len(local_repairs)
+        metrics["repairs"] = int(metrics.get("repairs", 0) or 0) + repairs
+
+        local_stairs = local_validation.get("stairs") if isinstance(local_validation.get("stairs"), dict) else {}
+        if local_stairs.get("violations"):
+            metrics["stairs_violations"] = int(metrics.get("stairs_violations", 0) or 0) + int(local_stairs.get("violations", 0) or 0)
+
+        if bool(local_validation.get("key_objective_unreachable", False)):
+            metrics["unreachable_reports"] = int(metrics.get("unreachable_reports", 0) or 0) + 1
+        elif int(local_validation.get("unreachable_targets_after", 0) or 0) > 0:
+            metrics["unreachable_reports"] = int(metrics.get("unreachable_reports", 0) or 0) + 1
+
+        patch_batches = game_state.generation_metrics.get("patch_batches") if isinstance(game_state.generation_metrics.get("patch_batches"), list) else []
+        if patch_batches and isinstance(patch_batches[-1], dict) and patch_batches[-1].get("rollback_applied"):
+            metrics["rollback_used"] = int(metrics.get("rollback_used", 0) or 0) + 1
+
+        game_state.generation_metrics["map_generation"] = metrics
+        game_state.generation_metrics["map_generation_last"] = {
+            "timestamp": datetime.now().isoformat(),
+            "source": source,
+            "release_stage": release_stage,
+            "selected_chain": selected_chain,
+            "provider": provider,
+            "success": success,
+            "fallback_used": fallback_used,
+            "rollback_used": rollback_used,
+            "error_code": error_code,
+        }
+
+    def _should_strip_high_risk_patches(self, release_stage: str, disable_high_risk_patch: bool) -> bool:
+        return bool(disable_high_risk_patch and release_stage in {"debug", "canary"})
+
+    def _strip_high_risk_patches_from_context(self, quest_context: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        if not isinstance(quest_context, dict):
+            return quest_context
+        copied = copy.deepcopy(quest_context)
+        llm_updates = copied.get("llm_updates") if isinstance(copied.get("llm_updates"), dict) else None
+        if not llm_updates:
+            return copied
+        patches = llm_updates.get("patches") if isinstance(llm_updates.get("patches"), list) else []
+        if not patches:
+            return copied
+
+        filtered: List[Dict[str, Any]] = []
+        for patch in patches:
+            if not isinstance(patch, dict):
+                continue
+            risk = str(patch.get("risk_level", "medium") or "medium").lower()
+            if risk in {"high", "critical"}:
+                continue
+            filtered.append(patch)
+        llm_updates["patches"] = filtered
+        copied["llm_updates"] = llm_updates
+        return copied
+
     async def _generate_map_with_provider(
         self,
         width: int,
@@ -3204,12 +3473,32 @@ class GameEngine:
         theme: str,
         quest_context: Optional[Dict[str, Any]],
         source: str,
+        *,
+        user_id: str = "",
+        game_state: Optional[GameState] = None,
     ) -> GameMap:
-        """根据配置选择地图生成提供方，并在需要时回退到LLM。"""
-        provider = str(getattr(config.game, "map_generation_provider", "llm") or "llm").lower()
-        fallback_to_llm = bool(getattr(config.game, "map_generation_fallback_to_llm", True))
+        """根据发布阶段、灰度与回滚策略选择地图链路。"""
+        strategy = self._resolve_map_generation_release_strategy(user_id=user_id, game_state=game_state, source=source)
+        provider = strategy["provider"]
+        fallback_to_llm = strategy["fallback_to_llm"]
+        release_stage = strategy["release_stage"]
+        selected_chain = strategy["selected_chain"]
+        fallback_used = False
+        rollback_used = False
 
-        if provider == "local":
+        working_context = quest_context
+        if self._should_strip_high_risk_patches(release_stage, strategy.get("disable_high_risk_patch", False)):
+            working_context = self._strip_high_risk_patches_from_context(working_context)
+
+        def _annotate_meta(meta_map: GameMap, payload: Dict[str, Any]) -> None:
+            if not isinstance(meta_map.generation_metadata, dict):
+                meta_map.generation_metadata = {}
+            meta_map.generation_metadata.update(payload)
+            if isinstance(strategy.get("alerts"), dict):
+                meta_map.generation_metadata["alerts"] = strategy.get("alerts")
+
+        # 旧链路：local provider，必要时回退 llm
+        if selected_chain == "legacy" or provider == "local":
             try:
                 from local_map_provider import local_map_provider
 
@@ -3218,43 +3507,135 @@ class GameEngine:
                     height=height,
                     depth=depth,
                     theme=theme,
-                    quest_context=quest_context,
+                    quest_context=working_context,
                 )
-
-                if not isinstance(local_map.generation_metadata, dict):
-                    local_map.generation_metadata = {}
-
-                local_map.generation_metadata.update(
+                _annotate_meta(
+                    local_map,
                     {
                         "map_provider": "local",
                         "source": source,
                         "monster_hints": monster_hints,
-                    }
+                        "release_stage": release_stage,
+                        "selected_chain": selected_chain,
+                        "canary_hit": strategy.get("canary_hit", False),
+                    },
                 )
-                logger.info(f"Map generated by local provider ({source}): {local_map.name}")
+                if game_state:
+                    self._record_map_generation_metric(
+                        game_state,
+                        release_stage=release_stage,
+                        selected_chain=selected_chain,
+                        provider="local",
+                        source=source,
+                        success=True,
+                        fallback_used=False,
+                        rollback_used=False,
+                        generation_metadata=local_map.generation_metadata,
+                    )
+                logger.info(f"Map generated by local provider ({source}, stage={release_stage}, chain={selected_chain}): {local_map.name}")
                 return local_map
             except Exception as e:
+                fallback_used = True
                 logger.error(f"Local map provider failed at {source}: {e}")
                 if not fallback_to_llm:
+                    if game_state:
+                        self._record_map_generation_metric(
+                            game_state,
+                            release_stage=release_stage,
+                            selected_chain=selected_chain,
+                            provider="local",
+                            source=source,
+                            success=False,
+                            fallback_used=fallback_used,
+                            rollback_used=False,
+                            error_code="LOCAL_PROVIDER_FAILED",
+                        )
                     raise
 
-        llm_map = await content_generator.generate_dungeon_map(
-            width=width,
-            height=height,
-            depth=depth,
-            theme=theme,
-            quest_context=quest_context,
-        )
+        try:
+            llm_map = await content_generator.generate_dungeon_map(
+                width=width,
+                height=height,
+                depth=depth,
+                theme=theme,
+                quest_context=working_context,
+            )
+            _annotate_meta(
+                llm_map,
+                {
+                    "map_provider": "llm",
+                    "source": source,
+                    "release_stage": release_stage,
+                    "selected_chain": selected_chain,
+                    "canary_hit": strategy.get("canary_hit", False),
+                    "fallback_used": fallback_used,
+                },
+            )
+            if game_state:
+                self._record_map_generation_metric(
+                    game_state,
+                    release_stage=release_stage,
+                    selected_chain=selected_chain,
+                    provider="llm",
+                    source=source,
+                    success=True,
+                    fallback_used=fallback_used,
+                    rollback_used=rollback_used,
+                    generation_metadata=llm_map.generation_metadata,
+                )
+            return llm_map
+        except Exception:
+            if selected_chain != "legacy" and provider != "local":
+                try:
+                    from local_map_provider import local_map_provider
 
-        if not isinstance(llm_map.generation_metadata, dict):
-            llm_map.generation_metadata = {}
-        llm_map.generation_metadata.update(
-            {
-                "map_provider": "llm",
-                "source": source,
-            }
-        )
-        return llm_map
+                    local_map, monster_hints = local_map_provider.generate_map(
+                        width=width,
+                        height=height,
+                        depth=depth,
+                        theme=theme,
+                        quest_context=working_context,
+                    )
+                    rollback_used = True
+                    _annotate_meta(
+                        local_map,
+                        {
+                            "map_provider": "local",
+                            "source": source,
+                            "release_stage": release_stage,
+                            "selected_chain": "legacy",
+                            "rollback_to_legacy": True,
+                            "monster_hints": monster_hints,
+                        },
+                    )
+                    if game_state:
+                        self._record_map_generation_metric(
+                            game_state,
+                            release_stage=release_stage,
+                            selected_chain="legacy",
+                            provider="local",
+                            source=source,
+                            success=True,
+                            fallback_used=True,
+                            rollback_used=True,
+                            generation_metadata=local_map.generation_metadata,
+                        )
+                    return local_map
+                except Exception as local_exc:
+                    logger.error(f"Legacy rollback map generation failed at {source}: {local_exc}")
+            if game_state:
+                self._record_map_generation_metric(
+                    game_state,
+                    release_stage=release_stage,
+                    selected_chain=selected_chain,
+                    provider="llm",
+                    source=source,
+                    success=False,
+                    fallback_used=True,
+                    rollback_used=rollback_used,
+                    error_code="MAP_GENERATION_FAILED",
+                )
+            raise
 
     def _get_monster_hint_context(self, game_map: GameMap) -> Dict[str, Any]:
         """提取地图中可用的monster_hints上下文。"""
@@ -3445,13 +3826,16 @@ class GameEngine:
             new_depth = game_state.current_map.depth + 1
             quest_context = new_quest.to_dict()
 
+            user_id = self._resolve_user_id_for_game_state(game_state)
             new_map = await self._generate_map_with_provider(
                 width=config.game.default_map_size[0],
                 height=config.game.default_map_size[1],
                 depth=new_depth,
                 theme=f"冒险区域（第{new_depth}阶段/层级） - {new_quest.title}",
                 quest_context=quest_context,
-                source="generate_new_quest_map"
+                source="generate_new_quest_map",
+                user_id=user_id,
+                game_state=game_state,
             )
 
             # 更新游戏状态

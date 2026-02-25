@@ -756,6 +756,9 @@ class QuestMonster:
     description: str = ""
     challenge_rating: float = 1.0
     is_boss: bool = False
+    is_final_objective: bool = False
+    phase_count: int = 1
+    special_status_pack: List[str] = field(default_factory=list)
     progress_value: float = 0.0  # 击败此怪物获得的进度值
     spawn_condition: str = ""  # 生成条件描述
     location_hint: str = ""  # 位置提示
@@ -767,6 +770,9 @@ class QuestMonster:
             "description": self.description,
             "challenge_rating": self.challenge_rating,
             "is_boss": self.is_boss,
+            "is_final_objective": self.is_final_objective,
+            "phase_count": self.phase_count,
+            "special_status_pack": self.special_status_pack,
             "progress_value": self.progress_value,
             "spawn_condition": self.spawn_condition,
             "location_hint": self.location_hint
@@ -796,6 +802,10 @@ class Quest:
     map_themes: List[str] = field(default_factory=list)  # 地图主题建议
     special_events: List[QuestEvent] = field(default_factory=list)  # 专属事件
     special_monsters: List[QuestMonster] = field(default_factory=list)  # 专属怪物
+    progress_plan: Dict[str, Any] = field(default_factory=dict)
+    completion_guard: Dict[str, Any] = field(default_factory=dict)
+    progress_ledger: List[Dict[str, Any]] = field(default_factory=list)
+    defeated_quest_monster_ids: List[str] = field(default_factory=list)
     
     def complete_objective(self, index: int):
         """完成指定目标"""
@@ -821,6 +831,10 @@ class Quest:
             "quest_type": self.quest_type,
             "target_floors": self.target_floors,
             "map_themes": self.map_themes,
+            "progress_plan": self.progress_plan,
+            "completion_guard": self.completion_guard,
+            "progress_ledger": self.progress_ledger,
+            "defeated_quest_monster_ids": self.defeated_quest_monster_ids,
             "special_events": [
                 event.to_dict() if hasattr(event, 'to_dict') else event
                 for event in self.special_events
@@ -880,7 +894,7 @@ class EventChoiceContext:
 class GameState:
     """游戏状态"""
     id: str = field(default_factory=lambda: str(uuid.uuid4()))
-    save_version: int = 2
+    save_version: int = 3
     equipment_schema_version: int = 2
     combat_rule_version: int = 1
     combat_authority_mode: str = "local"
@@ -897,6 +911,8 @@ class GameState:
     game_over_reason: str = ""  # 游戏结束原因
     pending_events: List[str] = field(default_factory=list)  # 待显示的事件
     pending_effects: List[Dict[str, Any]] = field(default_factory=list)  # 待显示的特效
+    generation_metrics: Dict[str, Any] = field(default_factory=dict)
+    migration_history: List[Dict[str, Any]] = field(default_factory=list)
     created_at: datetime = field(default_factory=datetime.now)
     last_saved: datetime = field(default_factory=datetime.now)
     # 新增：地图切换控制
@@ -924,6 +940,8 @@ class GameState:
             "game_over_reason": self.game_over_reason,
             "pending_events": self.pending_events,
             "pending_effects": self.pending_effects,
+            "generation_metrics": self.generation_metrics,
+            "migration_history": self.migration_history,
             "created_at": self.created_at.isoformat(),
             "last_saved": self.last_saved.isoformat(),
             "pending_map_transition": self.pending_map_transition,

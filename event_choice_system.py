@@ -48,6 +48,10 @@ class ChoiceResult:
     quest_updates: Dict[str, Any] = None
     new_items: List[Dict[str, Any]] = None
     map_transition: Dict[str, Any] = None
+    patches: List[Dict[str, Any]] = None
+    patch_batch_id: str = ""
+    patch_rollback_mode: str = "full"
+    patch_depends_on_batch: str = ""
 
     def __post_init__(self):
         if self.events is None:
@@ -62,6 +66,8 @@ class ChoiceResult:
             self.new_items = []
         if self.map_transition is None:
             self.map_transition = {}
+        if self.patches is None:
+            self.patches = []
 
 
 class EventChoiceSystem:
@@ -554,7 +560,11 @@ class EventChoiceSystem:
                     player_updates=llm_response.get("player_updates", {}),
                     quest_updates=llm_response.get("quest_updates", {}),
                     new_items=llm_response.get("new_items", []),
-                    map_transition=llm_response.get("map_transition", {})
+                    map_transition=llm_response.get("map_transition", {}),
+                    patches=llm_response.get("patches", []),
+                    patch_batch_id=str(llm_response.get("patch_batch_id", "") or ""),
+                    patch_rollback_mode=str(llm_response.get("patch_rollback_mode", "full") or "full"),
+                    patch_depends_on_batch=str(llm_response.get("patch_depends_on_batch", "") or ""),
                 )
 
                 # 调试日志：显示将要应用的更新
@@ -630,7 +640,11 @@ class EventChoiceSystem:
                     events=llm_response.get("events", []),
                     quest_updates=llm_response.get("quest_updates", {}),
                     player_updates=llm_response.get("player_updates", {}),
-                    map_transition=llm_response.get("map_transition", {})
+                    map_transition=llm_response.get("map_transition", {}),
+                    patches=llm_response.get("patches", []),
+                    patch_batch_id=str(llm_response.get("patch_batch_id", "") or ""),
+                    patch_rollback_mode=str(llm_response.get("patch_rollback_mode", "full") or "full"),
+                    patch_depends_on_batch=str(llm_response.get("patch_depends_on_batch", "") or ""),
                 )
 
                 # 应用更新到游戏状态
@@ -861,6 +875,14 @@ class EventChoiceSystem:
                 events=["陷阱位置无效"]
             )
 
+        # retreat 不依赖 trap_manager，避免未初始化时误报
+        if choice.id == "retreat":
+            return ChoiceResult(
+                success=True,
+                message="你小心地后退了",
+                events=["返回到安全位置"]
+            )
+
         trap_manager = get_trap_manager()
 
         # 处理不同的选择
@@ -892,15 +914,17 @@ class EventChoiceSystem:
                     success=True,
                     message=message,
                     events=events,
-                    state_updates={
-                        "map_updates": {
+                    map_updates={
+                        "tiles": {
                             f"{position[0]},{position[1]}": {
                                 "terrain": "floor",
                                 "trap_disarmed": True,
                                 "event_data": tile.event_data if tile.has_event else {}
                             }
-                        },
-                        "player_updates": {
+                        }
+                    },
+                    player_updates={
+                        "stats": {
                             "experience": game_state.player.stats.experience
                         }
                     }
@@ -916,11 +940,10 @@ class EventChoiceSystem:
                     success=False,
                     message=message,
                     events=events,
-                    state_updates={
-                        "player_updates": {
+                    player_updates={
+                        "stats": {
                             "hp": game_state.player.stats.hp
-                        },
-                        "game_over": trigger_result.get('player_died', False)
+                        }
                     }
                 )
 
@@ -964,11 +987,10 @@ class EventChoiceSystem:
                     success=False,
                     message=message,
                     events=events,
-                    state_updates={
-                        "player_updates": {
+                    player_updates={
+                        "stats": {
                             "hp": game_state.player.stats.hp
-                        },
-                        "game_over": trigger_result.get('player_died', False)
+                        }
                     }
                 )
 
@@ -983,28 +1005,18 @@ class EventChoiceSystem:
                 success=True,
                 message=message,
                 events=events,
-                state_updates={
-                    "player_updates": {
+                player_updates={
+                    "stats": {
                         "hp": game_state.player.stats.hp
-                    },
-                    "game_over": trigger_result.get('player_died', False)
+                    }
                 }
-            )
-
-        elif choice.choice_id == "retreat":
-            # 后退，返回上一个位置
-            # 这个逻辑由前端处理
-            return ChoiceResult(
-                success=True,
-                message="你小心地后退了",
-                events=["返回到安全位置"]
             )
 
         else:
             # 未知选项
             return ChoiceResult(
                 success=False,
-                message=f"未知的选项：{choice.choice_id}",
+                message=f"未知的选项：{choice.id}",
                 events=["无效的选择"]
             )
 
@@ -1040,7 +1052,11 @@ class EventChoiceSystem:
                 "player_updates": result.player_updates or {},
                 "map_updates": result.map_updates or {},
                 "quest_updates": result.quest_updates or {},
-                "events": result.events or []
+                "events": result.events or [],
+                "patches": result.patches or [],
+                "patch_batch_id": result.patch_batch_id or "",
+                "patch_rollback_mode": result.patch_rollback_mode or "full",
+                "patch_depends_on_batch": result.patch_depends_on_batch or "",
             }
 
             # 使用GameStateModifier应用所有更新

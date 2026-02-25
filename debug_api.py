@@ -15,6 +15,7 @@ from user_session_manager import user_session_manager
 from llm_service import llm_service
 from data_manager import data_manager
 from progress_manager import progress_manager
+from game_state_lock_manager import game_state_lock_manager
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +69,110 @@ class DebugAPI:
                     "is_done": task_info.is_done()
                 }
             
+            aggregate_map_metrics: Dict[str, Any] = {
+                "total": 0,
+                "success": 0,
+                "failed": 0,
+                "fallback_used": 0,
+                "rollback_used": 0,
+                "repairs": 0,
+                "stairs_violations": 0,
+                "error_codes": {},
+            }
+            for gs in game_engine.active_games.values():
+                gm = gs.generation_metrics if isinstance(getattr(gs, "generation_metrics", None), dict) else {}
+                mm = gm.get("map_generation") if isinstance(gm.get("map_generation"), dict) else {}
+                aggregate_map_metrics["total"] += int(mm.get("total", 0) or 0)
+                aggregate_map_metrics["success"] += int(mm.get("success", 0) or 0)
+                aggregate_map_metrics["failed"] += int(mm.get("failed", 0) or 0)
+                aggregate_map_metrics["fallback_used"] += int(mm.get("fallback_used", 0) or 0)
+                aggregate_map_metrics["rollback_used"] += int(mm.get("rollback_used", 0) or 0)
+                aggregate_map_metrics["repairs"] += int(mm.get("repairs", 0) or 0)
+                aggregate_map_metrics["stairs_violations"] += int(mm.get("stairs_violations", 0) or 0)
+                aggregate_map_metrics["unreachable_reports"] = int(aggregate_map_metrics.get("unreachable_reports", 0) or 0) + int(mm.get("unreachable_reports", 0) or 0)
+                error_codes = mm.get("error_codes") if isinstance(mm.get("error_codes"), dict) else {}
+                for code, count in error_codes.items():
+                    key = str(code)
+                    aggregate_map_metrics["error_codes"][key] = int(aggregate_map_metrics["error_codes"].get(key, 0) or 0) + int(count or 0)
+
+            total = max(1, int(aggregate_map_metrics.get("total", 0) or 0))
+            unreachable_rate = float(aggregate_map_metrics.get("unreachable_reports", 0) or 0) / float(total)
+            stairs_violation_rate = float(aggregate_map_metrics.get("stairs_violations", 0) or 0) / float(total)
+
+            aggregate_progress_metrics: Dict[str, Any] = {
+                "total_events": 0,
+                "anomaly_events": 0,
+                "final_objective_direct_completion": 0,
+                "final_objective_guard_blocked": 0,
+                "anomaly_codes": {},
+                "final_objective_guard_blocked_reasons": {},
+            }
+            for gs in game_engine.active_games.values():
+                gm = gs.generation_metrics if isinstance(getattr(gs, "generation_metrics", None), dict) else {}
+                pm = gm.get("progress_metrics") if isinstance(gm.get("progress_metrics"), dict) else {}
+                aggregate_progress_metrics["total_events"] += int(pm.get("total_events", 0) or 0)
+                aggregate_progress_metrics["anomaly_events"] += int(pm.get("anomaly_events", 0) or 0)
+                aggregate_progress_metrics["final_objective_direct_completion"] += int(pm.get("final_objective_direct_completion", 0) or 0)
+                aggregate_progress_metrics["final_objective_guard_blocked"] += int(pm.get("final_objective_guard_blocked", 0) or 0)
+                anomaly_codes = pm.get("anomaly_codes") if isinstance(pm.get("anomaly_codes"), dict) else {}
+                for code, count in anomaly_codes.items():
+                    key = str(code)
+                    aggregate_progress_metrics["anomaly_codes"][key] = int(aggregate_progress_metrics["anomaly_codes"].get(key, 0) or 0) + int(count or 0)
+                blocked_reasons = pm.get("final_objective_guard_blocked_reasons") if isinstance(pm.get("final_objective_guard_blocked_reasons"), dict) else {}
+                for reason, count in blocked_reasons.items():
+                    key = str(reason)
+                    aggregate_progress_metrics["final_objective_guard_blocked_reasons"][key] = int(aggregate_progress_metrics["final_objective_guard_blocked_reasons"].get(key, 0) or 0) + int(count or 0)
+
+            progress_total = max(1, int(aggregate_progress_metrics.get("total_events", 0) or 0))
+            anomaly_rate = float(aggregate_progress_metrics.get("anomaly_events", 0) or 0) / float(progress_total)
+            guard_total = int(aggregate_progress_metrics.get("final_objective_direct_completion", 0) or 0) + int(aggregate_progress_metrics.get("final_objective_guard_blocked", 0) or 0)
+            guard_den = max(1, guard_total)
+            final_guard_block_rate = float(aggregate_progress_metrics.get("final_objective_guard_blocked", 0) or 0) / float(guard_den)
+
+            alerts: List[Dict[str, Any]] = []
+
+            def _append_alert(metric: str, value: float, warn: float, block: float):
+                severity = "ok"
+                if value >= block:
+                    severity = "p1"
+                elif value >= warn:
+                    severity = "p2"
+                if severity != "ok":
+                    alerts.append(
+                        {
+                            "metric": metric,
+                            "severity": severity,
+                            "value": round(value, 6),
+                            "warn_threshold": warn,
+                            "block_threshold": block,
+                        }
+                    )
+
+            _append_alert(
+                "key_objective_unreachable_rate",
+                unreachable_rate,
+                float(getattr(config.game, "map_unreachable_rate_warn", 0.001)),
+                float(getattr(config.game, "map_unreachable_rate_block", 0.01)),
+            )
+            _append_alert(
+                "stairs_violation_rate",
+                stairs_violation_rate,
+                float(getattr(config.game, "map_stairs_violation_warn", 0.001)),
+                float(getattr(config.game, "map_stairs_violation_block", 0.01)),
+            )
+            _append_alert(
+                "progress_anomaly_rate",
+                anomaly_rate,
+                float(getattr(config.game, "progress_anomaly_rate_warn", 0.02)),
+                float(getattr(config.game, "progress_anomaly_rate_block", 0.1)),
+            )
+            _append_alert(
+                "final_objective_guard_block_rate",
+                final_guard_block_rate,
+                float(getattr(config.game, "final_objective_guard_block_warn", 0.1)),
+                float(getattr(config.game, "final_objective_guard_block_block", 0.3)),
+            )
+
             return {
                 "success": True,
                 "timestamp": datetime.now().isoformat(),
@@ -75,7 +180,10 @@ class DebugAPI:
                     "debug_mode": config.game.debug_mode,
                     "version": config.game.version,
                     "llm_provider": config.llm.provider.value,
-                    "llm_model": config.llm.model_name
+                    "llm_model": config.llm.model_name,
+                    "map_generation_release_stage": getattr(config.game, "map_generation_release_stage", "debug"),
+                    "map_generation_canary_percent": getattr(config.game, "map_generation_canary_percent", 0),
+                    "map_generation_force_legacy_chain": getattr(config.game, "map_generation_force_legacy_chain", False),
                 },
                 "games": {
                     "total_active": total_games,
@@ -86,7 +194,20 @@ class DebugAPI:
                     "statistics": formatted_task_stats,
                     "active_tasks": formatted_active_tasks,
                     "active_count": len(active_tasks)
-                }
+                },
+                "map_generation_metrics": aggregate_map_metrics,
+                "progress_metrics": aggregate_progress_metrics,
+                "derived_rates": {
+                    "key_objective_unreachable_rate": round(unreachable_rate, 6),
+                    "stairs_violation_rate": round(stairs_violation_rate, 6),
+                    "progress_anomaly_rate": round(anomaly_rate, 6),
+                    "final_objective_guard_block_rate": round(final_guard_block_rate, 6),
+                },
+                "alerts": {
+                    "blocking_enabled": bool(getattr(config.game, "map_alert_blocking_enabled", False)),
+                    "items": alerts,
+                    "has_p1": any(a.get("severity") == "p1" for a in alerts),
+                },
             }
         except Exception as e:
             logger.error(f"Failed to get system status: {e}")
@@ -622,6 +743,106 @@ class DebugAPI:
 
         except Exception as e:
             logger.error(f"Failed to get map summary: {e}")
+            return {
+                "success": False,
+                "error": str(e)
+            }
+    @staticmethod
+    def get_generation_trace(user_id: str, game_id: str) -> Dict[str, Any]:
+        """获取地图生成/补丁/进度账本的完整调试链路"""
+        try:
+            game_key = (user_id, game_id)
+            if game_key not in game_engine.active_games:
+                return {
+                    "success": False,
+                    "error": "游戏未找到"
+                }
+
+            game_state = game_engine.active_games[game_key]
+            active_quest = next((q for q in game_state.quests if q.is_active), None)
+
+            generation_metadata = game_state.current_map.generation_metadata if isinstance(game_state.current_map.generation_metadata, dict) else {}
+            generation_metrics = game_state.generation_metrics if isinstance(game_state.generation_metrics, dict) else {}
+
+            map_generation_metrics = generation_metrics.get("map_generation", {}) if isinstance(generation_metrics.get("map_generation"), dict) else {}
+            map_generation_last = generation_metrics.get("map_generation_last", {}) if isinstance(generation_metrics.get("map_generation_last"), dict) else {}
+
+            return {
+                "success": True,
+                "timestamp": datetime.now().isoformat(),
+                "game_id": game_id,
+                "map": {
+                    "id": game_state.current_map.id,
+                    "name": game_state.current_map.name,
+                    "depth": game_state.current_map.depth,
+                },
+                "release_strategy": {
+                    "stage": getattr(config.game, "map_generation_release_stage", "debug"),
+                    "canary_percent": getattr(config.game, "map_generation_canary_percent", 0),
+                    "force_legacy": getattr(config.game, "map_generation_force_legacy_chain", False),
+                    "disable_high_risk_patch": getattr(config.game, "map_generation_disable_high_risk_patch", True),
+                },
+                "generation_metadata": generation_metadata,
+                "map_generation_metrics": map_generation_metrics,
+                "map_generation_last": map_generation_last,
+                "patch_batches": generation_metrics.get("patch_batches", []),
+                "spawn_audit": generation_metrics.get("spawn_audit", []),
+                "quest": {
+                    "active_quest_id": active_quest.id if active_quest else "",
+                    "active_quest_title": active_quest.title if active_quest else "",
+                    "progress_plan": getattr(active_quest, "progress_plan", {}) if active_quest else {},
+                    "completion_guard": getattr(active_quest, "completion_guard", {}) if active_quest else {},
+                    "progress_ledger": getattr(active_quest, "progress_ledger", []) if active_quest else [],
+                },
+                "progress_metrics": generation_metrics.get("progress_metrics", {}),
+                "migration_history": game_state.migration_history if isinstance(getattr(game_state, "migration_history", None), list) else [],
+                "lock_stats": game_state_lock_manager.get_lock_stats(),
+            }
+        except Exception as e:
+            logger.error(f"Failed to get generation trace: {e}")
+            return {
+                "success": False,
+                "error": str(e)
+            }
+
+    @staticmethod
+    def export_debug_package(user_id: str, game_id: str) -> Dict[str, Any]:
+        """导出完整调试包（JSON对象）"""
+        try:
+            trace = DebugAPI.get_generation_trace(user_id, game_id)
+            if not trace.get("success"):
+                return trace
+
+            llm_debug = {
+                "last_request": llm_service.get_last_request_payload(),
+                "last_response": llm_service.get_last_response_payload(),
+            }
+
+            game_key = (user_id, game_id)
+            game_state = game_engine.active_games[game_key]
+            package = {
+                "success": True,
+                "timestamp": datetime.now().isoformat(),
+                "game_id": game_id,
+                "user_id": user_id,
+                "game_snapshot": {
+                    "turn_count": game_state.turn_count,
+                    "game_time": game_state.game_time,
+                    "save_version": game_state.save_version,
+                    "migration_history": game_state.migration_history if isinstance(game_state.migration_history, list) else [],
+                    "player": {
+                        "id": game_state.player.id,
+                        "name": game_state.player.name,
+                        "level": game_state.player.stats.level,
+                        "position": game_state.player.position,
+                    },
+                },
+                "trace": trace,
+                "llm_debug": llm_debug,
+            }
+            return package
+        except Exception as e:
+            logger.error(f"Failed to export debug package: {e}")
             return {
                 "success": False,
                 "error": str(e)

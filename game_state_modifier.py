@@ -4,6 +4,8 @@ Labyrinthia AI - 游戏状态修改器
 """
 
 import logging
+import copy
+from collections import deque
 from typing import Dict, List, Optional, Any, Tuple
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -15,6 +17,7 @@ from data_models import (
 )
 from config import config
 from entity_manager import entity_manager
+from generation_contract import resolve_generation_contract
 
 
 logger = logging.getLogger(__name__)
@@ -30,6 +33,7 @@ class ModificationType(Enum):
     MONSTER_ABILITIES = "monster_abilities"  # 新增: 怪物六维属性修改
     QUEST = "quest"
     GAME_STATE = "game_state"
+    PATCH = "patch"
 
 
 @dataclass
@@ -79,6 +83,27 @@ class ModificationResult:
         }
 
 
+@dataclass
+class PatchExecutionResult:
+    """Patch 执行结果"""
+    success: bool = True
+    rollback_applied: bool = False
+    accepted_patches: List[Dict[str, Any]] = field(default_factory=list)
+    rejected_patches: List[Dict[str, Any]] = field(default_factory=list)
+    rollback_trace: List[Dict[str, Any]] = field(default_factory=list)
+    diagnostics: List[Dict[str, Any]] = field(default_factory=list)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "success": self.success,
+            "rollback_applied": self.rollback_applied,
+            "accepted_patches": self.accepted_patches,
+            "rejected_patches": self.rejected_patches,
+            "rollback_trace": self.rollback_trace,
+            "diagnostics": self.diagnostics,
+        }
+
+
 class GameStateModifier:
     """
     游戏状态修改器
@@ -94,6 +119,7 @@ class GameStateModifier:
     def __init__(self):
         self.modification_history: List[ModificationRecord] = []
         self.max_history_size = 100
+        self.max_patch_batches = 200
         
     def apply_llm_updates(
         self,
@@ -139,21 +165,19 @@ class GameStateModifier:
                     result.success = False
                     result.errors.extend(map_result.errors)
             
-            # 应用任务更新
-            if "quest_updates" in llm_response:
-                quest_result = self.apply_quest_updates(
-                    game_state,
-                    llm_response["quest_updates"],
-                    source
-                )
-                result.records.extend(quest_result.records)
-                if not quest_result.success:
+            # 应用 patch 批次
+            if "patches" in llm_response and isinstance(llm_response["patches"], list):
+                patch_batch = {
+                    "patches": llm_response["patches"],
+                    "batch_id": llm_response.get("patch_batch_id", ""),
+                    "rollback_mode": llm_response.get("patch_rollback_mode", "full"),
+                    "depends_on_batch": llm_response.get("patch_depends_on_batch", ""),
+                }
+                patch_result = self.apply_patch_batch(game_state, patch_batch, source=source)
+                if not patch_result.success:
                     result.success = False
-                    result.errors.extend(quest_result.errors)
-            
-            # 添加事件到待显示列表
-            if "events" in llm_response and isinstance(llm_response["events"], list):
-                game_state.pending_events.extend(llm_response["events"])
+                    result.errors.append("PATCH_EXECUTION_FAILED")
+                    result.errors.extend([d.get("message", "") for d in patch_result.diagnostics if isinstance(d, dict)])
             
             # 记录到历史
             self._add_to_history(result.records)
@@ -167,46 +191,400 @@ class GameStateModifier:
         
         return result
     
+    def apply_patch_batch(
+        self,
+        game_state: GameState,
+        patch_batch: Dict[str, Any],
+        source: str = "llm_patch",
+    ) -> PatchExecutionResult:
+        """执行 Patch DSL 批次（支持部分/全量回滚）。"""
+        result = PatchExecutionResult(success=True)
+
+        if not isinstance(patch_batch, dict):
+            result.success = False
+            result.diagnostics.append({"code": "PATCH_BATCH_TYPE_ERROR", "message": "patch_batch must be object"})
+            return result
+
+        patches = patch_batch.get("patches")
+        if not isinstance(patches, list):
+            result.success = False
+            result.diagnostics.append({"code": "PATCH_BATCH_FIELD_ERROR", "message": "patches must be list"})
+            return result
+
+        rollback_mode = str(patch_batch.get("rollback_mode", "full")).strip().lower()
+        if rollback_mode not in {"full", "partial"}:
+            rollback_mode = "full"
+
+        batch_id = str(patch_batch.get("batch_id", "")).strip() or f"patch_batch_{datetime.now().isoformat()}"
+
+        expected_prev_patch = str(patch_batch.get("depends_on_batch", "")).strip()
+        current_prev_patch = ""
+        if isinstance(game_state.generation_metrics, dict):
+            current_prev_patch = str(game_state.generation_metrics.get("last_patch_batch_id", "") or "")
+        if expected_prev_patch and current_prev_patch and expected_prev_patch != current_prev_patch:
+            result.success = False
+            result.diagnostics.append(
+                {
+                    "code": "PATCH_BATCH_DEPENDENCY_ERROR",
+                    "message": f"depends_on_batch={expected_prev_patch} but last_patch_batch_id={current_prev_patch}",
+                }
+            )
+            return result
+
+        snapshots: List[Dict[str, Any]] = []
+
+        for idx, patch in enumerate(patches):
+            if not isinstance(patch, dict):
+                result.rejected_patches.append({"index": idx, "reason": "patch must be object", "patch": patch})
+                if rollback_mode == "full":
+                    result.success = False
+                    break
+                continue
+
+            patch_id = str(patch.get("id", f"patch_{idx}"))
+            op = str(patch.get("op", "")).strip().lower()
+            target = str(patch.get("target", "")).strip().lower()
+            intent_reason = str(patch.get("intent_reason", "")).strip()
+            risk_level = str(patch.get("risk_level", "medium")).strip().lower()
+
+            release_stage = str(getattr(config.game, "map_generation_release_stage", "debug") or "debug").strip().lower()
+            if release_stage not in {"debug", "canary", "stable"}:
+                release_stage = "debug"
+            if isinstance(getattr(game_state, "current_map", None), object):
+                meta = (
+                    game_state.current_map.generation_metadata
+                    if isinstance(getattr(game_state.current_map, "generation_metadata", None), dict)
+                    else {}
+                )
+                stage_value = str(meta.get("release_stage", release_stage) or release_stage).strip().lower()
+                if stage_value in {"debug", "canary", "stable"}:
+                    release_stage = stage_value
+
+            disable_high_risk = bool(getattr(config.game, "map_generation_disable_high_risk_patch", True))
+            high_risk_blocked = bool(disable_high_risk and release_stage in {"debug", "canary"})
+            if high_risk_blocked and risk_level in {"high", "critical"}:
+                result.rejected_patches.append(
+                    {
+                        "id": patch_id,
+                        "reason": "high_risk_patch_blocked_by_config",
+                        "risk_level": risk_level,
+                        "release_stage": release_stage,
+                    }
+                )
+                if rollback_mode == "full":
+                    result.success = False
+                    break
+                continue
+
+            if op not in {"add", "remove", "update"}:
+                result.rejected_patches.append({"id": patch_id, "reason": "unsupported op", "op": op})
+                if rollback_mode == "full":
+                    result.success = False
+                    break
+                continue
+            if target not in {"tile", "event", "monster", "quest_binding", "room", "corridor"}:
+                result.rejected_patches.append({"id": patch_id, "reason": "unsupported target", "target": target})
+                if rollback_mode == "full":
+                    result.success = False
+                    break
+                continue
+
+            snapshot = self._make_patch_snapshot(game_state)
+            snapshots.append({"id": patch_id, "snapshot": snapshot})
+
+            patch_apply = self._apply_single_patch(game_state, patch, source)
+            patch_apply["intent_reason"] = intent_reason
+            patch_apply["risk_level"] = risk_level
+
+            if patch_apply.get("success"):
+                result.accepted_patches.append(patch_apply)
+            else:
+                result.rejected_patches.append(patch_apply)
+                if rollback_mode == "partial":
+                    if snapshots:
+                        latest = snapshots[-1]
+                        self._restore_patch_snapshot(game_state, latest["snapshot"])
+                        result.rollback_trace.append({"mode": "partial", "patch_id": patch_id, "rolled_back": True})
+                else:
+                    result.success = False
+                    break
+
+        if not result.success and rollback_mode == "full":
+            if snapshots:
+                first_snapshot = snapshots[0]["snapshot"]
+                self._restore_patch_snapshot(game_state, first_snapshot)
+                result.rollback_applied = True
+                result.rollback_trace.append({"mode": "full", "rolled_back": True, "batch_id": batch_id})
+
+        # 复检
+        if result.success:
+            post_checks = self._run_patch_post_checks(game_state)
+            failed_checks = [item for item in post_checks if not item.get("ok", False)]
+            if failed_checks:
+                result.success = False
+                result.diagnostics.extend(
+                    [{"code": "PATCH_POST_CHECK_FAILED", "message": item.get("name", "unknown")} for item in failed_checks]
+                )
+                if snapshots:
+                    first_snapshot = snapshots[0]["snapshot"]
+                    self._restore_patch_snapshot(game_state, first_snapshot)
+                    result.rollback_applied = True
+                    result.rollback_trace.append({"mode": "post_check", "rolled_back": True, "batch_id": batch_id})
+
+        if not isinstance(game_state.generation_metrics, dict):
+            game_state.generation_metrics = {}
+        patch_history = game_state.generation_metrics.get("patch_batches")
+        if not isinstance(patch_history, list):
+            patch_history = []
+        patch_history.append(
+            {
+                "batch_id": batch_id,
+                "source": source,
+                "success": result.success,
+                "rollback_applied": result.rollback_applied,
+                "accepted_count": len(result.accepted_patches),
+                "rejected_count": len(result.rejected_patches),
+                "rollback_trace": result.rollback_trace,
+                "diagnostics": result.diagnostics,
+                "timestamp": datetime.now().isoformat(),
+            }
+        )
+        if len(patch_history) > self.max_patch_batches:
+            patch_history = patch_history[-self.max_patch_batches:]
+        game_state.generation_metrics["patch_batches"] = patch_history
+        game_state.generation_metrics["last_patch_batch_id"] = batch_id
+
+        return result
+
+    def _apply_single_patch(self, game_state: GameState, patch: Dict[str, Any], source: str) -> Dict[str, Any]:
+        patch_id = str(patch.get("id", ""))
+        op = str(patch.get("op", "")).strip().lower()
+        target = str(patch.get("target", "")).strip().lower()
+
+        try:
+            if target in {"tile", "event", "monster"}:
+                payload = patch.get("payload") if isinstance(patch.get("payload"), dict) else {}
+                if target in {"tile", "event"}:
+                    tile_key = str(patch.get("tile", "")).strip()
+                    if "," not in tile_key:
+                        return {"id": patch_id, "success": False, "reason": "invalid tile key"}
+                    tile_patch = payload if payload else {}
+                    if target == "event":
+                        tile_patch = {
+                            "has_event": bool(payload.get("has_event", True)),
+                            "event_type": payload.get("event_type", "story"),
+                            "event_data": payload.get("event_data", {}),
+                            "is_event_hidden": bool(payload.get("is_event_hidden", True)),
+                            "event_triggered": bool(payload.get("event_triggered", False)),
+                        }
+                    if op == "remove":
+                        tile_patch = {
+                            "has_event": False,
+                            "event_type": "",
+                            "event_data": {},
+                            "event_triggered": False,
+                        }
+                    map_updates = {"tiles": {tile_key: tile_patch}}
+                    apply_result = self.apply_map_updates(game_state, map_updates, source=f"{source}:patch:{patch_id}")
+                    return {
+                        "id": patch_id,
+                        "success": apply_result.success,
+                        "target": target,
+                        "op": op,
+                        "errors": apply_result.errors,
+                    }
+
+                if target == "monster":
+                    tile_key = str(patch.get("tile", "")).strip()
+                    if "," not in tile_key:
+                        return {"id": patch_id, "success": False, "reason": "invalid tile key"}
+                    monster_payload = dict(payload)
+                    monster_payload.setdefault("action", "add" if op == "add" else ("remove" if op == "remove" else "update"))
+                    map_updates = {"tiles": {tile_key: {"monster": monster_payload}}}
+                    apply_result = self.apply_map_updates(game_state, map_updates, source=f"{source}:patch:{patch_id}")
+                    return {
+                        "id": patch_id,
+                        "success": apply_result.success,
+                        "target": target,
+                        "op": op,
+                        "errors": apply_result.errors,
+                    }
+
+            if target == "quest_binding":
+                binding = patch.get("payload") if isinstance(patch.get("payload"), dict) else {}
+                if not isinstance(game_state.generation_metrics, dict):
+                    game_state.generation_metrics = {}
+                bindings = game_state.generation_metrics.get("quest_bindings")
+                if not isinstance(bindings, list):
+                    bindings = []
+                if op == "remove":
+                    qid = str(binding.get("quest_monster_id", "") or "")
+                    bindings = [b for b in bindings if str(b.get("quest_monster_id", "")) != qid]
+                else:
+                    bindings.append(binding)
+                game_state.generation_metrics["quest_bindings"] = bindings
+                return {"id": patch_id, "success": True, "target": target, "op": op}
+
+            return {"id": patch_id, "success": False, "reason": "unhandled target"}
+        except Exception as exc:
+            return {"id": patch_id, "success": False, "reason": str(exc)}
+
+    def _make_patch_snapshot(self, game_state: GameState) -> Dict[str, Any]:
+        return {
+            "tiles": copy.deepcopy(game_state.current_map.tiles),
+            "monsters": copy.deepcopy(game_state.monsters),
+            "quests": copy.deepcopy(game_state.quests),
+            "pending_events": copy.deepcopy(game_state.pending_events),
+            "generation_metrics": copy.deepcopy(game_state.generation_metrics),
+        }
+
+    def _restore_patch_snapshot(self, game_state: GameState, snapshot: Dict[str, Any]) -> None:
+        game_state.current_map.tiles = snapshot.get("tiles", {})
+        game_state.monsters = snapshot.get("monsters", [])
+        game_state.quests = snapshot.get("quests", [])
+        game_state.pending_events = snapshot.get("pending_events", [])
+        game_state.generation_metrics = snapshot.get("generation_metrics", {})
+
+    def _run_patch_post_checks(self, game_state: GameState) -> List[Dict[str, Any]]:
+        checks: List[Dict[str, Any]] = []
+        checks.append({"name": "connectivity", "ok": self._check_map_connectivity(game_state)})
+        checks.append({"name": "stairs_legality", "ok": self._check_stairs_legality(game_state)})
+        checks.append({"name": "mandatory_reachable", "ok": self._check_mandatory_reachable(game_state)})
+        checks.append({"name": "monster_event_conflict", "ok": self._check_monster_event_conflict(game_state)})
+        checks.append({"name": "progress_budget_valid", "ok": self._check_progress_budget_valid(game_state)})
+        return checks
+
+    def _check_map_connectivity(self, game_state: GameState) -> bool:
+        walkable = {
+            pos for pos, tile in game_state.current_map.tiles.items()
+            if tile.terrain in {TerrainType.FLOOR, TerrainType.DOOR, TerrainType.TRAP, TerrainType.TREASURE, TerrainType.STAIRS_UP, TerrainType.STAIRS_DOWN}
+        }
+        if not walkable:
+            return False
+        start = next(iter(walkable))
+        visited = set([start])
+        queue = deque([start])
+        while queue:
+            x, y = queue.popleft()
+            for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                nxt = (x + dx, y + dy)
+                if nxt in walkable and nxt not in visited:
+                    visited.add(nxt)
+                    queue.append(nxt)
+        return len(visited) == len(walkable)
+
+    def _check_stairs_legality(self, game_state: GameState) -> bool:
+        depth = int(game_state.current_map.depth or 1)
+        max_floor = int(getattr(config.game, "max_quest_floors", 3) or 3)
+        has_up = any(tile.terrain == TerrainType.STAIRS_UP for tile in game_state.current_map.tiles.values())
+        has_down = any(tile.terrain == TerrainType.STAIRS_DOWN for tile in game_state.current_map.tiles.values())
+        if depth <= 1 and has_up:
+            return False
+        if depth >= max_floor and has_down:
+            return False
+        return True
+
+    def _check_mandatory_reachable(self, game_state: GameState) -> bool:
+        event_tiles = [
+            pos for pos, tile in game_state.current_map.tiles.items()
+            if tile.has_event and isinstance(tile.event_data, dict) and tile.event_data.get("is_mandatory")
+        ]
+        if not event_tiles:
+            return True
+        walkable = {
+            pos for pos, tile in game_state.current_map.tiles.items()
+            if tile.terrain in {TerrainType.FLOOR, TerrainType.DOOR, TerrainType.TRAP, TerrainType.TREASURE, TerrainType.STAIRS_UP, TerrainType.STAIRS_DOWN}
+        }
+        if not walkable:
+            return False
+        start = next(iter(walkable))
+        visited = set([start])
+        queue = deque([start])
+        while queue:
+            x, y = queue.popleft()
+            for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                nxt = (x + dx, y + dy)
+                if nxt in walkable and nxt not in visited:
+                    visited.add(nxt)
+                    queue.append(nxt)
+        return all(pos in visited for pos in event_tiles)
+
+    def _check_monster_event_conflict(self, game_state: GameState) -> bool:
+        for tile in game_state.current_map.tiles.values():
+            if tile.character_id and tile.has_event:
+                return False
+        return True
+
+    def _check_progress_budget_valid(self, game_state: GameState) -> bool:
+        active_quest = next((q for q in game_state.quests if q.is_active and not q.is_completed), None)
+        if not active_quest:
+            return True
+
+        plan = active_quest.progress_plan if isinstance(getattr(active_quest, "progress_plan", None), dict) else {}
+        budget = plan.get("budget") if isinstance(plan.get("budget"), dict) else {}
+        if not budget:
+            return True
+
+        buckets = ["events", "quest_monsters", "map_transition", "exploration_buffer"]
+        consumed: Dict[str, float] = {k: 0.0 for k in buckets}
+
+        ledger = active_quest.progress_ledger if isinstance(getattr(active_quest, "progress_ledger", None), list) else []
+        for entry in ledger:
+            if not isinstance(entry, dict):
+                continue
+            bucket = str(entry.get("bucket", "") or "")
+            if bucket not in consumed:
+                continue
+            try:
+                consumed[bucket] += float(entry.get("increment", 0.0) or 0.0)
+            except (TypeError, ValueError):
+                return False
+
+        for key in buckets:
+            try:
+                budget_value = float(budget.get(key, 0.0) or 0.0)
+            except (TypeError, ValueError):
+                return False
+            if budget_value < 0.0:
+                return False
+            if consumed[key] - budget_value > 1e-6:
+                return False
+
+        return True
+
     def apply_player_updates(
         self,
         game_state: GameState,
         player_updates: Dict[str, Any],
-        source: str = "unknown"
+        source: str = "unknown",
     ) -> ModificationResult:
-        """
-        应用玩家状态更新
-
-        Args:
-            game_state: 游戏状态
-            player_updates: 玩家更新数据 (支持stats和abilities)
-            source: 修改来源
-
-        Returns:
-            ModificationResult: 修改结果
-        """
+        """应用玩家更新"""
         result = ModificationResult()
         player = game_state.player
 
+        if not isinstance(player_updates, dict):
+            result.success = False
+            result.errors.append("player_updates 必须是对象")
+            return result
+
         try:
-            # 应用六维属性更新 (新增)
             if "abilities" in player_updates:
                 abilities_updates = player_updates["abilities"]
                 changes = {}
 
-                for ability_name, value in abilities_updates.items():
-                    if hasattr(player.abilities, ability_name):
-                        old_value = getattr(player.abilities, ability_name)
+                if isinstance(abilities_updates, dict):
+                    for ability_name, value in abilities_updates.items():
+                        if hasattr(player.abilities, ability_name):
+                            old_value = getattr(player.abilities, ability_name)
+                            success = entity_manager.set_ability_score(player, ability_name, value)
 
-                        # 使用entity_manager设置属性值 (自动验证和重新计算衍生属性)
-                        success = entity_manager.set_ability_score(player, ability_name, value)
-
-                        if success:
-                            new_value = getattr(player.abilities, ability_name)
-                            changes[ability_name] = {
-                                "old": old_value,
-                                "new": new_value
-                            }
-                            logger.debug(f"Updated player ability {ability_name}: {old_value} -> {new_value}")
+                            if success:
+                                new_value = getattr(player.abilities, ability_name)
+                                changes[ability_name] = {
+                                    "old": old_value,
+                                    "new": new_value
+                                }
+                                logger.debug(f"Updated player ability {ability_name}: {old_value} -> {new_value}")
 
                 if changes:
                     record = ModificationRecord(
@@ -218,41 +596,38 @@ class GameStateModifier:
                     )
                     result.add_record(record)
 
-            # 应用衍生属性更新
             if "stats" in player_updates:
                 stats_updates = player_updates["stats"]
                 changes = {}
 
-                for stat_name, value in stats_updates.items():
-                    if stat_name in {"shield", "temporary_hp"}:
-                        runtime = self._get_combat_runtime(player)
-                        old_value = int(runtime.get(stat_name, 0) or 0)
-                        validated_value = self._validate_stat_value(stat_name, value, player.stats)
-                        runtime[stat_name] = validated_value
-                        # 兼容镜像到旧字段
-                        setattr(player.stats, stat_name, validated_value)
-                        changes[stat_name] = {
-                            "old": old_value,
-                            "new": validated_value
-                        }
-                        logger.debug(f"Updated player combat_runtime {stat_name}: {old_value} -> {validated_value}")
-                        continue
+                if isinstance(stats_updates, dict):
+                    for stat_name, value in stats_updates.items():
+                        if stat_name in {"shield", "temporary_hp"}:
+                            runtime = self._get_combat_runtime(player)
+                            old_value = int(runtime.get(stat_name, 0) or 0)
+                            validated_value = self._validate_stat_value(stat_name, value, player.stats)
+                            runtime[stat_name] = validated_value
+                            setattr(player.stats, stat_name, validated_value)
+                            changes[stat_name] = {
+                                "old": old_value,
+                                "new": validated_value
+                            }
+                            logger.debug(f"Updated player combat_runtime {stat_name}: {old_value} -> {validated_value}")
+                            continue
 
-                    if hasattr(player.stats, stat_name):
-                        old_value = getattr(player.stats, stat_name)
+                        if hasattr(player.stats, stat_name):
+                            old_value = getattr(player.stats, stat_name)
+                            validated_value = self._validate_stat_value(
+                                stat_name, value, player.stats
+                            )
 
-                        # 验证并应用属性变化
-                        validated_value = self._validate_stat_value(
-                            stat_name, value, player.stats
-                        )
+                            setattr(player.stats, stat_name, validated_value)
+                            changes[stat_name] = {
+                                "old": old_value,
+                                "new": validated_value
+                            }
 
-                        setattr(player.stats, stat_name, validated_value)
-                        changes[stat_name] = {
-                            "old": old_value,
-                            "new": validated_value
-                        }
-
-                        logger.debug(f"Updated player stat {stat_name}: {old_value} -> {validated_value}")
+                            logger.debug(f"Updated player stat {stat_name}: {old_value} -> {validated_value}")
 
                 if changes:
                     record = ModificationRecord(
@@ -263,14 +638,13 @@ class GameStateModifier:
                         changes=changes
                     )
                     result.add_record(record)
-            
-            # 应用物品添加
+
             if "add_items" in player_updates:
                 for item_data in player_updates["add_items"]:
                     if isinstance(item_data, dict):
                         item = self._create_item_from_data(item_data)
                         player.inventory.append(item)
-                        
+
                         record = ModificationRecord(
                             modification_type=ModificationType.PLAYER_INVENTORY,
                             timestamp=datetime.now(),
@@ -279,23 +653,22 @@ class GameStateModifier:
                             changes={"action": "add", "item": item.to_dict()}
                         )
                         result.add_record(record)
-                        
+
                         logger.info(f"Added item {item.name} to player inventory")
-            
-            # 应用物品移除
+
             if "remove_items" in player_updates:
                 items_to_remove = player_updates["remove_items"]
                 removed_items = []
-                
-                for item_name in items_to_remove:
-                    # 查找并移除物品
-                    for item in player.inventory[:]:
-                        if item.name == item_name:
-                            player.inventory.remove(item)
-                            removed_items.append(item.to_dict())
-                            logger.info(f"Removed item {item_name} from player inventory")
-                            break
-                
+
+                if isinstance(items_to_remove, list):
+                    for item_name in items_to_remove:
+                        for item in player.inventory[:]:
+                            if item.name == item_name:
+                                player.inventory.remove(item)
+                                removed_items.append(item.to_dict())
+                                logger.info(f"Removed item {item_name} from player inventory")
+                                break
+
                 if removed_items:
                     record = ModificationRecord(
                         modification_type=ModificationType.PLAYER_INVENTORY,
@@ -305,7 +678,7 @@ class GameStateModifier:
                         changes={"action": "remove", "items": removed_items}
                     )
                     result.add_record(record)
-            
+
         except Exception as e:
             logger.error(f"Error applying player updates: {e}")
             error_record = ModificationRecord(
@@ -319,7 +692,6 @@ class GameStateModifier:
             )
             result.add_record(error_record)
 
-        # 同步 combat_runtime 与 legacy stats 字段，确保旧逻辑兼容
         self._sync_legacy_defense_fields(player)
         return result
 
@@ -334,6 +706,15 @@ class GameStateModifier:
         current_map = game_state.current_map
 
         try:
+            contract = resolve_generation_contract().contract
+            map_update_rules = contract.get("map_updates", {}) if isinstance(contract.get("map_updates"), dict) else {}
+            validation_errors = self._validate_map_updates_contract(map_updates, map_update_rules)
+            for error in validation_errors:
+                result.success = False
+                result.errors.append(error)
+            if validation_errors:
+                return result
+
             tile_updates = map_updates.get("tiles", {})
 
             for tile_key, tile_data in tile_updates.items():
@@ -482,6 +863,48 @@ class GameStateModifier:
             result.errors.append(f"应用任务更新时发生错误: {str(e)}")
 
         return result
+
+    def _validate_map_updates_contract(self, map_updates: Dict[str, Any], rules: Dict[str, Any]) -> List[str]:
+        errors: List[str] = []
+        if not isinstance(map_updates, dict):
+            return ["MAP_UPDATES_CONTRACT_TYPE_ERROR: map_updates must be object"]
+
+        allowed_root_keys = rules.get("allowed_root_keys", ["tiles"])
+        if not isinstance(allowed_root_keys, list) or not allowed_root_keys:
+            allowed_root_keys = ["tiles"]
+
+        unexpected_roots = [key for key in map_updates.keys() if key not in allowed_root_keys]
+        if unexpected_roots:
+            errors.append(f"MAP_UPDATES_CONTRACT_UNAUTHORIZED_FIELD: root keys not allowed {unexpected_roots}")
+
+        tiles_payload = map_updates.get("tiles")
+        if not isinstance(tiles_payload, dict):
+            errors.append("MAP_UPDATES_CONTRACT_TYPE_ERROR: tiles must be object")
+            return errors
+
+        allowed_tile_fields = rules.get("allowed_tile_fields", [])
+        if not isinstance(allowed_tile_fields, list) or not allowed_tile_fields:
+            allowed_tile_fields = [
+                "terrain", "items", "monster", "has_event", "event_type", "event_data",
+                "is_event_hidden", "event_triggered", "items_collected", "trap_detected",
+                "trap_disarmed", "room_type", "room_id", "is_explored", "is_visible", "character_id"
+            ]
+        allowed_tile_field_set = set(allowed_tile_fields)
+
+        for tile_key, tile_data in tiles_payload.items():
+            if not isinstance(tile_key, str) or "," not in tile_key:
+                errors.append(f"MAP_UPDATES_CONTRACT_FIELD_MISMATCH: invalid tile key {tile_key}")
+                continue
+            if not isinstance(tile_data, dict):
+                errors.append(f"MAP_UPDATES_CONTRACT_TYPE_ERROR: tile payload must be object for {tile_key}")
+                continue
+            unexpected_tile_fields = [field for field in tile_data.keys() if field not in allowed_tile_field_set]
+            if unexpected_tile_fields:
+                errors.append(
+                    f"MAP_UPDATES_CONTRACT_UNAUTHORIZED_FIELD: tile {tile_key} has forbidden fields {unexpected_tile_fields}"
+                )
+
+        return errors
 
     def _handle_monster_update(
         self,

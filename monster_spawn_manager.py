@@ -11,6 +11,7 @@ import asyncio
 from data_models import Monster, GameState, GameMap, Quest, TerrainType
 from llm_service import llm_service
 from config import config
+from generation_contract import resolve_generation_contract
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +22,7 @@ class MonsterSpawnManager:
     def __init__(self):
         """初始化怪物生成管理器"""
         self.spawn_history = []  # 生成历史记录
+        self.max_spawn_audit = 200
         
     async def generate_encounter_monsters(
         self, 
@@ -128,6 +130,9 @@ class MonsterSpawnManager:
             return quest_monsters
 
         current_depth = game_map.depth
+        max_floor = max(getattr(config.game, "max_quest_floors", 3), max(getattr(active_quest, "target_floors", []) or [current_depth]))
+        policy = self._build_monster_customization_policy()
+        spawn_audit: List[Dict[str, Any]] = []
 
         # 【修复】筛选适合当前楼层的专属怪物（兼容字典和对象）
         suitable_monsters = []
@@ -146,6 +151,11 @@ class MonsterSpawnManager:
                 spawn_condition = self._get_monster_attr(monster_data, 'spawn_condition', '')
                 location_hint = self._get_monster_attr(monster_data, 'location_hint', '')
                 monster_id = self._get_monster_attr(monster_data, 'id', None)
+                is_final_objective = bool(self._get_monster_attr(monster_data, 'is_final_objective', False))
+                phase_count = int(self._get_monster_attr(monster_data, 'phase_count', 1) or 1)
+                special_status_pack = self._get_monster_attr(monster_data, 'special_status_pack', [])
+                if not isinstance(special_status_pack, list):
+                    special_status_pack = []
 
                 # 使用LLM生成具体的怪物实例
                 context = f"""
@@ -159,6 +169,9 @@ class MonsterSpawnManager:
                 - 生成条件：{spawn_condition}
                 - 位置提示：{location_hint}
                 - 当前楼层：{current_depth}
+                - 最终目标怪：{is_final_objective}
+                - 阶段数：{phase_count}
+                - 特殊状态包：{special_status_pack}
 
                 **重要**：请生成一个符合这些要求的怪物，确保：
                 1. 怪物名称必须是纯中文（如模板中指定的名称）
@@ -176,9 +189,33 @@ class MonsterSpawnManager:
                     monster.name = monster_name  # 确保名称匹配
                     monster.is_boss = is_boss
                     monster.quest_monster_id = monster_id
-                    quest_monsters.append(monster)
+                    setattr(monster, "special_status_pack", special_status_pack)
+                    setattr(monster, "phase_count", max(1, phase_count))
+                    setattr(monster, "is_final_objective", is_final_objective)
 
-                    logger.info(f"Generated quest monster: {monster.name} (CR: {challenge_rating}, Boss: {is_boss})")
+                    adjusted_monster, adjustment_report = self._apply_monster_guardrails(
+                        monster=monster,
+                        player_level=max(1, int(game_state.player.stats.level)),
+                        current_floor=max(1, int(current_depth)),
+                        max_floor=max_floor,
+                        is_final_objective=is_final_objective,
+                        policy=policy,
+                    )
+
+                    quest_monsters.append(adjusted_monster)
+                    spawn_audit.append(
+                        {
+                            "quest_monster_id": monster_id,
+                            "name": adjusted_monster.name,
+                            "current_floor": current_depth,
+                            "is_boss": is_boss,
+                            "is_final_objective": is_final_objective,
+                            "policy": policy,
+                            "adjustment_report": adjustment_report,
+                        }
+                    )
+
+                    logger.info(f"Generated quest monster: {adjusted_monster.name} (CR: {challenge_rating}, Boss: {is_boss})")
 
             except Exception as e:
                 logger.error(f"Failed to generate quest monster {self._get_monster_attr(monster_data, 'name', 'unknown')}: {e}")
@@ -186,6 +223,7 @@ class MonsterSpawnManager:
         # 记录生成历史
         self._record_spawn(quest_monsters, "quest", quest_title if active_quest else "unknown")
 
+        self._attach_spawn_audit(game_state, spawn_audit)
         return quest_monsters
     
     async def generate_random_monster_nearby(
@@ -374,6 +412,142 @@ class MonsterSpawnManager:
             "by_type": by_type,
             "average_cr": round(total_cr / len(self.spawn_history), 2)
         }
+
+
+    def _build_monster_customization_policy(self) -> Dict[str, Any]:
+        return {
+            "llm_allowed": ["name", "description", "tags", "behavior"],
+            "llm_guarded": ["hp", "ac", "damage", "status_effects", "resistances", "skills"],
+            "local_only": ["spawn_cap", "same_screen_cap", "cross_floor_spawn_limit", "combat_resource_cap"],
+            "status_whitelist": ["burn", "curse", "shield", "summon"],
+            "status_turn_cap": 6,
+        }
+
+    def _compute_monster_power_budget(self, player_level: int, current_floor: int, max_floor: int) -> Dict[str, float]:
+        level_factor = max(1.0, float(player_level))
+        floor_factor = max(1.0, float(current_floor))
+        endgame_bonus = 1.35 if current_floor >= max_floor else 1.0
+        hp_cap = max(30.0, level_factor * 40.0 * floor_factor * 0.7 * endgame_bonus)
+        ac_cap = min(45.0, 10.0 + level_factor * 0.9 + floor_factor * 0.8)
+        damage_cap = max(6.0, level_factor * 7.0 * endgame_bonus)
+        return {
+            "hp_cap": hp_cap,
+            "ac_cap": ac_cap,
+            "damage_cap": damage_cap,
+        }
+
+    def _apply_monster_guardrails(
+        self,
+        monster: Monster,
+        player_level: int,
+        current_floor: int,
+        max_floor: int,
+        is_final_objective: bool,
+        policy: Dict[str, Any],
+    ) -> Tuple[Monster, Dict[str, Any]]:
+        budget = self._compute_monster_power_budget(player_level, current_floor, max_floor)
+        report: Dict[str, Any] = {
+            "budget": budget,
+            "adjustments": [],
+            "policy": policy,
+        }
+
+        hp = float(getattr(monster.stats, "max_hp", 1) or 1)
+        ac = float(getattr(monster.stats, "ac", 10) or 10)
+
+        estimated_damage = float(max(1.0, getattr(monster.stats, "level", 1) * 2.5))
+        damage_over_budget = estimated_damage > budget["damage_cap"]
+        if damage_over_budget:
+            old_level = float(getattr(monster.stats, "level", 1) or 1)
+            new_level = max(1, int(budget["damage_cap"] // 2.5))
+            monster.stats.level = new_level
+            estimated_damage = float(max(1.0, getattr(monster.stats, "level", 1) * 2.5))
+            damage_over_budget = estimated_damage > budget["damage_cap"]
+            report["adjustments"].append(
+                {
+                    "field": "damage",
+                    "old": old_level,
+                    "new": new_level,
+                    "reason": "damage_over_budget_auto_downgrade",
+                }
+            )
+
+        ac_over_budget = ac > budget["ac_cap"]
+        power_budget_pass = (not damage_over_budget) and (not ac_over_budget)
+
+        if hp > budget["hp_cap"]:
+            allow_high_hp = (
+                hp >= 666.0
+                and is_final_objective
+                and current_floor >= max_floor
+                and power_budget_pass
+            )
+            if not allow_high_hp:
+                old_hp = hp
+                hp = budget["hp_cap"]
+                monster.stats.max_hp = int(hp)
+                monster.stats.hp = min(monster.stats.hp, monster.stats.max_hp)
+                report["adjustments"].append(
+                    {
+                        "field": "hp",
+                        "old": old_hp,
+                        "new": hp,
+                        "reason": "hp_over_budget_auto_downgrade",
+                    }
+                )
+            else:
+                report["adjustments"].append(
+                    {
+                        "field": "hp",
+                        "old": hp,
+                        "new": hp,
+                        "reason": "high_hp_allowed_final_objective",
+                    }
+                )
+
+        if ac_over_budget:
+            old_ac = ac
+            ac = budget["ac_cap"]
+            monster.stats.ac = int(ac)
+            report["adjustments"].append(
+                {
+                    "field": "ac",
+                    "old": old_ac,
+                    "new": ac,
+                    "reason": "ac_over_budget_auto_downgrade",
+                }
+            )
+
+        allowed_status = set(policy.get("status_whitelist", []))
+        status_pack = getattr(monster, "special_status_pack", [])
+        if isinstance(status_pack, list):
+            filtered = [str(s).strip() for s in status_pack if str(s).strip() in allowed_status]
+            if len(filtered) != len(status_pack):
+                report["adjustments"].append(
+                    {
+                        "field": "special_status_pack",
+                        "old": status_pack,
+                        "new": filtered,
+                        "reason": "status_whitelist_filtered",
+                    }
+                )
+            setattr(monster, "special_status_pack", filtered[: policy.get("status_turn_cap", 6)])
+
+        report["power_budget_pass"] = power_budget_pass
+        return monster, report
+
+    def _attach_spawn_audit(self, game_state: GameState, spawn_audit: List[Dict[str, Any]]) -> None:
+        if not isinstance(spawn_audit, list):
+            return
+        if not isinstance(game_state.generation_metrics, dict):
+            game_state.generation_metrics = {}
+        history = game_state.generation_metrics.get("spawn_audit")
+        if not isinstance(history, list):
+            history = []
+        history.extend(spawn_audit)
+        if len(history) > self.max_spawn_audit:
+            history = history[-self.max_spawn_audit:]
+        game_state.generation_metrics["spawn_audit"] = history
 
 
 # 全局怪物生成管理器实例

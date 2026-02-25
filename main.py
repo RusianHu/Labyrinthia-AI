@@ -2808,6 +2808,18 @@ if config.game.debug_mode:
             logger.error(f"Get LLM debug info error: {e}")
             return {"success": False, "error": str(e)}
 
+    @app.get("/api/debug/generation-trace/{game_id}")
+    async def debug_get_generation_trace(game_id: str, request: Request, response: Response):
+        """调试：获取地图生成完整链路（蓝图/patch/账本）"""
+        user_id = user_session_manager.get_or_create_user_id(request, response)
+        return debug_api.get_generation_trace(user_id, game_id)
+
+    @app.get("/api/debug/export-package/{game_id}")
+    async def debug_export_debug_package(game_id: str, request: Request, response: Response):
+        """调试：导出完整调试包JSON"""
+        user_id = user_session_manager.get_or_create_user_id(request, response)
+        return debug_api.export_debug_package(user_id, game_id)
+
     # ==================== 测试API端点 ====================
 
     @app.post("/api/test/gemini")

@@ -1095,6 +1095,105 @@ const DebugMethods = {
             console.error('[DEBUG] List saves error:', error);
             this.addMessage(`❌ 获取存档列表失败: ${error.message}`, 'error');
         }
+    },
+
+    async debugLoadGenerationTrace() {
+        if (!this.gameId) {
+            this.addMessage('❌ 请先开始游戏', 'error');
+            return;
+        }
+
+        try {
+            this.showLLMOverlay('正在加载生成链路...');
+            const resp = await fetch(`/api/debug/generation-trace/${this.gameId}`);
+            const data = await resp.json();
+            this.hideLLMOverlay();
+
+            if (!data.success) {
+                this.addMessage(`❌ 生成链路加载失败: ${data.error || '未知错误'}`, 'error');
+                return;
+            }
+
+            this.lastGenerationTrace = data;
+            const requestElement = document.getElementById('debug-request');
+            const responseElement = document.getElementById('debug-response');
+            const gameStateElement = document.getElementById('debug-gamestate');
+
+            if (requestElement) {
+                requestElement.textContent = JSON.stringify(data.generation_metadata || {}, null, 2);
+            }
+            if (responseElement) {
+                responseElement.textContent = JSON.stringify(
+                    {
+                        release_strategy: data.release_strategy || {},
+                        map_generation_metrics: data.map_generation_metrics || {},
+                        map_generation_last: data.map_generation_last || {},
+                        progress_metrics: data.progress_metrics || {},
+                        patch_batches: data.patch_batches || [],
+                        spawn_audit: data.spawn_audit || [],
+                    },
+                    null,
+                    2
+                );
+            }
+            if (gameStateElement) {
+                gameStateElement.textContent = JSON.stringify(
+                    {
+                        quest: data.quest || {},
+                        progress_ledger_tail: Array.isArray(data.quest?.progress_ledger)
+                            ? data.quest.progress_ledger.slice(-20)
+                            : [],
+                    },
+                    null,
+                    2
+                );
+            }
+
+            this.addMessage('🧭 生成链路已加载到调试面板', 'success');
+            const debugPanel = document.getElementById('debug-panel');
+            if (debugPanel && !debugPanel.classList.contains('show')) {
+                debugPanel.classList.add('show');
+            }
+        } catch (error) {
+            this.hideLLMOverlay();
+            console.error('[DEBUG] generation trace load error:', error);
+            this.addMessage(`❌ 生成链路加载异常: ${error.message}`, 'error');
+        }
+    },
+
+    async debugExportDebugPackage() {
+        if (!this.gameId) {
+            this.addMessage('❌ 请先开始游戏', 'error');
+            return;
+        }
+
+        try {
+            this.showLLMOverlay('正在导出调试包...');
+            const resp = await fetch(`/api/debug/export-package/${this.gameId}`);
+            const data = await resp.json();
+            this.hideLLMOverlay();
+
+            if (!data.success) {
+                this.addMessage(`❌ 调试包导出失败: ${data.error || '未知错误'}`, 'error');
+                return;
+            }
+
+            const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `labyrinthia-debug-package-${this.gameId}.json`;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            URL.revokeObjectURL(url);
+
+            this.addMessage('📦 调试包已导出', 'success');
+        } catch (error) {
+            this.hideLLMOverlay();
+            console.error('[DEBUG] export debug package error:', error);
+            this.addMessage(`❌ 导出调试包异常: ${error.message}`, 'error');
+        }
     }
 };
 

@@ -13,6 +13,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 from config import config
 from data_models import GameMap, MapTile, TerrainType
+from generation_contract import CONTRACT_VERSION, contract_hash, extract_contract_request, resolve_generation_contract
 
 
 logger = logging.getLogger(__name__)
@@ -47,6 +48,14 @@ class LocalMapProvider:
         game_map.name = self._build_map_name(theme, game_map.depth)
         game_map.description = self._build_map_description(theme, quest_context)
 
+        provided_contract, requested_contract_version, contract_source_hint = extract_contract_request(quest_context)
+        contract_resolution = resolve_generation_contract(
+            provided_contract=provided_contract,
+            requested_version=requested_contract_version,
+            source_hint=contract_source_hint,
+        )
+        generation_contract = contract_resolution.contract
+
         requirements = self._analyze_quest_requirements(quest_context, game_map.depth)
         rooms = self._build_rooms(width, height, requirements)
 
@@ -56,7 +65,7 @@ class LocalMapProvider:
         self._assign_room_types(rooms, game_map.depth, requirements)
         self._paint_room_types(game_map, rooms)
         stairs = self._place_stairs(game_map, rooms, game_map.depth)
-        self._place_special_terrain(game_map, rooms, stairs)
+        self._place_special_terrain(game_map, rooms, stairs, generation_contract)
         self._place_events(game_map, quest_context)
 
         validation_report = self._validate_and_repair_map(game_map, rooms, stairs, quest_context)
@@ -68,6 +77,11 @@ class LocalMapProvider:
             {
                 "local_requirements": requirements,
                 "local_validation": validation_report,
+                "contract_version": generation_contract.get("contract_version", CONTRACT_VERSION),
+                "contract_hash": contract_hash(generation_contract),
+                "contract_source": contract_resolution.source,
+                "generation_contract": generation_contract,
+                "contract_warnings": contract_resolution.warnings,
             }
         )
 
@@ -349,6 +363,7 @@ class LocalMapProvider:
         game_map: GameMap,
         rooms: List[Dict[str, Any]],
         stairs: Dict[str, Optional[Tuple[int, int]]],
+        generation_contract: Optional[Dict[str, Any]] = None,
     ) -> None:
         blocked = set()
         if stairs.get("up"):
@@ -364,6 +379,12 @@ class LocalMapProvider:
         random.shuffle(floor_tiles)
         trap_count = min(4, max(1, len(floor_tiles) // 30))
         treasure_count = min(3, max(1, len(floor_tiles) // 40))
+
+        contract = generation_contract if isinstance(generation_contract, dict) else resolve_generation_contract().contract
+        safety_rules = contract.get("safety", {}) if isinstance(contract.get("safety"), dict) else {}
+        trap_density_cap = float(safety_rules.get("trap_density_cap", 0.35) or 0.35)
+        trap_density_cap = max(0.0, min(1.0, trap_density_cap))
+        trap_count = min(trap_count, int(len(floor_tiles) * trap_density_cap) if floor_tiles else 0)
 
         for _ in range(trap_count):
             if not floor_tiles:
@@ -847,6 +868,8 @@ class LocalMapProvider:
             "unreachable_targets_after": 0,
             "required_target_count": 0,
             "walkable_tiles": 0,
+            "key_objective_unreachable": False,
+            "mandatory_reachability_ok": True,
             "warnings": [],
         }
 
@@ -871,6 +894,7 @@ class LocalMapProvider:
         unreachable_after = [t for t in targets if t not in reachable]
         report["unreachable_targets_after"] = len(unreachable_after)
         report["connectivity_ok"] = len(unreachable_after) == 0
+        report["key_objective_unreachable"] = len(unreachable_after) > 0
 
         walkable = sum(1 for tile in game_map.tiles.values() if tile.terrain in self.WALKABLE_TERRAINS)
         report["walkable_tiles"] = walkable
@@ -897,8 +921,27 @@ class LocalMapProvider:
             )
             report["mandatory_events_expected"] = mandatory_total
             report["mandatory_events_placed"] = placed_mandatory
+            report["mandatory_reachability_ok"] = bool(report["connectivity_ok"]) and placed_mandatory >= mandatory_total
             if mandatory_total > placed_mandatory:
                 report["warnings"].append("mandatory_events_partially_placed")
+
+        stairs_up_count = sum(1 for t in game_map.tiles.values() if t.terrain == TerrainType.STAIRS_UP)
+        stairs_down_count = sum(1 for t in game_map.tiles.values() if t.terrain == TerrainType.STAIRS_DOWN)
+        max_floor = max(1, int(getattr(config.game, "max_quest_floors", 3) or 3))
+        depth = max(1, int(getattr(game_map, "depth", 1) or 1))
+        stair_violations = 0
+        if depth <= 1 and stairs_up_count > 0:
+            stair_violations += stairs_up_count
+        if depth >= max_floor and stairs_down_count > 0:
+            stair_violations += stairs_down_count
+        report["stairs"] = {
+            "depth": depth,
+            "max_floor": max_floor,
+            "stairs_up": stairs_up_count,
+            "stairs_down": stairs_down_count,
+            "violations": stair_violations,
+            "ok": stair_violations == 0,
+        }
 
         return report
 

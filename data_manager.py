@@ -92,7 +92,8 @@ class DataManager:
 
         # 基础属性
         game_state.id = data.get("id", game_state.id)
-        game_state.save_version = int(data.get("save_version", 1) or 1)
+        loaded_save_version = int(data.get("save_version", 1) or 1)
+        game_state.save_version = loaded_save_version
         game_state.equipment_schema_version = int(data.get("equipment_schema_version", 1) or 1)
         game_state.combat_rule_version = int(data.get("combat_rule_version", 1) or 1)
         game_state.combat_authority_mode = str(
@@ -114,6 +115,9 @@ class DataManager:
         game_state.turn_count = data.get("turn_count", 0)
         game_state.game_time = data.get("game_time", 0)
 
+        if not isinstance(getattr(game_state, "migration_history", None), list):
+            game_state.migration_history = []
+
         # 时间属性
         if created_at := data.get("created_at"):
             game_state.created_at = datetime.fromisoformat(created_at)
@@ -130,6 +134,10 @@ class DataManager:
 
         game_state.combat_rules = data.get("combat_rules", {}) if isinstance(data.get("combat_rules", {}), dict) else {}
         game_state.combat_snapshot = data.get("combat_snapshot", {}) if isinstance(data.get("combat_snapshot", {}), dict) else {}
+        game_state.generation_metrics = data.get("generation_metrics", {}) if isinstance(data.get("generation_metrics", {}), dict) else {}
+        loaded_migration_history = data.get("migration_history", [])
+        if isinstance(loaded_migration_history, list):
+            game_state.migration_history = loaded_migration_history
         self._normalize_combat_rules(game_state)
 
         # 怪物列表
@@ -148,6 +156,21 @@ class DataManager:
         # 待处理事件和特效
         game_state.pending_events = data.get("pending_events", [])
         game_state.pending_effects = data.get("pending_effects", [])
+
+        if loaded_save_version < 3:
+            game_state.migration_history.append(
+                {
+                    "timestamp": datetime.now().isoformat(),
+                    "from_version": loaded_save_version,
+                    "to_version": game_state.save_version,
+                    "changes": [
+                        "backfill_generation_metrics",
+                        "backfill_migration_history",
+                        "map_release_strategy_defaults",
+                    ],
+                }
+            )
+            game_state.save_version = 3
 
         # 地图切换状态
         game_state.pending_map_transition = data.get("pending_map_transition", None)
@@ -510,6 +533,10 @@ class DataManager:
         quest.quest_type = data.get("quest_type", "exploration")
         quest.target_floors = data.get("target_floors", [])
         quest.map_themes = data.get("map_themes", [])
+        quest.progress_plan = data.get("progress_plan", {}) if isinstance(data.get("progress_plan"), dict) else {}
+        quest.completion_guard = data.get("completion_guard", {}) if isinstance(data.get("completion_guard"), dict) else {}
+        quest.progress_ledger = data.get("progress_ledger", []) if isinstance(data.get("progress_ledger"), list) else []
+        quest.defeated_quest_monster_ids = data.get("defeated_quest_monster_ids", []) if isinstance(data.get("defeated_quest_monster_ids"), list) else []
 
         # 奖励物品
         if rewards_data := data.get("rewards"):
@@ -551,6 +578,9 @@ class DataManager:
         monster.description = data.get("description", "")
         monster.challenge_rating = data.get("challenge_rating", 1.0)
         monster.is_boss = data.get("is_boss", False)
+        monster.is_final_objective = data.get("is_final_objective", False)
+        monster.phase_count = int(data.get("phase_count", 1) or 1)
+        monster.special_status_pack = data.get("special_status_pack", []) if isinstance(data.get("special_status_pack"), list) else []
         monster.progress_value = data.get("progress_value", 0.0)
         monster.spawn_condition = data.get("spawn_condition", "")
         monster.location_hint = data.get("location_hint", "")

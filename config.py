@@ -178,6 +178,20 @@ class GameConfig:
     map_generation_provider: str = "llm"  # llm | local
     map_generation_fallback_to_llm: bool = True
     local_map_monster_hints_enabled: bool = True
+    map_generation_release_stage: str = "debug"  # debug | canary | stable
+    map_generation_canary_percent: int = 0  # 0-100
+    map_generation_canary_seed: str = "labyrinthia-map-canary"
+    map_generation_force_legacy_chain: bool = False
+    map_generation_disable_high_risk_patch: bool = True
+    map_unreachable_rate_warn: float = 0.001
+    map_unreachable_rate_block: float = 0.01
+    map_stairs_violation_warn: float = 0.001
+    map_stairs_violation_block: float = 0.01
+    progress_anomaly_rate_warn: float = 0.02
+    progress_anomaly_rate_block: float = 0.1
+    final_objective_guard_block_warn: float = 0.1
+    final_objective_guard_block_block: float = 0.3
+    map_alert_blocking_enabled: bool = False
 
     # 角色设置
     max_player_level: int = 20
@@ -443,6 +457,77 @@ class Config:
 
         if local_hints := os.getenv("LOCAL_MAP_MONSTER_HINTS_ENABLED"):
             self.game.local_map_monster_hints_enabled = local_hints.lower() in ("true", "1", "yes")
+
+        if map_release_stage := os.getenv("MAP_GENERATION_RELEASE_STAGE"):
+            stage = map_release_stage.strip().lower()
+            if stage in ("debug", "canary", "stable"):
+                self.game.map_generation_release_stage = stage
+
+        if map_canary_percent := os.getenv("MAP_GENERATION_CANARY_PERCENT"):
+            try:
+                self.game.map_generation_canary_percent = max(0, min(100, int(map_canary_percent)))
+            except ValueError:
+                pass
+
+        if map_canary_seed := os.getenv("MAP_GENERATION_CANARY_SEED"):
+            self.game.map_generation_canary_seed = map_canary_seed.strip() or self.game.map_generation_canary_seed
+
+        if map_force_legacy := os.getenv("MAP_GENERATION_FORCE_LEGACY_CHAIN"):
+            self.game.map_generation_force_legacy_chain = map_force_legacy.lower() in ("true", "1", "yes")
+
+        if disable_patch := os.getenv("MAP_GENERATION_DISABLE_HIGH_RISK_PATCH"):
+            self.game.map_generation_disable_high_risk_patch = disable_patch.lower() in ("true", "1", "yes")
+
+        if map_unreachable_warn := os.getenv("MAP_UNREACHABLE_RATE_WARN"):
+            try:
+                self.game.map_unreachable_rate_warn = max(0.0, min(1.0, float(map_unreachable_warn)))
+            except ValueError:
+                pass
+
+        if map_unreachable_block := os.getenv("MAP_UNREACHABLE_RATE_BLOCK"):
+            try:
+                self.game.map_unreachable_rate_block = max(0.0, min(1.0, float(map_unreachable_block)))
+            except ValueError:
+                pass
+
+        if map_stairs_warn := os.getenv("MAP_STAIRS_VIOLATION_WARN"):
+            try:
+                self.game.map_stairs_violation_warn = max(0.0, min(1.0, float(map_stairs_warn)))
+            except ValueError:
+                pass
+
+        if map_stairs_block := os.getenv("MAP_STAIRS_VIOLATION_BLOCK"):
+            try:
+                self.game.map_stairs_violation_block = max(0.0, min(1.0, float(map_stairs_block)))
+            except ValueError:
+                pass
+
+        if progress_anomaly_warn := os.getenv("PROGRESS_ANOMALY_RATE_WARN"):
+            try:
+                self.game.progress_anomaly_rate_warn = max(0.0, min(1.0, float(progress_anomaly_warn)))
+            except ValueError:
+                pass
+
+        if progress_anomaly_block := os.getenv("PROGRESS_ANOMALY_RATE_BLOCK"):
+            try:
+                self.game.progress_anomaly_rate_block = max(0.0, min(1.0, float(progress_anomaly_block)))
+            except ValueError:
+                pass
+
+        if final_guard_warn := os.getenv("FINAL_OBJECTIVE_GUARD_BLOCK_WARN"):
+            try:
+                self.game.final_objective_guard_block_warn = max(0.0, min(1.0, float(final_guard_warn)))
+            except ValueError:
+                pass
+
+        if final_guard_block := os.getenv("FINAL_OBJECTIVE_GUARD_BLOCK_BLOCK"):
+            try:
+                self.game.final_objective_guard_block_block = max(0.0, min(1.0, float(final_guard_block)))
+            except ValueError:
+                pass
+
+        if alert_blocking := os.getenv("MAP_ALERT_BLOCKING_ENABLED"):
+            self.game.map_alert_blocking_enabled = alert_blocking.lower() in ("true", "1", "yes")
 
         if trap_narrative_mode := os.getenv("TRAP_NARRATIVE_MODE"):
             mode = trap_narrative_mode.strip().lower()

@@ -4,6 +4,7 @@ Progress manager for controlling game flow and quest progression
 """
 
 import asyncio
+import hashlib
 import logging
 from typing import Dict, List, Optional, Any, Callable, Union
 from dataclasses import dataclass, field
@@ -13,6 +14,7 @@ from datetime import datetime
 from config import config
 from data_models import GameState, Quest, Character, Monster, GameMap
 from llm_service import llm_service
+from generation_contract import resolve_generation_contract
 
 
 logger = logging.getLogger(__name__)
@@ -185,6 +187,28 @@ class ProgressManager:
             if not active_quest:
                 return {"success": False, "message": "没有活跃任务"}
             
+            self._ensure_progress_plan_defaults(active_quest, progress_context)
+            self._ensure_completion_guard_defaults(active_quest)
+
+            # 幂等：同一任务怪重复结算仅生效一次
+            if self._is_duplicate_quest_monster_settlement(active_quest, progress_context.context_data):
+                self._append_progress_ledger(
+                    quest=active_quest,
+                    event_type=progress_context.event_type,
+                    increment=0.0,
+                    old_progress=active_quest.progress_percentage,
+                    new_progress=active_quest.progress_percentage,
+                    context_data=progress_context.context_data,
+                    note="duplicate_quest_monster_settlement_ignored",
+                )
+                return {
+                    "success": True,
+                    "progress_increment": 0.0,
+                    "new_progress": active_quest.progress_percentage,
+                    "quest_completed": active_quest.is_completed,
+                    "message": "重复任务怪结算已忽略",
+                }
+
             # 计算进度增量
             progress_increment = await self._calculate_progress_increment(
                 progress_context, active_quest
@@ -194,7 +218,47 @@ class ProgressManager:
             result = await self._update_quest_progress(
                 progress_context, active_quest, progress_increment
             )
-            
+
+            # 记录进度异常指标
+            anomalies = self._detect_progress_anomalies(progress_context, active_quest, progress_increment)
+            if not isinstance(progress_context.game_state.generation_metrics, dict):
+                progress_context.game_state.generation_metrics = {}
+            metrics = progress_context.game_state.generation_metrics.get("progress_metrics")
+            if not isinstance(metrics, dict):
+                metrics = {
+                    "total_events": 0,
+                    "anomaly_events": 0,
+                    "anomaly_codes": {},
+                    "final_objective_direct_completion": 0,
+                    "final_objective_guard_blocked": 0,
+                    "final_objective_guard_blocked_reasons": {},
+                }
+            metrics["total_events"] = int(metrics.get("total_events", 0) or 0) + 1
+            if anomalies:
+                metrics["anomaly_events"] = int(metrics.get("anomaly_events", 0) or 0) + 1
+                anomaly_codes = metrics.get("anomaly_codes") if isinstance(metrics.get("anomaly_codes"), dict) else {}
+                for code in anomalies:
+                    key = str(code)
+                    anomaly_codes[key] = int(anomaly_codes.get(key, 0) or 0) + 1
+                metrics["anomaly_codes"] = anomaly_codes
+            if bool(progress_context.metadata.get("final_objective_guard_passed", False)):
+                metrics["final_objective_direct_completion"] = int(metrics.get("final_objective_direct_completion", 0) or 0) + 1
+            if bool(progress_context.metadata.get("final_objective_hit", False)) and not bool(progress_context.metadata.get("final_objective_guard_passed", False)):
+                metrics["final_objective_guard_blocked"] = int(metrics.get("final_objective_guard_blocked", 0) or 0) + 1
+                guard_reasons = progress_context.metadata.get("final_objective_guard_reasons")
+                reason_counter = (
+                    metrics.get("final_objective_guard_blocked_reasons")
+                    if isinstance(metrics.get("final_objective_guard_blocked_reasons"), dict)
+                    else {}
+                )
+                if isinstance(guard_reasons, list):
+                    for reason in guard_reasons:
+                        key = str(reason)
+                        reason_counter[key] = int(reason_counter.get(key, 0) or 0) + 1
+                metrics["final_objective_guard_blocked_reasons"] = reason_counter
+            progress_context.game_state.generation_metrics["progress_metrics"] = metrics
+            result["progress_anomalies"] = anomalies
+
             # 执行事件处理器
             await self._execute_event_handlers(progress_context)
             
@@ -224,16 +288,57 @@ class ProgressManager:
         
         # 计算增量
         increment = rule.calculate_progress(
-            context.context_data, 
+            context.context_data,
             quest.progress_percentage
         )
-        
-        return increment
+
+        old_progress = float(quest.progress_percentage or 0.0)
+        guard = quest.completion_guard if isinstance(quest.completion_guard, dict) else {}
+        max_single = float(guard.get("max_single_increment_except_final", 25.0) or 25.0)
+
+        final_objective_hit = False
+        final_objective_guard_passed = False
+        guard_reasons: List[str] = []
+
+        plan = quest.progress_plan if isinstance(getattr(quest, "progress_plan", None), dict) else {}
+        completion_policy = str(plan.get("completion_policy", "aggregate") or "aggregate")
+
+        if context.event_type == ProgressEventType.COMBAT_VICTORY and self._is_final_objective(quest, context.context_data):
+            final_objective_hit = True
+            guard_reasons = self._check_completion_guard(context.game_state, quest, old_progress)
+            final_objective_guard_passed = len(guard_reasons) == 0
+            if final_objective_guard_passed:
+                allow_final_burst = completion_policy in {"single_target_100", "hybrid"}
+                if allow_final_burst:
+                    increment = max(0.0, 100.0 - old_progress)
+                else:
+                    final_objective_guard_passed = False
+                    guard_reasons.append("completion_policy_disallow_final_burst")
+                    increment = min(float(increment), max_single)
+            else:
+                increment = min(float(increment), max_single)
+
+        if not final_objective_hit:
+            increment = min(float(increment), max_single)
+
+        increment = self._apply_budget_guard(context, quest, increment)
+
+        context.metadata["final_objective_hit"] = final_objective_hit
+        context.metadata["final_objective_guard_passed"] = final_objective_guard_passed
+        context.metadata["final_objective_guard_reasons"] = guard_reasons
+        context.metadata["max_single_increment_except_final"] = max_single
+        context.metadata["completion_policy"] = completion_policy
+
+        return max(0.0, float(increment))
     
     async def _update_quest_progress(self, context: ProgressContext, quest: Quest, increment: float) -> Dict[str, Any]:
         """更新任务进度"""
         old_progress = quest.progress_percentage
         new_progress = min(100.0, old_progress + increment)
+
+        final_objective_hit = bool(context.metadata.get("final_objective_hit", False))
+        final_objective_guard_passed = bool(context.metadata.get("final_objective_guard_passed", False))
+        final_objective_guard_reasons = context.metadata.get("final_objective_guard_reasons", [])
 
         # 【新增】检查是否为调试清理（跳过LLM交互）
         is_debug_clear = (
@@ -245,10 +350,21 @@ class ProgressManager:
             # 调试清理模式：仅更新进度数值，不触发LLM交互
             logger.info(f"Debug clear mode: updating progress without LLM interaction ({old_progress:.1f}% -> {new_progress:.1f}%)")
             quest.progress_percentage = new_progress
+            self._mark_quest_monster_defeated(quest, context.context_data)
 
             # 检查任务完成（但不触发LLM）
             if new_progress >= 100.0:
                 await self._complete_quest(context.game_state, quest)
+
+            self._append_progress_ledger(
+                quest=quest,
+                event_type=context.event_type,
+                increment=increment,
+                old_progress=old_progress,
+                new_progress=new_progress,
+                context_data=context.context_data,
+                note="debug_mode",
+            )
 
             return {
                 "success": True,
@@ -269,6 +385,7 @@ class ProgressManager:
             if result:
                 # 更新任务数据
                 quest.progress_percentage = new_progress
+                self._mark_quest_monster_defeated(quest, context.context_data)
                 quest.story_context = result.get("story_context", quest.story_context)
                 quest.llm_notes = result.get("llm_notes", quest.llm_notes)
 
@@ -281,12 +398,35 @@ class ProgressManager:
                     quest.objectives = result["new_objectives"]
                     quest.completed_objectives = [False] * len(quest.objectives)
 
+                note_parts = []
+                if final_objective_hit and final_objective_guard_passed:
+                    note_parts.append("final_objective_direct_completion")
+                if final_objective_hit and not final_objective_guard_passed:
+                    note_parts.append("final_objective_guard_blocked")
+                    if isinstance(final_objective_guard_reasons, list) and final_objective_guard_reasons:
+                        note_parts.append("reasons=" + ",".join([str(r) for r in final_objective_guard_reasons]))
+
+                anomalies = self._detect_progress_anomalies(context, quest, increment)
+                if anomalies:
+                    note_parts.append("anomalies=" + ",".join(anomalies))
+
+                self._append_progress_ledger(
+                    quest=quest,
+                    event_type=context.event_type,
+                    increment=increment,
+                    old_progress=old_progress,
+                    new_progress=new_progress,
+                    context_data=context.context_data,
+                    note=";".join(note_parts),
+                )
+
                 return {
                     "success": True,
                     "progress_increment": increment,
                     "new_progress": new_progress,
                     "quest_completed": quest.is_completed,
                     "story_update": result.get("story_context", ""),
+                    "guard_reasons": final_objective_guard_reasons if final_objective_hit else [],
                     "message": f"任务进度更新: {old_progress:.1f}% -> {new_progress:.1f}%"
                 }
 
@@ -294,18 +434,257 @@ class ProgressManager:
             logger.error(f"Failed to update quest progress with LLM: {e}")
             # 降级处理：仅更新进度数值
             quest.progress_percentage = new_progress
+            self._mark_quest_monster_defeated(quest, context.context_data)
 
             if new_progress >= 100.0:
                 await self._complete_quest(context.game_state, quest)
+
+        note_parts = []
+        if final_objective_hit and final_objective_guard_passed:
+            note_parts.append("final_objective_direct_completion")
+        if final_objective_hit and not final_objective_guard_passed:
+            note_parts.append("final_objective_guard_blocked")
+            if isinstance(final_objective_guard_reasons, list) and final_objective_guard_reasons:
+                note_parts.append("reasons=" + ",".join([str(r) for r in final_objective_guard_reasons]))
+
+        anomalies = self._detect_progress_anomalies(context, quest, increment)
+        if anomalies:
+            note_parts.append("anomalies=" + ",".join(anomalies))
+
+        self._append_progress_ledger(
+            quest=quest,
+            event_type=context.event_type,
+            increment=increment,
+            old_progress=old_progress,
+            new_progress=new_progress,
+            context_data=context.context_data,
+            note=";".join(note_parts),
+        )
 
         return {
             "success": True,
             "progress_increment": increment,
             "new_progress": new_progress,
             "quest_completed": quest.is_completed,
+            "guard_reasons": final_objective_guard_reasons if final_objective_hit else [],
             "message": f"任务进度更新: {old_progress:.1f}% -> {new_progress:.1f}%"
         }
     
+    def _ensure_progress_plan_defaults(self, quest: Quest, context: ProgressContext) -> None:
+        contract = resolve_generation_contract().contract
+        contract_progress = contract.get("progress", {}) if isinstance(contract.get("progress"), dict) else {}
+        existing = quest.progress_plan if isinstance(getattr(quest, "progress_plan", None), dict) else {}
+
+        completion_policy = existing.get("completion_policy")
+        if completion_policy not in {"aggregate", "single_target_100", "hybrid"}:
+            completion_policy = contract_progress.get("completion_policy", "aggregate")
+
+        budget = existing.get("budget") if isinstance(existing.get("budget"), dict) else {}
+
+        def _safe_float(value: Any, default_value: float = 0.0) -> float:
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                return default_value
+
+        normalized_budget = {
+            "events": max(0.0, _safe_float(budget.get("events", 0.0), 0.0)),
+            "quest_monsters": max(0.0, _safe_float(budget.get("quest_monsters", 0.0), 0.0)),
+            "map_transition": max(0.0, _safe_float(budget.get("map_transition", 0.0), 0.0)),
+            "exploration_buffer": max(0.0, _safe_float(budget.get("exploration_buffer", 0.0), 0.0)),
+        }
+
+        if sum(normalized_budget.values()) <= 0.0:
+            normalized_budget = {
+                "events": 30.0,
+                "quest_monsters": 40.0,
+                "map_transition": 20.0,
+                "exploration_buffer": 10.0,
+            }
+
+        quest.progress_plan = {
+            "completion_policy": completion_policy,
+            "budget": normalized_budget,
+            "final_objective_id": str(existing.get("final_objective_id", "") or ""),
+        }
+
+        if not isinstance(getattr(quest, "progress_ledger", None), list):
+            quest.progress_ledger = []
+        if not isinstance(getattr(quest, "defeated_quest_monster_ids", None), list):
+            quest.defeated_quest_monster_ids = []
+
+    def _event_bucket_key(self, event_type: ProgressEventType) -> str:
+        if event_type == ProgressEventType.COMBAT_VICTORY:
+            return "quest_monsters"
+        if event_type == ProgressEventType.STORY_EVENT:
+            return "events"
+        if event_type == ProgressEventType.MAP_TRANSITION:
+            return "map_transition"
+        return "exploration_buffer"
+
+    def _apply_budget_guard(self, context: ProgressContext, quest: Quest, increment: float) -> float:
+        plan = quest.progress_plan if isinstance(getattr(quest, "progress_plan", None), dict) else {}
+        budget = plan.get("budget") if isinstance(plan.get("budget"), dict) else {}
+        if not budget:
+            return max(0.0, float(increment))
+
+        ledger = quest.progress_ledger if isinstance(getattr(quest, "progress_ledger", None), list) else []
+        consumed: Dict[str, float] = {
+            "events": 0.0,
+            "quest_monsters": 0.0,
+            "map_transition": 0.0,
+            "exploration_buffer": 0.0,
+        }
+        for entry in ledger:
+            if not isinstance(entry, dict):
+                continue
+            bucket = str(entry.get("bucket", "") or "")
+            if bucket in consumed:
+                try:
+                    consumed[bucket] += float(entry.get("increment", 0.0) or 0.0)
+                except (TypeError, ValueError):
+                    continue
+
+        bucket = self._event_bucket_key(context.event_type)
+        bucket_budget = float(budget.get(bucket, 0.0) or 0.0)
+        bucket_left = max(0.0, bucket_budget - consumed.get(bucket, 0.0))
+        applied = min(float(increment), bucket_left)
+
+        context.metadata["budget_bucket"] = bucket
+        context.metadata["budget_bucket_total"] = bucket_budget
+        context.metadata["budget_bucket_consumed"] = consumed.get(bucket, 0.0)
+        context.metadata["budget_bucket_left"] = bucket_left
+        if applied < float(increment):
+            context.metadata["budget_guard_limited"] = True
+            context.metadata["budget_guard_reason"] = "bucket_budget_exhausted"
+        return max(0.0, applied)
+
+    def _detect_progress_anomalies(self, context: ProgressContext, quest: Quest, increment: float) -> List[str]:
+        anomalies: List[str] = []
+        if increment > 70.0 and not bool(context.metadata.get("final_objective_guard_passed", False)):
+            anomalies.append("single_increment_spike")
+
+        if isinstance(context.context_data, dict):
+            quest_monster_id = context.context_data.get("quest_monster_id")
+            if quest_monster_id and not isinstance(quest_monster_id, str):
+                anomalies.append("invalid_quest_monster_id_type")
+            elif isinstance(quest_monster_id, str):
+                known_ids = {m.id for m in quest.special_monsters}
+                if quest_monster_id and quest_monster_id not in known_ids:
+                    anomalies.append("illegal_quest_monster_id")
+
+        return anomalies
+
+    def _ensure_completion_guard_defaults(self, quest: Quest) -> None:
+        contract = resolve_generation_contract().contract
+        progress_cfg = contract.get("progress", {}) if isinstance(contract.get("progress"), dict) else {}
+        guard = quest.completion_guard if isinstance(getattr(quest, "completion_guard", None), dict) else {}
+
+        quest.completion_guard = {
+            "require_final_floor": bool(guard.get("require_final_floor", progress_cfg.get("require_final_floor", False))),
+            "require_all_mandatory_events": bool(
+                guard.get("require_all_mandatory_events", progress_cfg.get("require_all_mandatory_events", False))
+            ),
+            "min_progress_before_final_burst": float(
+                guard.get("min_progress_before_final_burst", progress_cfg.get("min_progress_before_final_burst", 70.0)) or 70.0
+            ),
+            "max_single_increment_except_final": float(
+                guard.get("max_single_increment_except_final", progress_cfg.get("max_single_increment_except_final", 25.0)) or 25.0
+            ),
+        }
+
+    def _is_duplicate_quest_monster_settlement(self, quest: Quest, context_data: Any) -> bool:
+        if not isinstance(context_data, dict):
+            return False
+        quest_monster_id = context_data.get("quest_monster_id")
+        if not isinstance(quest_monster_id, str) or not quest_monster_id:
+            return False
+        return quest_monster_id in quest.defeated_quest_monster_ids
+
+    def _mark_quest_monster_defeated(self, quest: Quest, context_data: Any) -> None:
+        if not isinstance(context_data, dict):
+            return
+        quest_monster_id = context_data.get("quest_monster_id")
+        if not isinstance(quest_monster_id, str) or not quest_monster_id:
+            return
+        if quest_monster_id not in quest.defeated_quest_monster_ids:
+            quest.defeated_quest_monster_ids.append(quest_monster_id)
+
+    def _append_progress_ledger(
+        self,
+        quest: Quest,
+        event_type: ProgressEventType,
+        increment: float,
+        old_progress: float,
+        new_progress: float,
+        context_data: Any,
+        note: str = "",
+    ) -> None:
+        bucket = self._event_bucket_key(event_type)
+        entry = {
+            "timestamp": datetime.now().isoformat(),
+            "event_type": event_type.value,
+            "bucket": bucket,
+            "increment": float(increment),
+            "old_progress": float(old_progress),
+            "new_progress": float(new_progress),
+            "context": context_data if isinstance(context_data, dict) else {},
+            "note": note,
+        }
+        quest.progress_ledger.append(entry)
+        if len(quest.progress_ledger) > 500:
+            quest.progress_ledger = quest.progress_ledger[-500:]
+
+    def _all_mandatory_events_triggered(self, game_state: GameState, quest: Quest) -> bool:
+        mandatory_ids = [e.id for e in quest.special_events if getattr(e, "is_mandatory", False)]
+        if not mandatory_ids:
+            return True
+        triggered = set()
+        for tile in game_state.current_map.tiles.values():
+            if tile.has_event and tile.event_triggered and isinstance(tile.event_data, dict):
+                event_id = tile.event_data.get("quest_event_id")
+                if isinstance(event_id, str) and event_id:
+                    triggered.add(event_id)
+        return all(event_id in triggered for event_id in mandatory_ids)
+
+    def _is_final_objective(self, quest: Quest, context_data: Any) -> bool:
+        if not isinstance(context_data, dict):
+            return False
+        quest_monster_id = context_data.get("quest_monster_id")
+        if not isinstance(quest_monster_id, str) or not quest_monster_id:
+            return False
+
+        monster = next((m for m in quest.special_monsters if m.id == quest_monster_id), None)
+        if not monster:
+            return False
+
+        if bool(getattr(monster, "is_final_objective", False)):
+            return True
+
+        plan = quest.progress_plan if isinstance(quest.progress_plan, dict) else {}
+        final_objective_id = str(plan.get("final_objective_id", "") or "")
+        return bool(final_objective_id and final_objective_id == quest_monster_id)
+
+    def _check_completion_guard(self, game_state: GameState, quest: Quest, old_progress: float) -> List[str]:
+        reasons: List[str] = []
+        guard = quest.completion_guard if isinstance(quest.completion_guard, dict) else {}
+
+        require_final_floor = bool(guard.get("require_final_floor", False))
+        require_all_mandatory_events = bool(guard.get("require_all_mandatory_events", False))
+        min_progress_before_final_burst = float(guard.get("min_progress_before_final_burst", 70.0) or 70.0)
+
+        max_target_floor = max(quest.target_floors) if quest.target_floors else config.game.max_quest_floors
+        if require_final_floor and game_state.current_map.depth < max_target_floor:
+            reasons.append("require_final_floor_not_met")
+
+        if require_all_mandatory_events and not self._all_mandatory_events_triggered(game_state, quest):
+            reasons.append("require_all_mandatory_events_not_met")
+
+        if old_progress < min_progress_before_final_burst:
+            reasons.append("min_progress_before_final_burst_not_met")
+
+        return reasons
+
     def _build_progress_update_prompt(self, context: ProgressContext, quest: Quest,
                                     old_progress: float, new_progress: float) -> str:
         """构建进度更新的LLM提示"""
