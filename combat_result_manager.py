@@ -87,7 +87,7 @@ class CombatResultManager:
         Returns:
             CombatResult: 战斗结果
         """
-        logger.info(f"Processing monster defeat: {monster.name}")
+        logger.debug(f"Processing monster defeat: {monster.name}")
         
         # 确定战斗结果类型
         result_type = self._determine_result_type(monster)
@@ -179,7 +179,7 @@ class CombatResultManager:
         self.combat_history.append(combat_result)
         self._cleanup_history()
 
-        logger.info(f"Combat result processed: {result_type.value}, exp: {combat_result.experience_gained}")
+        logger.debug(f"Combat result processed: {result_type.value}, exp: {combat_result.experience_gained}")
 
         return combat_result
     
@@ -268,7 +268,7 @@ class CombatResultManager:
             
             if quest_monster:
                 progress_value = quest_monster.progress_value
-                logger.info(f"Quest progress updated: +{progress_value}%")
+                logger.debug(f"Quest progress updated: +{progress_value}%")
                 return progress_value
         
         except Exception as e:
@@ -550,10 +550,11 @@ class CombatResultManager:
             # 调用LLM生成叙述
             narrative = await llm_service._async_generate(prompt)
             
-            # 调试日志
-            if config.game.show_llm_debug:
-                logger.info(f"Combat narrative prompt: {prompt}")
-                logger.info(f"Combat narrative response: {narrative}")
+            # 调试日志（采样 + 截断，避免高并发刷屏）
+            if config.game.show_llm_debug and self._should_emit_verbose_llm_log():
+                max_len = self._get_safe_llm_log_max_chars()
+                logger.debug("Combat narrative prompt: %s", self._truncate_for_log(prompt, max_len))
+                logger.debug("Combat narrative response: %s", self._truncate_for_log(narrative, max_len))
             
             return narrative
         
@@ -602,6 +603,46 @@ class CombatResultManager:
         """获取降级叙述（兼容旧调用）"""
         # 保留兼容：默认返回统一短句，不再在此分支生成长叙述
         return self._get_short_narrative(combat_result)
+
+    def _truncate_for_log(self, text: Any, max_chars: int) -> str:
+        """截断日志文本，避免超长内容刷屏"""
+        content = str(text) if text is not None else ""
+        if len(content) <= max_chars:
+            return content
+        omitted = len(content) - max_chars
+        return f"{content[:max_chars]}... [truncated {omitted} chars]"
+
+    def _should_emit_verbose_llm_log(self) -> bool:
+        """控制高频LLM调试日志采样率"""
+        sample_rate_raw = getattr(config.game, "llm_debug_log_sample_rate", 0.1)
+        try:
+            sample_rate = float(sample_rate_raw)
+        except (TypeError, ValueError):
+            logger.warning(
+                "Invalid llm_debug_log_sample_rate=%r, fallback to 0.1",
+                sample_rate_raw,
+            )
+            sample_rate = 0.1
+
+        sample_rate = max(0.0, min(1.0, sample_rate))
+        if sample_rate <= 0.0:
+            return False
+        if sample_rate >= 1.0:
+            return True
+        return random.random() < sample_rate
+
+    def _get_safe_llm_log_max_chars(self) -> int:
+        """获取安全的LLM日志截断长度"""
+        max_chars_raw = getattr(config.game, "llm_debug_log_max_chars", 1000)
+        try:
+            max_chars = int(max_chars_raw)
+        except (TypeError, ValueError):
+            logger.warning(
+                "Invalid llm_debug_log_max_chars=%r, fallback to 1000",
+                max_chars_raw,
+            )
+            max_chars = 1000
+        return max(200, max_chars)
     
     def _cleanup_history(self):
         """清理历史记录"""

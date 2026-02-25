@@ -144,7 +144,7 @@ class ProgressManager:
         # 检查是否是任务专属怪物
         if 'progress_value' in context:
             progress_value = context['progress_value']
-            logger.info(f"Quest monster defeated, using custom progress: {progress_value}%")
+            logger.debug(f"Quest monster defeated, using custom progress: {progress_value}%")
             return progress_value
 
         # 普通怪物使用默认进度值

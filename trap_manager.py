@@ -412,6 +412,10 @@ def initialize_trap_manager(entity_manager: EntityManager):
         entity_manager: 实体管理器实例
     """
     global trap_manager
+    if trap_manager is not None:
+        logger.debug("TrapManager already initialized")
+        return
+
     trap_manager = TrapManager(entity_manager)
     logger.info("TrapManager initialized")
 

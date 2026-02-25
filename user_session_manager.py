@@ -174,7 +174,7 @@ class UserSessionManager:
             with open(save_path, 'w', encoding='utf-8') as f:
                 json.dump(game_data, f, ensure_ascii=False, indent=2)
 
-            logger.info(f"Game saved for user {user_id}: {save_path}")
+            logger.debug(f"Game saved for user {user_id}: {save_path}")
             return True
 
         except Exception as e:

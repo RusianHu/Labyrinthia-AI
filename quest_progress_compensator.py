@@ -4,6 +4,7 @@
 """
 
 import logging
+import time
 from typing import Dict, List, Any, Optional
 from data_models import GameState, Quest, Monster
 from progress_manager import progress_manager, ProgressEventType, ProgressContext
@@ -17,8 +18,10 @@ class QuestProgressCompensator:
     
     def __init__(self):
         self.compensation_history: List[Dict[str, Any]] = []
-    
-    async def check_and_compensate(self, game_state: GameState) -> Dict[str, Any]:
+        self._recent_compensation_keys: Dict[str, float] = {}
+        self._dedupe_window_seconds: float = 2.0
+
+    async def check_and_compensate(self, game_state: GameState, source: str = "unknown") -> Dict[str, Any]:
         """检查并补偿任务进度"""
         result = {
             "compensated": False,
@@ -26,26 +29,40 @@ class QuestProgressCompensator:
             "reason": "",
             "details": {}
         }
-        
+
         # 获取活跃任务
         active_quest = self._get_active_quest(game_state)
         if not active_quest:
             return result
-        
+
         # 检查是否需要补偿
         compensation_info = self._analyze_compensation_need(game_state, active_quest)
-        
+
         if compensation_info["needs_compensation"]:
+            dedupe_key = self._build_compensation_dedupe_key(
+                game_state,
+                active_quest,
+                compensation_info,
+                source=source,
+            )
+            if self._is_recently_compensated(dedupe_key):
+                logger.debug(
+                    "Skip duplicate compensation within window: key=%s source=%s",
+                    dedupe_key,
+                    source,
+                )
+                return result
+
             # 执行补偿
             compensation_amount = compensation_info["compensation_amount"]
             reason = compensation_info["reason"]
-            
+
             logger.info(f"Compensating quest progress: +{compensation_amount:.1f}% ({reason})")
-            
+
             # 直接更新进度
             old_progress = active_quest.progress_percentage
             active_quest.progress_percentage = min(100.0, old_progress + compensation_amount)
-            
+
             # 记录补偿
             compensation_record = {
                 "quest_id": active_quest.id,
@@ -54,24 +71,26 @@ class QuestProgressCompensator:
                 "new_progress": active_quest.progress_percentage,
                 "compensation_amount": compensation_amount,
                 "reason": reason,
-                "details": compensation_info["details"]
+                "details": compensation_info["details"],
+                "source": source,
             }
             self.compensation_history.append(compensation_record)
-            
+
             # 添加消息
             game_state.pending_events.append(
                 f"✨ 探索完成！任务进度 +{compensation_amount:.1f}%"
             )
-            
+
             # 检查是否完成任务
             if active_quest.progress_percentage >= 100.0:
                 await self._complete_quest(game_state, active_quest)
-            
+
+            self._mark_compensated(dedupe_key)
             result["compensated"] = True
             result["compensation_amount"] = compensation_amount
             result["reason"] = reason
             result["details"] = compensation_info["details"]
-        
+
         return result
     
     def _analyze_compensation_need(self, game_state: GameState, quest: Quest) -> Dict[str, Any]:
@@ -132,6 +151,38 @@ class QuestProgressCompensator:
             return info
         
         return info
+
+    def _build_compensation_dedupe_key(
+        self,
+        game_state: GameState,
+        quest: Quest,
+        compensation_info: Dict[str, Any],
+        source: str,
+    ) -> str:
+        """构建补偿防重键，避免短时间重复补偿"""
+        map_depth = getattr(getattr(game_state, "current_map", None), "depth", 0)
+        reason = str(compensation_info.get("reason", ""))
+        amount = float(compensation_info.get("compensation_amount", 0.0) or 0.0)
+        progress = float(getattr(quest, "progress_percentage", 0.0) or 0.0)
+        safe_source = str(source or "unknown")
+        return f"{quest.id}|{map_depth}|{safe_source}|{reason}|{amount:.1f}|{progress:.1f}"
+
+    def _is_recently_compensated(self, key: str) -> bool:
+        now = time.time()
+        self._prune_recent_keys(now)
+        last_ts = self._recent_compensation_keys.get(key)
+        return bool(last_ts and (now - last_ts) <= self._dedupe_window_seconds)
+
+    def _mark_compensated(self, key: str):
+        now = time.time()
+        self._recent_compensation_keys[key] = now
+        self._prune_recent_keys(now)
+
+    def _prune_recent_keys(self, now: float):
+        expire_before = now - max(5.0, self._dedupe_window_seconds * 2)
+        stale_keys = [k for k, ts in self._recent_compensation_keys.items() if ts < expire_before]
+        for key in stale_keys:
+            self._recent_compensation_keys.pop(key, None)
     
     def _check_all_quest_monsters_defeated(self, game_state: GameState, quest: Quest) -> bool:
         """检查所有任务怪物是否都已击败"""

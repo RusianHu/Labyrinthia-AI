@@ -89,7 +89,7 @@ class AsyncTaskManager:
     def initialize(self):
         """初始化管理器"""
         if self._initialized:
-            logger.warning("AsyncTaskManager already initialized")
+            logger.debug("AsyncTaskManager already initialized")
             return
         
         # 创建LLM专用线程池

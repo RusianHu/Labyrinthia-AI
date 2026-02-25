@@ -80,16 +80,29 @@ class MonsterSpawnManager:
         # 等待所有怪物生成完成
         results = await asyncio.gather(*tasks, return_exceptions=True)
         
+        failed_count = 0
         for result in results:
             if isinstance(result, Monster):
                 monsters.append(result)
-                logger.info(f"Generated encounter monster: {result.name} (CR: {result.challenge_rating})")
+                logger.debug(f"Generated encounter monster: {result.name} (CR: {result.challenge_rating})")
             elif isinstance(result, Exception):
+                failed_count += 1
                 logger.error(f"Failed to generate monster: {result}")
-        
+
         # 记录生成历史
         self._record_spawn(monsters, "encounter", encounter_difficulty)
-        
+
+        if monsters:
+            cr_values = [float(getattr(m, "challenge_rating", 0.0) or 0.0) for m in monsters]
+            logger.info(
+                "Encounter monsters generated count=%s failed=%s difficulty=%s cr_min=%.2f cr_max=%.2f",
+                len(monsters),
+                failed_count,
+                encounter_difficulty,
+                min(cr_values),
+                max(cr_values),
+            )
+
         return monsters
     
     def _get_monster_attr(self, monster_data, attr_name, default=None):
@@ -215,13 +228,23 @@ class MonsterSpawnManager:
                         }
                     )
 
-                    logger.info(f"Generated quest monster: {adjusted_monster.name} (CR: {challenge_rating}, Boss: {is_boss})")
+                    logger.debug(f"Generated quest monster: {adjusted_monster.name} (CR: {challenge_rating}, Boss: {is_boss})")
 
             except Exception as e:
                 logger.error(f"Failed to generate quest monster {self._get_monster_attr(monster_data, 'name', 'unknown')}: {e}")
 
         # 记录生成历史
         self._record_spawn(quest_monsters, "quest", quest_title if active_quest else "unknown")
+
+        if quest_monsters:
+            boss_count = sum(1 for m in quest_monsters if bool(getattr(m, "is_boss", False)))
+            logger.info(
+                "Quest monsters generated count=%s boss_count=%s quest=%s floor=%s",
+                len(quest_monsters),
+                boss_count,
+                quest_title,
+                current_depth,
+            )
 
         self._attach_spawn_audit(game_state, spawn_audit)
         return quest_monsters

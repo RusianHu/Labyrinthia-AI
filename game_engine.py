@@ -1848,7 +1848,10 @@ class GameEngine:
             )
 
             from quest_progress_compensator import quest_progress_compensator
-            compensation_result = await quest_progress_compensator.check_and_compensate(game_state)
+            compensation_result = await quest_progress_compensator.check_and_compensate(
+                game_state,
+                source="engine_combat",
+            )
             if compensation_result["compensated"]:
                 logger.info(f"Progress compensated: +{compensation_result['compensation_amount']:.1f}% ({compensation_result['reason']})")
 

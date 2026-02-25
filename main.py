@@ -336,15 +336,12 @@ async def lifespan(app: FastAPI):
     try:
         # 初始化异步任务管理器
         async_task_manager.initialize()
-        logger.info("AsyncTaskManager initialized")
 
         # 初始化陷阱管理器
         initialize_trap_manager(entity_manager)
-        logger.info("TrapManager initialized")
 
         # 启动游戏会话清理任务
         game_engine._start_cleanup_task()
-        logger.info("Game session cleanup task started")
 
         logger.info("Server started successfully")
         yield
@@ -1264,7 +1261,7 @@ async def sync_game_state(request: SyncStateRequest, http_request: Request, resp
         from llm_context_manager import llm_context_manager
         context_token = llm_context_manager.set_current_context_key(_build_context_key(user_id, request.game_id))
 
-        logger.info(f"Syncing game state for user {user_id}, game: {request.game_id}")
+        logger.debug(f"Syncing game state for user {user_id}, game: {request.game_id}")
 
         async with game_state_lock_manager.lock_game_state(user_id, request.game_id, "sync_state"):
             # 获取后端当前的游戏状态（包含最新的任务进度等数据）
@@ -1314,7 +1311,10 @@ async def sync_game_state(request: SyncStateRequest, http_request: Request, resp
 
             # 【新增】检查是否需要进度补偿（每次同步时检查）
             from quest_progress_compensator import quest_progress_compensator
-            compensation_result = await quest_progress_compensator.check_and_compensate(backend_game_state)
+            compensation_result = await quest_progress_compensator.check_and_compensate(
+                backend_game_state,
+                source="sync_state",
+            )
             if compensation_result["compensated"]:
                 logger.info(f"Progress compensated during sync: +{compensation_result['compensation_amount']:.1f}% ({compensation_result['reason']})")
 
@@ -1373,7 +1373,7 @@ async def process_combat_result(game_id: str, request: Request, response: Respon
         user_id = user_session_manager.get_or_create_user_id(request, response)
         game_key = (user_id, game_id)
 
-        logger.info(f"Processing combat result for user {user_id}, game: {game_id}, trace_id={trace_id}")
+        logger.debug(f"Processing combat result for user {user_id}, game: {game_id}, trace_id={trace_id}")
 
         try:
             request_data = await request.json()
@@ -1499,7 +1499,7 @@ async def process_combat_result(game_id: str, request: Request, response: Respon
                         tile.character_id = None
                     if monster in game_state.monsters:
                         game_state.monsters.remove(monster)
-                    logger.info(f"Removed defeated monster from backend state: {monster.name}")
+                    logger.debug(f"Removed defeated monster from backend state: {monster.name}")
                 except Exception as e:
                     logger.error(f"Failed to remove monster from backend state: {e}")
 
@@ -1507,7 +1507,7 @@ async def process_combat_result(game_id: str, request: Request, response: Respon
                 if monster.quest_monster_id and combat_result.quest_progress > 0:
                     from progress_manager import progress_manager, ProgressEventType, ProgressContext
 
-                    logger.info(f"Triggering quest progress update for quest monster: {monster.name}, progress: {combat_result.quest_progress}%")
+                    logger.debug(f"Triggering quest progress update for quest monster: {monster.name}, progress: {combat_result.quest_progress}%")
 
                     # 创建进度上下文
                     context_data = {
@@ -1531,7 +1531,10 @@ async def process_combat_result(game_id: str, request: Request, response: Respon
 
                 # 【新增】在进度更新之后检查任务进度补偿（确保在移除怪物后再检查）
                 from quest_progress_compensator import quest_progress_compensator
-                compensation_result = await quest_progress_compensator.check_and_compensate(game_state)
+                compensation_result = await quest_progress_compensator.check_and_compensate(
+                    game_state,
+                    source="combat_result",
+                )
                 if compensation_result.get("compensated"):
                     logger.info(
                         f"Progress compensated during combat-result: +{compensation_result['compensation_amount']:.1f}% ({compensation_result['reason']})"
@@ -4594,7 +4597,10 @@ if config.game.debug_mode:
 
                 # 【新增】检查是否需要进度补偿
                 from quest_progress_compensator import quest_progress_compensator
-                compensation_result = await quest_progress_compensator.check_and_compensate(game_state)
+                compensation_result = await quest_progress_compensator.check_and_compensate(
+                    game_state,
+                    source="debug_clear_enemies",
+                )
                 if compensation_result["compensated"]:
                     logger.info(f"Progress compensated after clearing enemies: +{compensation_result['compensation_amount']:.1f}% ({compensation_result['reason']})")
 
