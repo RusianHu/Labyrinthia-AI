@@ -129,6 +129,7 @@ Object.assign(LabyrinthiaGame.prototype, {
             'interact': 'AI 正在处理选择',
             'rest': 'AI 正在恢复状态',
             'choice': 'AI 正在处理选择',
+            'combat_victory': 'AI 正在结算战斗',
             'default': 'AI 正在思考'
         };
 
@@ -138,14 +139,26 @@ Object.assign(LabyrinthiaGame.prototype, {
             'interact': '分析您的选择并生成结果...',
             'rest': '评估祈祷的安全性...',
             'choice': '分析您的选择并更新游戏状态...',
+            'combat_victory': '生成战斗叙述与掉落物品...',
             'default': '处理您的请求...'
         };
 
         const title = titles[action] || titles['default'];
         const subtitle = subtitles[action] || subtitles['default'];
 
+        // 防止“旧的延迟隐藏任务”把刚显示的新遮罩隐藏掉
+        if (this.overlayHideTimeout) {
+            clearTimeout(this.overlayHideTimeout);
+            this.overlayHideTimeout = null;
+        }
+
         // 使用新的部分遮罩而不是全屏遮罩
         this.showPartialOverlay(title, subtitle, '正在与AI通信...');
+
+        if (this.currentProgressInterval) {
+            clearInterval(this.currentProgressInterval);
+            this.currentProgressInterval = null;
+        }
 
         // 模拟进度更新
         let progress = 0;
@@ -168,12 +181,18 @@ Object.assign(LabyrinthiaGame.prototype, {
             this.currentProgressInterval = null;
         }
 
+        if (this.overlayHideTimeout) {
+            clearTimeout(this.overlayHideTimeout);
+            this.overlayHideTimeout = null;
+        }
+
         // 完成进度条
         this.updateOverlayProgress(100, '完成！');
 
         // 延迟隐藏以显示完成状态
-        setTimeout(() => {
+        this.overlayHideTimeout = setTimeout(() => {
             this.hidePartialOverlay();
+            this.overlayHideTimeout = null;
         }, 500);
     },
 
