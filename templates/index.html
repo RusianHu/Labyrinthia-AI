@@ -220,33 +220,6 @@
                     </div>
                 </div>
 
-                <!-- 状态运行时 -->
-                <div class="panel elevation-2 runtime-panel runtime-panel-status">
-                    <h3>
-                        <i class="material-icons">auto_fix_high</i>
-                        状态运行时
-                    </h3>
-                    <div id="status-runtime-panel" class="runtime-panel-content runtime-panel-content-status">当前无状态效果</div>
-                </div>
-
-                <!-- 装备词缀 -->
-                <div class="panel elevation-2 runtime-panel runtime-panel-affix">
-                    <h3>
-                        <i class="material-icons">shield</i>
-                        装备词缀与套装
-                    </h3>
-                    <div id="equipment-affix-panel" class="runtime-panel-content runtime-panel-content-affix">无装备词缀</div>
-                </div>
-
-                <!-- 本回合生效效果 -->
-                <div class="panel elevation-2 runtime-panel runtime-panel-turn">
-                    <h3>
-                        <i class="material-icons">bolt</i>
-                        本回合生效效果
-                    </h3>
-                    <div id="turn-effect-summary" class="runtime-panel-content runtime-panel-content-turn">本回合无额外生效效果</div>
-                </div>
-
                 <!-- 控制面板 -->
                 <div class="panel elevation-2 controls-panel">
                     <h3>
@@ -281,6 +254,24 @@
                             <i class="material-icons">menu</i>
                             菜单
                         </button>
+                    </div>
+
+                    <div class="controls-runtime-grid">
+                        <div class="panel elevation-2 runtime-panel runtime-panel-status">
+                            <h3>
+                                <i class="material-icons">auto_fix_high</i>
+                                状态运行时
+                            </h3>
+                            <div id="status-runtime-panel" class="runtime-panel-content runtime-panel-content-status">当前无状态效果</div>
+                        </div>
+
+                        <div class="panel elevation-2 runtime-panel runtime-panel-turn">
+                            <h3>
+                                <i class="material-icons">bolt</i>
+                                本回合生效效果
+                            </h3>
+                            <div id="turn-effect-summary" class="runtime-panel-content runtime-panel-content-turn">本回合无额外生效效果</div>
+                        </div>
                     </div>
 
                     <div class="loading-indicator">
@@ -366,6 +357,14 @@
                                 </h4>
                                 <div id="equipment-trace-panel" class="runtime-panel-content runtime-panel-content-trace">暂无装备计算追踪</div>
                             </div>
+                        </div>
+
+                        <div class="panel elevation-2 runtime-panel runtime-panel-affix inventory-affix-runtime">
+                            <h3>
+                                <i class="material-icons">shield</i>
+                                装备词缀与套装
+                            </h3>
+                            <div id="equipment-affix-panel" class="runtime-panel-content runtime-panel-content-affix">无装备词缀</div>
                         </div>
                     </div>
                 </div>

@@ -1314,11 +1314,38 @@ body {
 }
 
 /* 控制面板 */
+.controls-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
 .controls {
     display: grid;
     grid-template-columns: repeat(3, 1fr);
     gap: 8px;
     margin-top: 10px;
+}
+
+.controls-runtime-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+    margin-top: 2px;
+}
+
+.controls-runtime-grid .runtime-panel {
+    padding: 10px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.controls-runtime-grid .runtime-panel > h3 {
+    margin-bottom: 8px;
+}
+
+.controls-runtime-grid .runtime-panel-content {
+    min-height: 78px;
+    max-height: 160px;
 }
 
 .control-btn {
@@ -1810,6 +1837,16 @@ body {
     gap: 10px;
 }
 
+.inventory-affix-runtime {
+    margin-top: 2px;
+    padding: 10px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.inventory-affix-runtime > h3 {
+    margin-bottom: 8px;
+}
+
 .inventory-runtime-card {
     background: rgba(255, 255, 255, 0.66);
     border: 1px solid rgba(94, 53, 177, 0.2);
@@ -1885,6 +1922,10 @@ body {
         grid-template-columns: 1fr;
     }
 
+    .inventory-affix-runtime {
+        padding: 8px;
+    }
+
     .inventory-toolbar {
         grid-template-columns: 1fr;
     }
@@ -1944,6 +1985,10 @@ body {
 
     .controls-panel {
         min-width: auto; /* 移除最小宽度限制，允许其自适应内容 */
+    }
+
+    .controls-runtime-grid {
+        grid-template-columns: 1fr;
     }
 
     .header {
