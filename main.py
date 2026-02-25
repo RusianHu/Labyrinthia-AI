@@ -137,6 +137,17 @@ def _build_context_key(user_id: str, game_id: str) -> str:
     return f"{user_id}:{game_id}"
 
 
+def _serialize_game_state_for_client(game_state: GameState) -> Dict[str, Any]:
+    """序列化游戏状态给前端，并消费一次性特效队列，避免重复弹窗。"""
+    state_dict = game_state.to_dict()
+
+    # pending_effects 是一次性消费队列，返回给前端后立即清理
+    if hasattr(game_state, 'pending_effects') and game_state.pending_effects:
+        game_state.pending_effects = []
+
+    return state_dict
+
+
 def _safe_int(value: Any, default: int = 0) -> int:
     try:
         if value is None:
@@ -631,13 +642,8 @@ async def get_game_state(game_id: str, request: Request, response: Response):
         # 更新访问时间
         game_engine.update_access_time(user_id, game_id)
 
-        # 获取游戏状态字典
-        state_dict = game_state.to_dict()
-
-        # 清理服务器端的pending_effects，避免重复触发
-        if hasattr(game_state, 'pending_effects') and game_state.pending_effects:
-            # 前端会处理这些特效，所以服务器端可以清理了
-            game_state.pending_effects = []
+        # 获取游戏状态字典（包含一次性特效消费）
+        state_dict = _serialize_game_state_for_client(game_state)
 
     return state_dict
 
@@ -886,7 +892,7 @@ async def handle_llm_event(request: LLMEventRequest, http_request: Request, resp
                     "success": True,
                     "message": event_result,
                     "events": [event_result],
-                    "game_state": game_state.to_dict(),
+                    "game_state": _serialize_game_state_for_client(game_state),
                 }
 
             if event_type == "treasure":
@@ -907,7 +913,7 @@ async def handle_llm_event(request: LLMEventRequest, http_request: Request, resp
                     "success": True,
                     "message": treasure_result,
                     "events": [treasure_result],
-                    "game_state": game_state.to_dict(),
+                    "game_state": _serialize_game_state_for_client(game_state),
                 }
 
             if event_type == "trap_narrative":
@@ -945,7 +951,7 @@ async def handle_llm_event(request: LLMEventRequest, http_request: Request, resp
                 return {
                     "success": True,
                     "narrative": narrative,
-                    "game_state": game_state.to_dict(),
+                    "game_state": _serialize_game_state_for_client(game_state),
                 }
 
             return {
@@ -1354,7 +1360,7 @@ async def sync_game_state(request: SyncStateRequest, http_request: Request, resp
         return {
             "success": True,
             "message": "游戏状态已同步",
-            "game_state": backend_game_state.to_dict()
+            "game_state": _serialize_game_state_for_client(backend_game_state)
         }
 
     except HTTPException:
@@ -1701,7 +1707,7 @@ async def process_event_choice(request: EventChoiceRequest, http_request: Reques
                     "success": True,
                     "message": result.message,
                     "events": result.events,
-                    "game_state": game_state.to_dict(),
+                    "game_state": _serialize_game_state_for_client(game_state),
                 }
 
             return {
@@ -2133,7 +2139,7 @@ async def transition_map(game_id: str, transition_data: Dict[str, Any], request:
                     "success": True,
                     "message": result["message"],
                     "events": result["events"],
-                    "game_state": game_state.to_dict()
+                    "game_state": _serialize_game_state_for_client(game_state)
                 }
 
                 # 【修复】检查是否有待处理的选择上下文，立即返回给前端

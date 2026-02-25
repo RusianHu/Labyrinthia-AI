@@ -67,6 +67,9 @@ Object.assign(LabyrinthiaGame.prototype, {
             document.getElementById('current-map-name').textContent = this.gameState.current_map.name || '未知区域';
         }
 
+        // 更新AC防御等级显示
+        this.updateACDisplay();
+
         this.updateEffectiveRuntimePanel();
         this.updateEquipmentTracePanel();
         this.updateStatusRuntimePanel();
@@ -334,6 +337,71 @@ Object.assign(LabyrinthiaGame.prototype, {
             criticalAfter,
             replacingName: currentInSlot ? currentInSlot.name : ''
         };
+    },
+
+    /**
+     * 更新角色面板中的AC防御等级显示
+     * 从 combat_snapshot 读取结算后的 AC 值，悬停显示分解详情
+     */
+    updateACDisplay() {
+        const valueEl = document.getElementById('ac-display-value');
+        const contentEl = document.getElementById('ac-tooltip-content');
+        const extraEl = document.getElementById('ac-tooltip-extra');
+        if (!valueEl) return;
+
+        const snapshot = (this.gameState && this.gameState.combat_snapshot) || {};
+        const playerSnapshot = snapshot.player || {};
+        const equipmentRuntime = ((snapshot.equipment || {}).runtime || {});
+        const combatBonuses = equipmentRuntime.combat_bonuses || {};
+        const acComponents = playerSnapshot.ac_components || {};
+
+        // AC 总值
+        const acEffective = Number(playerSnapshot.ac_effective || 0);
+        // 如果没有快照数据，尝试从 player.stats 计算基础AC
+        const fallbackAC = acEffective || (10 + Math.floor(((this.gameState.player?.abilities?.dexterity || 10) - 10) / 2));
+        valueEl.textContent = fallbackAC;
+
+        // AC 颜色
+        if (fallbackAC >= 18) {
+            valueEl.style.color = '#1565c0'; // 深蓝 - 优秀
+        } else if (fallbackAC >= 14) {
+            valueEl.style.color = '#1e88e5'; // 蓝色 - 良好
+        } else if (fallbackAC >= 11) {
+            valueEl.style.color = '#666'; // 灰色 - 普通
+        } else {
+            valueEl.style.color = '#e74c3c'; // 红色 - 低
+        }
+
+        // Tooltip 分解内容
+        if (contentEl) {
+            const fmt = (v) => {
+                const n = Number(v || 0);
+                return n >= 0 ? `+${n}` : `${n}`;
+            };
+            const lines = [
+                `基础: ${fmt(acComponents.base || fallbackAC)}`,
+                `护甲: ${fmt(acComponents.armor)}`,
+                `盾牌: ${fmt(acComponents.shield)}`,
+                `状态: ${fmt(acComponents.status)}`,
+                `情境: ${fmt(acComponents.situational)}`,
+                `惩罚: ${fmt(0 - Number(acComponents.penalty || 0))}`
+            ];
+            contentEl.textContent = lines.join('\n');
+        }
+
+        // Tooltip 额外战斗信息
+        if (extraEl) {
+            const fmt = (v) => {
+                const n = Number(v || 0);
+                return n >= 0 ? `+${n}` : `${n}`;
+            };
+            const parts = [
+                `命中: ${fmt(combatBonuses.hit_bonus)}`,
+                `伤害: ${fmt(combatBonuses.damage_bonus)}`,
+                `暴击: ${Number(combatBonuses.critical_bonus || 0)}%`
+            ];
+            extraEl.textContent = parts.join(' | ');
+        }
     },
 
     updateEffectiveRuntimePanel() {

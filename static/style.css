@@ -28,7 +28,7 @@ body {
 
 /* 主容器 */
 .container {
-    max-width: 1200px;
+    max-width: 1800px;
     margin: 0 auto;
     padding: 20px;
 }
@@ -114,13 +114,14 @@ body {
     letter-spacing: 1px;
 }
 
-/* 游戏界面布局 */
+/* 游戏界面布局 - 桌面端三栏 */
 .game-layout {
     display: grid;
-    grid-template-columns: 1fr 300px;
-    gap: 20px;
+    grid-template-columns: 280px 1fr 340px;
+    gap: 16px;
     min-height: calc(100vh - 140px);
     height: auto; /* 允许高度自动调整 */
+    align-items: start; /* 侧边栏顶部对齐，不随主内容拉伸 */
 }
 
 /* 主游戏区域 */
@@ -482,11 +483,87 @@ body {
     box-shadow: 0 0 8px rgba(52, 152, 219, 0.6);
 }
 
-/* 侧边栏 */
-.sidebar {
+/* 左侧边栏 */
+.sidebar-left {
     display: flex;
     flex-direction: column;
-    gap: 15px;
+    gap: 12px;
+    position: sticky;
+    top: 16px;
+    max-height: calc(100vh - 32px);
+    overflow-y: auto;
+    overflow-x: hidden;
+    /* 细滚动条 */
+    scrollbar-width: thin;
+    scrollbar-color: rgba(94, 53, 177, 0.4) transparent;
+}
+
+.sidebar-left::-webkit-scrollbar {
+    width: 4px;
+}
+
+.sidebar-left::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.sidebar-left::-webkit-scrollbar-thumb {
+    background: rgba(94, 53, 177, 0.4);
+    border-radius: 2px;
+}
+
+/* 右侧边栏 */
+.sidebar-right {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    position: sticky;
+    top: 16px;
+    max-height: calc(100vh - 32px);
+    overflow-y: auto;
+    overflow-x: hidden;
+    /* 细滚动条 */
+    scrollbar-width: thin;
+    scrollbar-color: rgba(94, 53, 177, 0.4) transparent;
+}
+
+.sidebar-right::-webkit-scrollbar {
+    width: 4px;
+}
+
+.sidebar-right::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.sidebar-right::-webkit-scrollbar-thumb {
+    background: rgba(94, 53, 177, 0.4);
+    border-radius: 2px;
+}
+
+/* ===== 桌面端侧栏内部子布局适配 ===== */
+/* 左侧栏内的控制面板：运行时网格改为单列 */
+.sidebar-left .controls-runtime-grid {
+    grid-template-columns: 1fr;
+}
+
+/* 右侧栏内的物品栏：强制单列以适应窄宽度 */
+.sidebar-right .inventory-main-row {
+    grid-template-columns: 1fr;
+}
+
+.sidebar-right .inventory-layout {
+    grid-template-columns: 1fr;
+}
+
+.sidebar-right .inventory-runtime-grid {
+    grid-template-columns: 1fr;
+}
+
+.sidebar-right .inventory-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.sidebar-right .inventory-toolbar {
+    grid-template-columns: 1fr;
 }
 
 .panel {
@@ -580,6 +657,96 @@ body {
     color: #666;
     min-width: 30px;
     text-align: right;
+}
+
+/* ===== AC 防御等级显示 ===== */
+.ac-display-container {
+    margin-top: 12px;
+}
+
+.ac-display-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    background: linear-gradient(135deg, rgba(30, 136, 229, 0.08), rgba(94, 53, 177, 0.08));
+    border: 1px solid rgba(30, 136, 229, 0.25);
+    border-radius: 8px 8px 8px 8px;
+    cursor: help;
+    transition: all 0.2s ease;
+}
+
+.ac-display-container:hover .ac-display-row {
+    background: linear-gradient(135deg, rgba(30, 136, 229, 0.15), rgba(94, 53, 177, 0.12));
+    border-color: rgba(30, 136, 229, 0.4);
+    box-shadow: 0 2px 8px rgba(30, 136, 229, 0.15);
+    border-radius: 8px 8px 0 0;
+}
+
+.ac-display-icon {
+    display: flex;
+    align-items: center;
+}
+
+.ac-display-icon .material-icons {
+    font-size: 20px;
+    color: #1e88e5;
+}
+
+.ac-display-label {
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: #1e88e5;
+    flex: 1;
+}
+
+.ac-display-value {
+    font-size: 1.3rem;
+    font-weight: 700;
+    color: #1565c0;
+    min-width: 32px;
+    text-align: center;
+}
+
+/* AC 详情 - 悬停内联展开（避免被overflow裁剪） */
+.ac-tooltip {
+    max-height: 0;
+    overflow: hidden;
+    padding: 0 12px;
+    background: rgba(245, 248, 255, 0.97);
+    border: 1px solid rgba(30, 136, 229, 0.25);
+    border-top: none;
+    border-radius: 0 0 8px 8px;
+    font-size: 0.82rem;
+    line-height: 1.5;
+    color: #37474f;
+    transition: max-height 0.25s ease, padding 0.25s ease;
+}
+
+.ac-display-container:hover .ac-tooltip {
+    max-height: 200px;
+    padding: 8px 12px;
+    border-color: rgba(30, 136, 229, 0.4);
+}
+
+.ac-tooltip-title {
+    font-weight: 600;
+    color: #1e88e5;
+    margin-bottom: 4px;
+    font-size: 0.82rem;
+}
+
+.ac-tooltip-content {
+    white-space: pre-line;
+    margin-bottom: 2px;
+}
+
+.ac-tooltip-extra {
+    color: #78909c;
+    font-size: 0.78rem;
+    border-top: 1px solid rgba(30, 136, 229, 0.12);
+    padding-top: 3px;
+    margin-top: 3px;
 }
 
 .stat-label {
@@ -1894,7 +2061,20 @@ body {
     width: 0%;
 }
 
+/* 中等屏幕：三栏 → 两栏过渡 */
 @media (max-width: 1100px) {
+    .game-layout {
+        /* 中等屏幕：左栏+主内容两栏，右侧边栏在下方 */
+        grid-template-columns: 260px 1fr;
+    }
+
+    .sidebar-right {
+        grid-column: 1 / -1; /* 物品栏占满整行，放到下方 */
+        position: static;
+        max-height: none;
+        overflow-y: visible;
+    }
+
     .inventory-main-row {
         grid-template-columns: 1fr;
     }
@@ -1950,33 +2130,47 @@ body {
 
     .game-layout {
         grid-template-columns: 1fr;
-        grid-template-rows: 1fr auto;
+        grid-template-rows: auto; /* 移动端单列堆叠 */
     }
 
-    .sidebar {
+    .sidebar-left,
+    .sidebar-right {
+        position: static; /* 移动端取消sticky */
+        max-height: none; /* 移动端取消高度限制 */
+        overflow-y: visible;
+    }
+
+    .sidebar-left {
+        /* 移动端：水平滚动排列 */
         display: grid;
-        grid-auto-flow: column; /* 让网格项水平排列 */
-        grid-auto-columns: minmax(280px, 1fr); /* 每个面板最小宽度280px，但可扩展 */
+        grid-auto-flow: column;
+        grid-auto-columns: minmax(280px, 1fr);
         gap: 15px;
         overflow-x: auto;
-        padding: 10px 0; /* 为滚动区域添加垂直内边距 */
-        /* 美化滚动条 */
+        padding: 10px 0;
         scrollbar-width: thin;
         scrollbar-color: #5e35b1 rgba(0,0,0,0.1);
     }
 
-    .sidebar::-webkit-scrollbar {
+    .sidebar-left::-webkit-scrollbar {
         height: 8px;
     }
 
-    .sidebar::-webkit-scrollbar-track {
+    .sidebar-left::-webkit-scrollbar-track {
         background: rgba(0,0,0,0.1);
         border-radius: 4px;
     }
 
-    .sidebar::-webkit-scrollbar-thumb {
+    .sidebar-left::-webkit-scrollbar-thumb {
         background-color: #5e35b1;
         border-radius: 4px;
+    }
+
+    .sidebar-right {
+        /* 移动端：正常垂直排列 */
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
     }
 
     .panel {

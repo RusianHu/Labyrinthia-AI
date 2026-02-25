@@ -119,7 +119,7 @@ class LabyrinthiaGame {
 
                 // 隐藏主菜单，显示游戏界面
                 document.getElementById('main-menu').style.display = 'none';
-                document.getElementById('game-interface').style.display = 'block';
+                document.getElementById('game-interface').style.display = 'grid';
 
                 // 触发迷雾canvas初始化（游戏界面现在可见了）
                 if (typeof window.initializeFogCanvas === 'function') {

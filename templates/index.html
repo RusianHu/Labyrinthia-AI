@@ -10,7 +10,7 @@
     <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
 
     <!-- 样式表 -->
-    <link rel="stylesheet" href="/static/style.css?v=14">
+    <link rel="stylesheet" href="/static/style.css?v=16">
     <link rel="stylesheet" href="/static/css/dungeon_border.css">
     <link rel="stylesheet" href="/static/css/floor_layers.css">
     <link rel="stylesheet" href="/static/css/fog_canvas.css">
@@ -89,40 +89,8 @@
 
         <!-- 游戏界面 -->
         <div id="game-interface" class="game-layout">
-            <!-- 主游戏区域 -->
-            <div class="game-main elevation-2">
-                <!-- 任务面板 -->
-                <div class="panel elevation-2 quest-panel">
-                    <h3>
-                        <i class="material-icons">assignment</i>
-                        任务
-                    </h3>
-                    <div id="quest-list" class="quest-list"></div>
-                </div>
-
-                <!-- 地图容器 -->
-                <div id="map-container" class="map-container">
-                    <!-- Canvas 迷雾效果层 -->
-                    <canvas id="fog-canvas" class="fog-canvas-overlay"></canvas>
-
-                    <!-- 地图内容 -->
-                    <div class="dungeon-content">
-                        <div id="map-grid" class="map-grid"></div>
-                    </div>
-                </div>
-
-                <!-- 消息日志 -->
-                <div class="panel message-log-panel">
-                    <h3>
-                        <i class="material-icons">chat</i>
-                        消息日志
-                    </h3>
-                    <div id="message-log" class="message-log"></div>
-                </div>
-            </div>
-
-            <!-- 侧边栏 -->
-            <div class="sidebar">
+            <!-- 左侧边栏：角色状态 + 控制面板 -->
+            <div class="sidebar-left">
                 <!-- 角色状态 -->
                 <div class="panel elevation-2">
                     <h3>
@@ -218,6 +186,24 @@
                             </div>
                         </div>
                     </div>
+
+                    <!-- AC 防御等级显示 -->
+                    <div class="ac-display-container" id="ac-display-container">
+                        <div class="ac-display-row">
+                            <span class="ac-display-icon"><i class="material-icons">shield</i></span>
+                            <span class="ac-display-label">AC</span>
+                            <span class="ac-display-value" id="ac-display-value">10</span>
+                        </div>
+                        <div class="ac-tooltip" id="ac-tooltip">
+                            <div class="ac-tooltip-title">防御等级分解</div>
+                            <div class="ac-tooltip-content" id="ac-tooltip-content">
+                                基础: +10 / 护甲: 0 / 盾牌: 0 / 状态: 0 / 情境: 0
+                            </div>
+                            <div class="ac-tooltip-extra" id="ac-tooltip-extra">
+                                命中加值: +0 | 伤害加值: +0
+                            </div>
+                        </div>
+                    </div>
                 </div>
 
                 <!-- 控制面板 -->
@@ -280,6 +266,42 @@
                     </div>
                 </div>
 
+            </div>
+
+            <!-- 主游戏区域 -->
+            <div class="game-main elevation-2">
+                <!-- 任务面板 -->
+                <div class="panel elevation-2 quest-panel">
+                    <h3>
+                        <i class="material-icons">assignment</i>
+                        任务
+                    </h3>
+                    <div id="quest-list" class="quest-list"></div>
+                </div>
+
+                <!-- 地图容器 -->
+                <div id="map-container" class="map-container">
+                    <!-- Canvas 迷雾效果层 -->
+                    <canvas id="fog-canvas" class="fog-canvas-overlay"></canvas>
+
+                    <!-- 地图内容 -->
+                    <div class="dungeon-content">
+                        <div id="map-grid" class="map-grid"></div>
+                    </div>
+                </div>
+
+                <!-- 消息日志 -->
+                <div class="panel message-log-panel">
+                    <h3>
+                        <i class="material-icons">chat</i>
+                        消息日志
+                    </h3>
+                    <div id="message-log" class="message-log"></div>
+                </div>
+            </div>
+
+            <!-- 右侧边栏：物品栏 -->
+            <div class="sidebar-right">
                 <!-- 物品栏 -->
                 <div class="panel elevation-2 inventory-panel">
                     <h3>
@@ -397,7 +419,6 @@
                         </div>
                     </div>
                 </div>
-
 
             </div>
         </div>
@@ -628,7 +649,7 @@
     <script src="/static/LocalGameEngine.js?v=8"></script>
 
     <!-- 2. 核心游戏类 -->
-    <script src="/static/GameCore.js?v=6"></script>
+    <script src="/static/GameCore.js?v=7"></script>
 
     <!-- 3. 角色精灵图系统 - 在UI模块之前加载 -->
     <script src="/static/CharacterSprites.js?v=4"></script>
@@ -642,12 +663,12 @@
     <script src="/static/EffectsManager.js?v=4"></script>
     <script src="/static/EnhancedEffectsManager.js?v=2"></script>
     <script src="/static/MapVisualManager.js?v=1"></script>
-    <script src="/static/UIManager.js?v=16"></script>
+    <script src="/static/UIManager.js?v=17"></script>
     <script src="/static/MapInteraction.js?v=5"></script>
     <script src="/static/MapZoomManager.js?v=7"></script>
     <script src="/static/CameraFollowManager.js?v=1"></script>
     <script src="/static/GameActions.js?v=5"></script>
-    <script src="/static/SaveManager.js?v=6"></script>
+    <script src="/static/SaveManager.js?v=7"></script>
     <script src="/static/SaveImportExport.js?v=4"></script>
     <script src="/static/EventHandler.js?v=5"></script>
     <script src="/static/EventChoiceManager.js?v=6"></script>
