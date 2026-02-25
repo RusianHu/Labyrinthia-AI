@@ -2131,6 +2131,22 @@ body {
     .game-layout {
         grid-template-columns: 1fr;
         grid-template-rows: auto; /* 移动端单列堆叠 */
+        grid-template-areas:
+            "game-main"
+            "sidebar-left"
+            "sidebar-right";
+    }
+
+    .game-main {
+        grid-area: game-main;
+    }
+
+    .sidebar-left {
+        grid-area: sidebar-left;
+    }
+
+    .sidebar-right {
+        grid-area: sidebar-right;
     }
 
     .sidebar-left,
