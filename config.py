@@ -90,6 +90,7 @@ class LLMConfig:
     temperature: float = 0.8
     top_p: float = 0.9
     timeout: int = 120
+    hard_dependency: bool = True  # LLM是否为硬依赖；true时失败将中止主链路
     # 历史记录管理参数
     max_history_tokens: int = 10240  # 历史记录最大token数量
     min_context_entries: int = 5  # 最小保留的上下文条目数
@@ -379,6 +380,9 @@ class Config:
             self.llm.openrouter_base_url = self.llm.openrouter.base_url
             self.llm.openai_base_url = self.llm.openai.base_url
             self.llm.lmstudio_base_url = self.llm.lmstudio.base_url
+
+        if llm_hard_dependency := os.getenv("LLM_HARD_DEPENDENCY"):
+            self.llm.hard_dependency = llm_hard_dependency.lower() in ("true", "1", "yes")
 
         # ------------------- Load Proxy Configuration -------------------
         if proxy_url := os.getenv("PROXY_URL"):

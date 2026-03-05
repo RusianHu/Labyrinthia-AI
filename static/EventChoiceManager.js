@@ -301,8 +301,24 @@ class EventChoiceManager {
 
             // 检查HTTP状态码
             if (!response.ok) {
-                const errorText = await response.text();
-                throw new Error(`HTTP ${response.status}: ${errorText}`);
+                let errorPayload = null;
+                try {
+                    errorPayload = await response.json();
+                } catch (_) {
+                    errorPayload = null;
+                }
+
+                const detail = errorPayload?.detail || {};
+                const errorCode = detail?.error_code || errorPayload?.error_code || '';
+                const message = detail?.message || errorPayload?.message || `HTTP ${response.status}`;
+
+                if (response.status === 503 || errorCode === 'LLM_UNAVAILABLE') {
+                    const llmError = new Error(message || 'LLM服务暂时不可用，事件选择已中止。');
+                    llmError.errorCode = 'LLM_UNAVAILABLE';
+                    throw llmError;
+                }
+
+                throw new Error(message || `HTTP ${response.status}`);
             }
 
             const result = await response.json();
@@ -341,10 +357,20 @@ class EventChoiceManager {
 
         } catch (error) {
             console.error('Error processing choice:', error);
-            window.game?.addMessage(`处理选择时发生错误: ${error.message}`, 'error');
+            const isLLMUnavailable = error?.errorCode === 'LLM_UNAVAILABLE';
+
+            if (isLLMUnavailable) {
+                const message = error?.message || 'LLM服务暂时不可用，事件选择已中止。';
+                window.game?.addMessage(message, 'error');
+                if (typeof window.game?.showLLMUnavailableOverlay === 'function') {
+                    window.game.showLLMUnavailableOverlay(message);
+                }
+            } else {
+                window.game?.addMessage(`处理选择时发生错误: ${error.message}`, 'error');
+            }
 
             // 隐藏LLM交互遮罩（错误情况下）
-            if (window.game) {
+            if (window.game && !isLLMUnavailable) {
                 window.game.hideLLMOverlay();
             }
 

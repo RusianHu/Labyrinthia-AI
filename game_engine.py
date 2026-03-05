@@ -19,7 +19,7 @@ from data_models import (
     TerrainType, CharacterClass, Stats, Ability, EventChoiceContext, EventChoice
 )
 from content_generator import content_generator
-from llm_service import llm_service
+from llm_service import llm_service, LLMUnavailableError
 from data_manager import data_manager
 from progress_manager import progress_manager, ProgressEventType, ProgressContext
 from item_effect_processor import item_effect_processor
@@ -1370,6 +1370,20 @@ class GameEngine:
                     )
                     result["narrative"] = narrative
 
+        except LLMUnavailableError as e:
+            logger.error(f"LLM unavailable while processing action {action}: {e}")
+            return self._make_action_result(
+                False,
+                "LLM服务暂时不可用，已中止本次行动。",
+                events=["LLM服务暂时不可用，请稍后重试。"],
+                error_code="LLM_UNAVAILABLE",
+                retryable=True,
+                reason="llm_unavailable",
+                impact_summary={
+                    "action": action,
+                    "llm_cause": getattr(e, "cause", "unknown"),
+                },
+            )
         except Exception as e:
             logger.error(f"Error processing action {action}: {e}")
             trace_id = str(parameters.get("idempotency_key", "") or f"{action}-{game_state.turn_count}")

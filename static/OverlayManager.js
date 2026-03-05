@@ -28,7 +28,11 @@ Object.assign(LabyrinthiaGame.prototype, {
             }
         } else if (!loading) {
             // 当loading结束时，隐藏LLM遮罩
-            this.hideLLMOverlay();
+            const contentEl = document.querySelector('#partial-overlay .partial-overlay-content');
+            const isLLMUnavailable = !!contentEl?.classList?.contains('llm-unavailable');
+            if (!isLLMUnavailable) {
+                this.hideLLMOverlay();
+            }
         }
     },
 
@@ -186,6 +190,12 @@ Object.assign(LabyrinthiaGame.prototype, {
             this.overlayHideTimeout = null;
         }
 
+        const contentEl = document.querySelector('#partial-overlay .partial-overlay-content');
+        const isLLMUnavailable = !!contentEl?.classList?.contains('llm-unavailable');
+        if (isLLMUnavailable) {
+            return;
+        }
+
         // 完成进度条
         this.updateOverlayProgress(100, '完成！');
 
@@ -194,6 +204,60 @@ Object.assign(LabyrinthiaGame.prototype, {
             this.hidePartialOverlay();
             this.overlayHideTimeout = null;
         }, 500);
+    },
+
+    showLLMUnavailableOverlay(message = 'LLM服务暂时不可用，已中止当前操作。') {
+        if (this.currentProgressInterval) {
+            clearInterval(this.currentProgressInterval);
+            this.currentProgressInterval = null;
+        }
+        if (this.overlayHideTimeout) {
+            clearTimeout(this.overlayHideTimeout);
+            this.overlayHideTimeout = null;
+        }
+
+        let overlay = document.getElementById('partial-overlay');
+        if (!overlay) {
+            this.showPartialOverlay('AI 服务不可用', '当前无法完成本次交互', message);
+            overlay = document.getElementById('partial-overlay');
+        }
+
+        const titleEl = document.getElementById('partial-overlay-title');
+        const subtitleEl = document.getElementById('partial-overlay-subtitle');
+        const progressText = document.getElementById('partial-progress-text');
+        const progressFill = document.getElementById('partial-progress-fill');
+        const contentEl = overlay?.querySelector('.partial-overlay-content');
+
+        if (titleEl) titleEl.textContent = 'AI 服务不可用';
+        if (subtitleEl) subtitleEl.textContent = '当前无法完成本次交互';
+        if (progressText) progressText.textContent = message;
+        if (progressFill) progressFill.style.width = '100%';
+        if (contentEl) {
+            contentEl.classList.add('llm-unavailable');
+
+            let actions = contentEl.querySelector('.overlay-actions');
+            if (!actions) {
+                actions = document.createElement('div');
+                actions.className = 'overlay-actions';
+                actions.innerHTML = `
+                    <button type="button" class="overlay-action-btn" id="llm-unavailable-close-btn">我知道了</button>
+                `;
+                contentEl.appendChild(actions);
+            }
+
+            const closeBtn = contentEl.querySelector('#llm-unavailable-close-btn');
+            if (closeBtn) {
+                closeBtn.onclick = () => {
+                    this.hidePartialOverlay();
+                    this.isLoading = false;
+                    const controlButtons = document.querySelectorAll('.control-btn:not(#transition-button), .dir-btn');
+                    controlButtons.forEach(btn => {
+                        btn.disabled = false;
+                    });
+                };
+            }
+        }
+        if (overlay) overlay.style.display = 'flex';
     },
 
     // 新增：部分遮罩方法（只遮住地图区域）
@@ -227,12 +291,21 @@ Object.assign(LabyrinthiaGame.prototype, {
             document.getElementById('partial-progress-fill').style.width = '0%';
         }
 
+        const contentEl = overlay.querySelector('.partial-overlay-content');
+        if (contentEl) {
+            contentEl.classList.remove('llm-unavailable');
+        }
+
         overlay.style.display = 'flex';
     },
 
     hidePartialOverlay() {
         const overlay = document.getElementById('partial-overlay');
         if (overlay) {
+            const contentEl = overlay.querySelector('.partial-overlay-content');
+            if (contentEl) {
+                contentEl.classList.remove('llm-unavailable');
+            }
             overlay.style.display = 'none';
         }
     },

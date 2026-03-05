@@ -2516,6 +2516,64 @@ body {
     margin: 0;
 }
 
+.partial-overlay-content.llm-unavailable {
+    border-color: rgba(229, 57, 53, 0.75);
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.55),
+                0 0 24px rgba(229, 57, 53, 0.35);
+}
+
+.partial-overlay-content.llm-unavailable .overlay-header h3 {
+    color: #ff8a80;
+}
+
+.partial-overlay-content.llm-unavailable .overlay-header p {
+    color: #ffccbc;
+}
+
+.partial-overlay-content.llm-unavailable .progress-bar {
+    background: rgba(229, 57, 53, 0.18);
+}
+
+.partial-overlay-content.llm-unavailable .progress-fill {
+    background: linear-gradient(90deg, #d32f2f, #f06292);
+}
+
+.partial-overlay-content.llm-unavailable .progress-text {
+    color: #ffe0e0;
+}
+
+.partial-overlay-content .overlay-actions {
+    margin-top: 14px;
+    display: flex;
+    justify-content: center;
+}
+
+.partial-overlay-content .overlay-action-btn {
+    border: 1px solid rgba(126, 87, 194, 0.55);
+    background: rgba(94, 53, 177, 0.22);
+    color: #f3e5f5;
+    border-radius: 8px;
+    padding: 8px 16px;
+    font-size: 0.9rem;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.partial-overlay-content .overlay-action-btn:hover {
+    background: rgba(126, 87, 194, 0.35);
+    transform: translateY(-1px);
+}
+
+.partial-overlay-content.llm-unavailable .overlay-action-btn {
+    border-color: rgba(244, 67, 54, 0.5);
+    background: rgba(211, 47, 47, 0.25);
+    color: #fff1f0;
+}
+
+.partial-overlay-content.llm-unavailable .overlay-action-btn:hover {
+    background: rgba(229, 57, 53, 0.4);
+}
+
 /* 任务列表样式 */
 .quest-list {
     display: flex;

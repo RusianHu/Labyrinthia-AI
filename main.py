@@ -27,7 +27,7 @@ from pydantic import BaseModel
 from config import config
 from game_engine import game_engine
 from data_manager import data_manager
-from llm_service import llm_service
+from llm_service import llm_service, LLMUnavailableError
 from progress_manager import progress_manager
 from event_choice_system import event_choice_system
 from data_models import GameState
@@ -802,6 +802,9 @@ async def perform_action(request: ActionRequest, http_request: Request, response
             rule_version=rule_version_for_log,
         )
 
+        if normalized_result.get("error_code") == "LLM_UNAVAILABLE":
+            return JSONResponse(status_code=503, content=normalized_result)
+
         return normalized_result
 
     except HTTPException as exc:
@@ -818,6 +821,21 @@ async def perform_action(request: ActionRequest, http_request: Request, response
             },
         )
         return JSONResponse(status_code=status_code, content=normalized)
+    except LLMUnavailableError as e:
+        logger.error(f"LLM unavailable in /api/action, trace_id={trace_id}: {e}")
+        normalized = _normalize_action_response(
+            request.action,
+            trace_id,
+            {
+                "success": False,
+                "message": "LLM服务暂时不可用，已中止本次行动。",
+                "events": ["LLM服务暂时不可用，请稍后重试。"],
+                "error_code": "LLM_UNAVAILABLE",
+                "retryable": True,
+                "reason": "llm_unavailable",
+            },
+        )
+        return JSONResponse(status_code=503, content=normalized)
     except Exception as e:
         logger.error(f"Failed to process action, trace_id={trace_id}: {e}")
         return _normalize_action_response(
@@ -961,6 +979,17 @@ async def handle_llm_event(request: LLMEventRequest, http_request: Request, resp
 
     except HTTPException:
         raise
+    except LLMUnavailableError as e:
+        logger.error(f"LLM unavailable in /api/llm-event: {e}")
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "message": "LLM服务暂时不可用，事件处理已中止。",
+                "error_code": "LLM_UNAVAILABLE",
+                "retryable": True,
+                "reason": "llm_unavailable",
+            },
+        )
     except Exception as e:
         logger.error(f"Failed to process LLM event: {e}")
         raise HTTPException(status_code=500, detail=f"处理LLM事件失败: {str(e)}")
@@ -1717,6 +1746,17 @@ async def process_event_choice(request: EventChoiceRequest, http_request: Reques
 
     except HTTPException:
         raise
+    except LLMUnavailableError as e:
+        logger.error(f"LLM unavailable in /api/event-choice: {e}")
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "message": "LLM服务暂时不可用，事件选择已中止。",
+                "error_code": "LLM_UNAVAILABLE",
+                "retryable": True,
+                "reason": "llm_unavailable",
+            },
+        )
     except Exception as e:
         logger.error(f"Failed to process event choice: {e}")
         raise HTTPException(status_code=500, detail=f"处理事件选择失败: {str(e)}")

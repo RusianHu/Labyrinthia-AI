@@ -263,6 +263,14 @@ Object.assign(LabyrinthiaGame.prototype, {
             return;
         }
 
+        if (errorCode === 'LLM_UNAVAILABLE' || errorCode === 'LLM_TIMEOUT') {
+            this.addMessage(message, 'error');
+            if (typeof this.showLLMUnavailableOverlay === 'function') {
+                this.showLLMUnavailableOverlay(message);
+            }
+            return;
+        }
+
         if (result?.retryable) {
             this.addMessage(`${message}（可重试）`, 'error');
             return;

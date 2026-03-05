@@ -13,6 +13,19 @@ from gemini_api import GeminiAPI
 from openrouter_client import OpenRouterClient, ChatError
 from openai_api_tool import OpenAIAPITool
 from config import config, LLMProvider
+
+
+class LLMUnavailableError(RuntimeError):
+    """LLM服务不可用时抛出的异常。
+
+    当 LLM 请求因超时、API错误、网络不可达或返回空响应而失败时，
+    本异常会被抛出并沿调用栈向上传播，让上层（GameEngine / API层）
+    统一返回 error_code='LLM_UNAVAILABLE' 给前端。
+    """
+
+    def __init__(self, message: str = "LLM服务不可用", *, cause: str = "unknown"):
+        self.cause = cause
+        super().__init__(message)
 from data_models import Character, Monster, GameMap, Quest, GameState, Item
 from encoding_utils import encoding_converter
 from prompt_manager import prompt_manager
@@ -213,6 +226,7 @@ class LLMService:
         # 使用信号量控制并发
         async with async_task_manager.llm_semaphore:
             loop = asyncio.get_event_loop()
+            hard_dependency = bool(getattr(config.llm, "hard_dependency", True))
 
             current_context_key = llm_context_manager.get_current_context_key()
 
@@ -279,6 +293,11 @@ class LLMService:
                                             return part["text"]
 
                         logger.warning("LLM response format unexpected")
+                        if hard_dependency:
+                            raise LLMUnavailableError(
+                                "LLM返回了意外的空响应",
+                                cause="empty_response",
+                            )
                         return ""
 
                     elif self.provider == LLMProvider.OPENROUTER:
@@ -286,28 +305,56 @@ class LLMService:
                         if "max_output_tokens" in generation_config:
                             generation_config["max_tokens"] = generation_config.pop("max_output_tokens")
 
-                        return self.client.chat_once(
+                        response_text = self.client.chat_once(
                             prompt=processed_prompt,
                             model=config.llm.model_name,
                             **generation_config
                         )
+                        if isinstance(response_text, str) and response_text.strip():
+                            return response_text
+                        if hard_dependency:
+                            raise LLMUnavailableError(
+                                "LLM返回了空文本响应",
+                                cause="empty_response",
+                            )
+                        return ""
 
                     elif self.provider == LLMProvider.OPENAI or self.provider == LLMProvider.LMSTUDIO:
                         # OpenAI API使用 `max_tokens` 而不是 `max_output_tokens`
                         if "max_output_tokens" in generation_config:
                             generation_config["max_tokens"] = generation_config.pop("max_output_tokens")
 
-                        return self.client.single_chat(
+                        response_text = self.client.single_chat(
                             message=processed_prompt,
                             model=config.llm.model_name,
                             **generation_config
                         )
+                        if isinstance(response_text, str) and response_text.strip():
+                            return response_text
+                        if hard_dependency:
+                            raise LLMUnavailableError(
+                                "LLM返回了空文本响应",
+                                cause="empty_response",
+                            )
+                        return ""
 
                 except ChatError as e:
                     logger.error(f"LLM generation error (OpenRouter): {e}")
+                    if hard_dependency:
+                        raise LLMUnavailableError(
+                            f"LLM请求失败: {e}",
+                            cause="chat_error",
+                        ) from e
                     return ""
+                except LLMUnavailableError:
+                    raise
                 except Exception as e:
                     logger.error(f"LLM generation error: {e}")
+                    if hard_dependency:
+                        raise LLMUnavailableError(
+                            f"LLM请求异常: {e}",
+                            cause="exception",
+                        ) from e
                     return ""
 
             # 使用超时控制
@@ -322,6 +369,11 @@ class LLMService:
                 return result
             except asyncio.TimeoutError:
                 logger.error(f"LLM request timed out after {timeout}s")
+                if hard_dependency:
+                    raise LLMUnavailableError(
+                        f"LLM请求超时（{timeout}秒）",
+                        cause="timeout",
+                    )
                 return ""
 
     async def _async_generate_json(self, prompt: str, schema: Optional[Dict] = None, timeout: Optional[float] = None, **kwargs) -> Dict[str, Any]:
@@ -340,6 +392,7 @@ class LLMService:
         # 使用信号量控制并发
         async with async_task_manager.llm_semaphore:
             loop = asyncio.get_event_loop()
+            hard_dependency = bool(getattr(config.llm, "hard_dependency", True))
 
             current_context_key = llm_context_manager.get_current_context_key()
 
@@ -398,6 +451,11 @@ class LLMService:
                                     return parsed_json
 
                         logger.warning("LLM JSON response format unexpected")
+                        if hard_dependency:
+                            raise LLMUnavailableError(
+                                "LLM返回了无效的JSON响应",
+                                cause="invalid_json_response",
+                            )
                         return {}
 
                     elif self.provider == LLMProvider.OPENROUTER:
@@ -405,12 +463,20 @@ class LLMService:
                         if "max_output_tokens" in generation_config:
                             generation_config["max_tokens"] = generation_config.pop("max_output_tokens")
 
-                        return self.client.chat_json_once(
+                        response_json = self.client.chat_json_once(
                             prompt=processed_prompt,
                             model=config.llm.model_name,
                             schema=schema,
                             **generation_config
                         )
+                        if isinstance(response_json, dict) and response_json:
+                            return response_json
+                        if hard_dependency:
+                            raise LLMUnavailableError(
+                                "LLM返回了空JSON响应",
+                                cause="empty_json_response",
+                            )
+                        return {}
 
                     elif self.provider == LLMProvider.OPENAI or self.provider == LLMProvider.LMSTUDIO:
                         # OpenAI API使用 `max_tokens` 而不是 `max_output_tokens`
@@ -432,14 +498,33 @@ class LLMService:
                             **generation_config
                         )
 
-                        # 解析JSON响应
-                        return self._parse_json_response(response_text)
+                        parsed_json = self._parse_json_response(response_text)
+                        if isinstance(parsed_json, dict) and parsed_json:
+                            return parsed_json
+                        if hard_dependency:
+                            raise LLMUnavailableError(
+                                "LLM返回了空JSON响应",
+                                cause="empty_json_response",
+                            )
+                        return {}
 
                 except ChatError as e:
                     logger.error(f"LLM JSON generation error (OpenRouter): {e}")
+                    if hard_dependency:
+                        raise LLMUnavailableError(
+                            f"LLM JSON请求失败: {e}",
+                            cause="chat_error",
+                        ) from e
                     return {}
+                except LLMUnavailableError:
+                    raise
                 except Exception as e:
                     logger.error(f"LLM JSON generation error: {e}")
+                    if hard_dependency:
+                        raise LLMUnavailableError(
+                            f"LLM JSON请求异常: {e}",
+                            cause="exception",
+                        ) from e
                     return {}
 
             # 使用超时控制
@@ -454,6 +539,11 @@ class LLMService:
                 return result
             except asyncio.TimeoutError:
                 logger.error(f"LLM JSON request timed out after {timeout}s")
+                if hard_dependency:
+                    raise LLMUnavailableError(
+                        f"LLM JSON请求超时（{timeout}秒）",
+                        cause="timeout",
+                    )
                 return {}
 
     @async_performance_monitor
