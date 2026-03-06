@@ -427,6 +427,10 @@
                             <span class="material-icons">settings_suggest</span>
                             选择处理测试
                         </button>
+                        <button class="test-btn danger" onclick="testLLMTerminationHandling()">
+                            <span class="material-icons">power_off</span>
+                            LLM 宕机终止演示（真实调用）
+                        </button>
                         <button class="test-btn" onclick="testLLMPermissions()">
                             <span class="material-icons">admin_panel_settings</span>
                             LLM权限测试
@@ -632,6 +636,16 @@
             button.removeAttribute('data-original-text');
         }
 
+        function mapHttpErrorToLabel(status, errorCode) {
+            if (status === 503 || errorCode === 'LLM_UNAVAILABLE') {
+                return 'LLM_UNAVAILABLE';
+            }
+            if (errorCode) {
+                return errorCode;
+            }
+            return `HTTP_${status}`;
+        }
+
         async function withLoadingButton(button, asyncFunction) {
             setButtonLoading(button, true);
             try {
@@ -641,6 +655,24 @@
             } finally {
                 setButtonLoading(button, false);
             }
+        }
+
+        function triggerTerminationVisual(payload = {}) {
+            const reason = payload?.reason || payload?.error_code || 'llm_unavailable';
+            const message = payload?.message || 'LLM服务暂时不可用，调用已终止。';
+            const title = payload?.title || 'AI 服务不可用';
+            const subtitle = payload?.subtitle || '测试调用已终止';
+
+            if (window.game && typeof window.game.showLLMUnavailableOverlay === 'function') {
+                window.game.showLLMUnavailableOverlay(message, {
+                    reason,
+                    title,
+                    subtitle,
+                });
+                return;
+            }
+
+            log('⚠️ 游戏实例不可用，无法展示终止视觉效果', 'warning');
         }
 
         // ==================== 基础功能测试 ====================
@@ -792,16 +824,22 @@
                         body: JSON.stringify({ test_message: '这是一个连接测试' })
                     });
 
-                    if (response.ok) {
-                        const result = await response.json();
-                        if (result.success) {
-                            log('✅ Gemini API 连接成功', 'success');
-                            log(`📝 响应: ${result.response || '无响应内容'}`, 'info');
-                        } else {
-                            log(`❌ Gemini API 测试失败: ${result.message}`, 'error');
-                        }
-                    } else {
-                        log(`❌ Gemini API 请求失败: HTTP ${response.status}`, 'error');
+                    const result = await response.json().catch(() => ({}));
+                    if (response.ok && result.success) {
+                        log('✅ Gemini API 连接成功', 'success');
+                        log(`📝 响应: ${result.response || '无响应内容'}`, 'info');
+                        return;
+                    }
+
+                    const errorLabel = mapHttpErrorToLabel(response.status, result?.error_code);
+                    log(`❌ Gemini API 测试失败(${errorLabel}): ${result?.message || '未知错误'}`, 'error');
+
+                    if (errorLabel === 'LLM_UNAVAILABLE') {
+                        triggerTerminationVisual({
+                            ...result,
+                            title: 'Gemini 调用中断',
+                            subtitle: '真实调用失败，终止链路已生效',
+                        });
                     }
                 } catch (error) {
                     log(`❌ Gemini API 连接异常: ${error.message}`, 'error');
@@ -821,16 +859,22 @@
                         body: JSON.stringify({ test_message: '这是一个连接测试' })
                     });
 
-                    if (response.ok) {
-                        const result = await response.json();
-                        if (result.success) {
-                            log('✅ OpenRouter API 连接成功', 'success');
-                            log(`📝 响应: ${result.response || '无响应内容'}`, 'info');
-                        } else {
-                            log(`❌ OpenRouter API 测试失败: ${result.message}`, 'error');
-                        }
-                    } else {
-                        log(`❌ OpenRouter API 请求失败: HTTP ${response.status}`, 'error');
+                    const result = await response.json().catch(() => ({}));
+                    if (response.ok && result.success) {
+                        log('✅ OpenRouter API 连接成功', 'success');
+                        log(`📝 响应: ${result.response || '无响应内容'}`, 'info');
+                        return;
+                    }
+
+                    const errorLabel = mapHttpErrorToLabel(response.status, result?.error_code);
+                    log(`❌ OpenRouter API 测试失败(${errorLabel}): ${result?.message || '未知错误'}`, 'error');
+
+                    if (errorLabel === 'LLM_UNAVAILABLE') {
+                        triggerTerminationVisual({
+                            ...result,
+                            title: 'OpenRouter 调用中断',
+                            subtitle: '真实调用失败，终止链路已生效',
+                        });
                     }
                 } catch (error) {
                     log(`❌ OpenRouter API 连接异常: ${error.message}`, 'error');
@@ -853,19 +897,25 @@
                         })
                     });
 
-                    if (response.ok) {
-                        const result = await response.json();
-                        if (result.success) {
-                            log('✅ 内容生成测试成功', 'success');
-                            log(`📦 生成内容类型: ${result.content_type || '未知'}`, 'info');
-                            if (result.generated_content) {
-                                log(`📝 生成内容: ${JSON.stringify(result.generated_content).substring(0, 100)}...`, 'info');
-                            }
-                        } else {
-                            log(`❌ 内容生成测试失败: ${result.message}`, 'error');
+                    const result = await response.json().catch(() => ({}));
+                    if (response.ok && result.success) {
+                        log('✅ 内容生成测试成功', 'success');
+                        log(`📦 生成内容类型: ${result.content_type || '未知'}`, 'info');
+                        if (result.generated_content) {
+                            log(`📝 生成内容: ${JSON.stringify(result.generated_content).substring(0, 100)}...`, 'info');
                         }
-                    } else {
-                        log(`❌ 内容生成请求失败: HTTP ${response.status}`, 'error');
+                        return;
+                    }
+
+                    const errorLabel = mapHttpErrorToLabel(response.status, result?.error_code);
+                    log(`❌ 内容生成测试失败(${errorLabel}): ${result?.message || '未知错误'}`, 'error');
+
+                    if (errorLabel === 'LLM_UNAVAILABLE') {
+                        triggerTerminationVisual({
+                            ...result,
+                            title: '内容生成调用中断',
+                            subtitle: '真实生成链路已终止',
+                        });
                     }
                 } catch (error) {
                     log(`❌ 内容生成测试异常: ${error.message}`, 'error');
@@ -1071,6 +1121,58 @@
                     }
                 } catch (error) {
                     log(`❌ LLM权限测试异常: ${error.message}`, 'error');
+                }
+            });
+        }
+
+        async function testLLMTerminationHandling() {
+            const button = event.target;
+            await withLoadingButton(button, async () => {
+                log('开始 LLM 宕机终止演示（真实调用）...', 'warning');
+
+                try {
+                    if (window.game && typeof window.game.showLLMOverlay === 'function') {
+                        window.game.showLLMOverlay('interact');
+                    }
+
+                    const response = await fetch('/api/test/llm-termination-probe', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            probe_text: '用于验证 LLM 不可用时是否体面终止',
+                            timeout: 20
+                        })
+                    });
+
+                    const result = await response.json().catch(() => ({}));
+
+                    if (response.ok && result.success) {
+                        log('✅ 真实探针调用成功，LLM当前可用', 'success');
+                        log(`⏱️ 耗时: ${result.elapsed_ms || 0} ms`, 'info');
+                        log(`📝 响应: ${result.response || '无响应内容'}`, 'info');
+                        if (window.game && typeof window.game.hideLLMOverlay === 'function') {
+                            window.game.hideLLMOverlay();
+                        }
+                        return;
+                    }
+
+                    const errorLabel = mapHttpErrorToLabel(response.status, result?.error_code);
+                    log(`❌ 真实探针调用失败(${errorLabel}): ${result?.message || '未知错误'}`, 'error');
+
+                    if (errorLabel === 'LLM_UNAVAILABLE') {
+                        triggerTerminationVisual({
+                            ...result,
+                            title: '真实调用终止',
+                            subtitle: 'LLM不可用，演示链路已终止',
+                        });
+                    } else if (window.game && typeof window.game.hideLLMOverlay === 'function') {
+                        window.game.hideLLMOverlay();
+                    }
+                } catch (error) {
+                    log(`❌ 宕机终止演示异常: ${error.message}`, 'error');
+                    if (window.game && typeof window.game.hideLLMOverlay === 'function') {
+                        window.game.hideLLMOverlay();
+                    }
                 }
             });
         }

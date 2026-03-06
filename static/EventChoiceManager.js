@@ -363,7 +363,11 @@ class EventChoiceManager {
                 const message = error?.message || 'LLM服务暂时不可用，事件选择已中止。';
                 window.game?.addMessage(message, 'error');
                 if (typeof window.game?.showLLMUnavailableOverlay === 'function') {
-                    window.game.showLLMUnavailableOverlay(message);
+                    window.game.showLLMUnavailableOverlay(message, {
+                        reason: 'llm_unavailable',
+                        title: 'AI 事件链路中断',
+                        subtitle: '本次选项处理已终止',
+                    });
                 }
             } else {
                 window.game?.addMessage(`处理选择时发生错误: ${error.message}`, 'error');

@@ -266,7 +266,14 @@ Object.assign(LabyrinthiaGame.prototype, {
         if (errorCode === 'LLM_UNAVAILABLE' || errorCode === 'LLM_TIMEOUT') {
             this.addMessage(message, 'error');
             if (typeof this.showLLMUnavailableOverlay === 'function') {
-                this.showLLMUnavailableOverlay(message);
+                const reason = result?.reason || (errorCode === 'LLM_TIMEOUT' ? 'timeout' : 'llm_unavailable');
+                const llmCause = result?.impact_summary?.llm_cause || result?.cause || '';
+                const detailMessage = llmCause ? `${message}（原因: ${llmCause}）` : message;
+                this.showLLMUnavailableOverlay(detailMessage, {
+                    reason,
+                    title: errorCode === 'LLM_TIMEOUT' ? 'AI 响应超时' : 'AI 服务不可用',
+                    subtitle: '当前行动已终止，请稍后重试',
+                });
             }
             return;
         }

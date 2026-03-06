@@ -2522,6 +2522,24 @@ body {
                 0 0 24px rgba(229, 57, 53, 0.35);
 }
 
+.partial-overlay-content.llm-unavailable::before {
+    content: '';
+    position: absolute;
+    inset: -1px;
+    border-radius: 12px;
+    pointer-events: none;
+    border: 1px solid rgba(255, 138, 128, 0.35);
+    animation: llmTerminationPulse 0.9s ease-out;
+}
+
+.partial-overlay-content.llm-termination-pulse {
+    animation: llmTerminationPulse 0.9s ease-out;
+}
+
+.partial-overlay-content.llm-termination-shake {
+    animation: llmTerminationShake 0.42s ease-in-out;
+}
+
 .partial-overlay-content.llm-unavailable .overlay-header h3 {
     color: #ff8a80;
 }
@@ -2572,6 +2590,35 @@ body {
 
 .partial-overlay-content.llm-unavailable .overlay-action-btn:hover {
     background: rgba(229, 57, 53, 0.4);
+}
+
+@keyframes llmTerminationPulse {
+    0% {
+        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.55),
+                    0 0 8px rgba(255, 138, 128, 0.18);
+        transform: translate(-50%, -50%) scale(0.992);
+    }
+    45% {
+        box-shadow: 0 10px 38px rgba(0, 0, 0, 0.62),
+                    0 0 36px rgba(255, 82, 82, 0.46);
+        transform: translate(-50%, -50%) scale(1.02);
+    }
+    100% {
+        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.55),
+                    0 0 24px rgba(229, 57, 53, 0.35);
+        transform: translate(-50%, -50%) scale(1);
+    }
+}
+
+@keyframes llmTerminationShake {
+    0% { transform: translate(-50%, -50%) translateX(0); }
+    15% { transform: translate(-50%, -50%) translateX(-8px); }
+    30% { transform: translate(-50%, -50%) translateX(8px); }
+    45% { transform: translate(-50%, -50%) translateX(-6px); }
+    60% { transform: translate(-50%, -50%) translateX(6px); }
+    75% { transform: translate(-50%, -50%) translateX(-3px); }
+    90% { transform: translate(-50%, -50%) translateX(3px); }
+    100% { transform: translate(-50%, -50%) translateX(0); }
 }
 
 /* 任务列表样式 */

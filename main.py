@@ -2887,6 +2887,19 @@ if config.game.debug_mode:
                 "provider": config.llm.provider.value,
                 "model": config.llm.model_name
             }
+        except LLMUnavailableError as e:
+            logger.error(f"Gemini API unavailable: {e}")
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "success": False,
+                    "message": "LLM服务暂时不可用，本次Gemini真实调用已中止。",
+                    "error_code": "LLM_UNAVAILABLE",
+                    "retryable": True,
+                    "reason": "llm_unavailable",
+                    "cause": getattr(e, "cause", "unknown"),
+                },
+            )
         except Exception as e:
             logger.error(f"Gemini API test failed: {e}")
             return {
@@ -2896,28 +2909,109 @@ if config.game.debug_mode:
 
     @app.post("/api/test/openrouter")
     async def test_openrouter_api(request: Request):
-        """测试 OpenRouter API 连接"""
+        """测试 OpenRouter API 连接（真实 OpenRouter 调用，不修改全局 provider）。"""
         try:
-            request_data = await request.json()
-            test_message = request_data.get("test_message", "Hello, this is a test")
-
-            # 临时切换到OpenRouter进行测试
-            original_provider = config.llm.provider
-            from config import LLMProvider
-            config.llm.provider = LLMProvider.OPENROUTER
-
             try:
-                response = await llm_service._async_generate(f"请用中文回复这条测试消息：{test_message}")
-                return {
-                    "success": True,
-                    "response": response,
-                    "provider": "openrouter",
-                    "model": config.llm.model_name
-                }
-            finally:
-                # 恢复原始提供商
-                config.llm.provider = original_provider
+                request_data = await request.json()
+            except Exception:
+                request_data = {}
 
+            test_message = request_data.get("test_message", "Hello, this is a test")
+            model = str(request_data.get("model") or config.llm.openrouter.model_name or "").strip() or "google/gemini-2.0-flash-001"
+            base_url = str(getattr(config.llm.openrouter, "base_url", "") or config.llm.openrouter_base_url or "https://openrouter.ai/api/v1")
+            api_key = str(getattr(config.llm.openrouter, "api_key", "") or "")
+
+            if not api_key.strip():
+                return JSONResponse(
+                    status_code=400,
+                    content={
+                        "success": False,
+                        "message": "OpenRouter API Key 未配置（请设置 OPENROUTER_API_KEY）",
+                        "error_code": "OPENROUTER_API_KEY_MISSING",
+                        "retryable": False,
+                        "reason": "missing_api_key",
+                    },
+                )
+
+            proxies = None
+            if config.llm.use_proxy and config.llm.proxy_url:
+                proxies = {
+                    "http": config.llm.proxy_url,
+                    "https": config.llm.proxy_url,
+                }
+
+            from openrouter_client import OpenRouterClient, ChatError
+
+            if not async_task_manager._initialized:
+                async_task_manager.initialize()
+
+            client = OpenRouterClient(
+                api_key=api_key,
+                base_url=base_url,
+                default_model=model,
+                timeout=int(getattr(config.llm, "timeout", 60) or 60),
+                proxies=proxies,
+                referer="https://github.com/Labyrinthia-AI/Labyrinthia-AI",
+                title=config.game.game_name,
+            )
+
+            prompt = f"请用中文回复这条测试消息：{test_message}"
+
+            loop = asyncio.get_event_loop()
+            started_at = time.perf_counter()
+
+            async with async_task_manager.llm_semaphore:
+                try:
+                    def _sync_call_openrouter():
+                        try:
+                            return client.chat_once(prompt, model=model)
+                        except ChatError as e:
+                            raise LLMUnavailableError(
+                                f"LLM请求失败: {e}",
+                                cause="chat_error",
+                            ) from e
+                        except Exception as e:
+                            raise LLMUnavailableError(
+                                f"LLM请求异常: {e}",
+                                cause="exception",
+                            ) from e
+
+                    response_text = await asyncio.wait_for(
+                        loop.run_in_executor(async_task_manager.llm_executor, _sync_call_openrouter),
+                        timeout=float(getattr(config.llm, "timeout", 60) or 60),
+                    )
+
+                    if not isinstance(response_text, str) or not response_text.strip():
+                        raise LLMUnavailableError("LLM返回了空文本响应", cause="empty_response")
+
+                    elapsed_ms = int((time.perf_counter() - started_at) * 1000)
+                    return {
+                        "success": True,
+                        "response": response_text,
+                        "provider": "openrouter",
+                        "model": model,
+                        "elapsed_ms": elapsed_ms,
+                    }
+
+                except asyncio.TimeoutError as e:
+                    raise LLMUnavailableError(
+                        f"LLM请求超时（{getattr(config.llm, 'timeout', 60)}秒）",
+                        cause="timeout",
+                    ) from e
+
+        except LLMUnavailableError as e:
+            logger.error(f"OpenRouter API unavailable: {e}")
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "success": False,
+                    "message": "LLM服务暂时不可用，本次OpenRouter真实调用已中止。",
+                    "error_code": "LLM_UNAVAILABLE",
+                    "retryable": True,
+                    "reason": "llm_unavailable",
+                    "cause": getattr(e, "cause", "unknown"),
+                },
+            )
         except Exception as e:
             logger.error(f"OpenRouter API test failed: {e}")
             return {
@@ -2986,12 +3080,93 @@ if config.game.debug_mode:
                 "message": "无法生成指定类型的内容"
             }
 
+        except LLMUnavailableError as e:
+            logger.error(f"Content generation unavailable: {e}")
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "success": False,
+                    "message": "LLM服务暂时不可用，本次内容生成测试已中止。",
+                    "error_code": "LLM_UNAVAILABLE",
+                    "retryable": True,
+                    "reason": "llm_unavailable",
+                    "cause": getattr(e, "cause", "unknown"),
+                },
+            )
         except Exception as e:
             logger.error(f"Content generation test failed: {e}")
             return {
                 "success": False,
                 "message": f"内容生成测试失败: {str(e)}"
             }
+
+    @app.post("/api/test/llm-termination-probe")
+    async def test_llm_termination_probe(request: Request):
+        """真实触发一次LLM调用，用于演示宕机时的终止链路。"""
+        try:
+            request_data = await request.json()
+        except Exception:
+            request_data = {}
+
+        probe_text = str(request_data.get("probe_text", "请回复：LLM探针正常。") or "请回复：LLM探针正常。")
+        timeout_value = request_data.get("timeout")
+        timeout: Optional[float] = None
+        if timeout_value is not None:
+            try:
+                timeout = max(1.0, float(timeout_value))
+            except (TypeError, ValueError):
+                timeout = None
+
+        prompt = (
+            "你是 Labyrinthia AI 的可用性探针。"
+            "请用中文简短回复“LLM探针正常”，不要附加多余内容。"
+            f"\n附加上下文：{probe_text}"
+        )
+
+        started_at = time.perf_counter()
+        try:
+            response_text = await llm_service._async_generate(prompt, timeout=timeout)
+            if not isinstance(response_text, str) or not response_text.strip():
+                raise LLMUnavailableError("LLM返回了空文本响应", cause="empty_response")
+
+            elapsed_ms = int((time.perf_counter() - started_at) * 1000)
+            return {
+                "success": True,
+                "message": "真实LLM探针调用成功",
+                "response": response_text.strip(),
+                "elapsed_ms": elapsed_ms,
+                "provider": config.llm.provider.value,
+                "model": config.llm.model_name,
+            }
+        except LLMUnavailableError as e:
+            elapsed_ms = int((time.perf_counter() - started_at) * 1000)
+            logger.error(f"LLM termination probe unavailable: {e}")
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "success": False,
+                    "message": "LLM服务暂时不可用，真实调用已终止。",
+                    "error_code": "LLM_UNAVAILABLE",
+                    "retryable": True,
+                    "reason": "llm_unavailable",
+                    "cause": getattr(e, "cause", "unknown"),
+                    "elapsed_ms": elapsed_ms,
+                },
+            )
+        except Exception as e:
+            elapsed_ms = int((time.perf_counter() - started_at) * 1000)
+            logger.error(f"LLM termination probe failed: {e}")
+            return JSONResponse(
+                status_code=500,
+                content={
+                    "success": False,
+                    "message": f"真实LLM探针调用失败: {str(e)}",
+                    "error_code": "INTERNAL_ERROR",
+                    "retryable": True,
+                    "reason": "probe_failed",
+                    "elapsed_ms": elapsed_ms,
+                },
+            )
 
     @app.post("/api/test/map-generation")
     async def test_map_generation(request: Request):

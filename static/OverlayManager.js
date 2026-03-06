@@ -206,7 +206,92 @@ Object.assign(LabyrinthiaGame.prototype, {
         }, 500);
     },
 
-    showLLMUnavailableOverlay(message = 'LLM服务暂时不可用，已中止当前操作。') {
+    playLLMTerminationEffect({
+        reason = '服务暂不可用',
+        detail = '',
+        overlayContent = null,
+    } = {}) {
+        const contentEl = overlayContent || document.querySelector('#partial-overlay .partial-overlay-content');
+        if (!contentEl) {
+            return;
+        }
+
+        const normalizedReason = String(reason || 'llm_unavailable');
+        const reasonLower = normalizedReason.toLowerCase();
+        const isTimeout = reasonLower.includes('timeout');
+        const normalizedErrorCode = isTimeout ? 'LLM_TIMEOUT' : 'LLM_UNAVAILABLE';
+
+        if (Array.isArray(this._llmTerminationTimeouts)) {
+            this._llmTerminationTimeouts.forEach((timerId) => clearTimeout(timerId));
+        }
+        this._llmTerminationTimeouts = [];
+
+        // 通过 CSS 动画实现“抖动 + 脉冲”，避免覆盖遮罩居中 transform（translate(-50%, -50%)）
+        contentEl.classList.remove('llm-termination-pulse', 'llm-termination-shake');
+        // 强制 reflow 以重启 CSS 动画
+        void contentEl.offsetWidth;
+        contentEl.classList.add('llm-termination-pulse', 'llm-termination-shake');
+
+        // anime.js 仅用于非 transform 的视觉增强
+        if (typeof anime === 'function') {
+            anime.remove(contentEl);
+            anime({
+                targets: contentEl,
+                boxShadow: [
+                    '0 8px 32px rgba(0, 0, 0, 0.55), 0 0 24px rgba(229, 57, 53, 0.35)',
+                    '0 8px 38px rgba(0, 0, 0, 0.65), 0 0 36px rgba(255, 82, 82, 0.55)',
+                    '0 8px 32px rgba(0, 0, 0, 0.55), 0 0 24px rgba(229, 57, 53, 0.35)'
+                ],
+                duration: 760,
+                easing: 'easeOutCubic',
+            });
+        }
+
+        this._llmTerminationTimeouts.push(setTimeout(() => {
+            contentEl.classList.remove('llm-termination-shake');
+        }, 520));
+
+        this._llmTerminationTimeouts.push(setTimeout(() => {
+            contentEl.classList.remove('llm-termination-pulse');
+        }, 920));
+
+        const payload = {
+            reason: normalizedReason,
+            detail,
+            error_code: normalizedErrorCode,
+            at: new Date().toISOString(),
+        };
+
+        if (typeof this.addMessage === 'function') {
+            const messageLogExists = !!document.getElementById('message-log');
+            if (messageLogExists) {
+                this.addMessage(`⚠️ LLM调用已终止（${normalizedReason}）${detail ? `：${detail}` : ''}`, 'error');
+            } else {
+                console.warn('[LLMTerminationEffect] message-log 不存在，跳过 addMessage');
+            }
+        }
+
+        if (this.debugMode) {
+            this.lastLLMResponse = {
+                ...(this.lastLLMResponse || {}),
+                timestamp: payload.at,
+                success: false,
+                reason: normalizedReason,
+                error_code: normalizedErrorCode,
+                message: detail || 'LLM服务暂时不可用，调用已终止。',
+                termination_effect: payload,
+            };
+            if (typeof this.updateDebugInfo === 'function') {
+                this.updateDebugInfo();
+            }
+        }
+
+        window.dispatchEvent(new CustomEvent('labyrinthia:llm-terminated', {
+            detail: payload,
+        }));
+    },
+
+    showLLMUnavailableOverlay(message = 'LLM服务暂时不可用，已中止当前操作。', options = {}) {
         if (this.currentProgressInterval) {
             clearInterval(this.currentProgressInterval);
             this.currentProgressInterval = null;
@@ -216,9 +301,15 @@ Object.assign(LabyrinthiaGame.prototype, {
             this.overlayHideTimeout = null;
         }
 
+        const {
+            title = 'AI 服务不可用',
+            subtitle = '当前无法完成本次交互',
+            reason = 'llm_unavailable',
+        } = options || {};
+
         let overlay = document.getElementById('partial-overlay');
         if (!overlay) {
-            this.showPartialOverlay('AI 服务不可用', '当前无法完成本次交互', message);
+            this.showPartialOverlay(title, subtitle, message);
             overlay = document.getElementById('partial-overlay');
         }
 
@@ -228,12 +319,19 @@ Object.assign(LabyrinthiaGame.prototype, {
         const progressFill = document.getElementById('partial-progress-fill');
         const contentEl = overlay?.querySelector('.partial-overlay-content');
 
-        if (titleEl) titleEl.textContent = 'AI 服务不可用';
-        if (subtitleEl) subtitleEl.textContent = '当前无法完成本次交互';
+        if (titleEl) titleEl.textContent = title;
+        if (subtitleEl) subtitleEl.textContent = subtitle;
         if (progressText) progressText.textContent = message;
         if (progressFill) progressFill.style.width = '100%';
         if (contentEl) {
             contentEl.classList.add('llm-unavailable');
+            contentEl.setAttribute('data-termination-reason', String(reason || 'llm_unavailable'));
+
+            this.playLLMTerminationEffect({
+                reason: String(reason || 'llm_unavailable'),
+                detail: message,
+                overlayContent: contentEl,
+            });
 
             let actions = contentEl.querySelector('.overlay-actions');
             if (!actions) {
@@ -249,11 +347,6 @@ Object.assign(LabyrinthiaGame.prototype, {
             if (closeBtn) {
                 closeBtn.onclick = () => {
                     this.hidePartialOverlay();
-                    this.isLoading = false;
-                    const controlButtons = document.querySelectorAll('.control-btn:not(#transition-button), .dir-btn');
-                    controlButtons.forEach(btn => {
-                        btn.disabled = false;
-                    });
                 };
             }
         }
@@ -294,6 +387,10 @@ Object.assign(LabyrinthiaGame.prototype, {
         const contentEl = overlay.querySelector('.partial-overlay-content');
         if (contentEl) {
             contentEl.classList.remove('llm-unavailable');
+            contentEl.classList.remove('llm-termination-pulse');
+            contentEl.classList.remove('llm-termination-shake');
+            contentEl.classList.remove('llm-termination-ripple');
+            contentEl.removeAttribute('data-termination-reason');
         }
 
         overlay.style.display = 'flex';
@@ -305,6 +402,10 @@ Object.assign(LabyrinthiaGame.prototype, {
             const contentEl = overlay.querySelector('.partial-overlay-content');
             if (contentEl) {
                 contentEl.classList.remove('llm-unavailable');
+                contentEl.classList.remove('llm-termination-pulse');
+                contentEl.classList.remove('llm-termination-shake');
+                contentEl.classList.remove('llm-termination-ripple');
+                contentEl.removeAttribute('data-termination-reason');
             }
             overlay.style.display = 'none';
         }
