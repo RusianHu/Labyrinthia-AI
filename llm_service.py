@@ -6,6 +6,7 @@ LLM service wrapper for the Labyrinthia AI game
 import asyncio
 import json
 import logging
+import re
 from typing import Dict, List, Optional, Any, Union
 from concurrent.futures import ThreadPoolExecutor
 
@@ -97,6 +98,12 @@ class LLMService:
             )
         elif self.provider == LLMProvider.LMSTUDIO:
             # LMStudio使用OpenAI兼容API
+            if config.llm.use_proxy and config.llm.proxy_url:
+                import os
+                os.environ['HTTP_PROXY'] = config.llm.proxy_url
+                os.environ['HTTPS_PROXY'] = config.llm.proxy_url
+                logger.info(f"Set proxy environment variables for LMStudio: {config.llm.proxy_url}")
+
             self.client = OpenAIAPITool(
                 api_key=config.llm.api_key,
                 base_url=config.llm.lmstudio_base_url,
@@ -105,6 +112,78 @@ class LLMService:
             )
         else:
             raise NotImplementedError(f"LLM provider {self.provider} not implemented yet")
+
+    # reasoning 模型可能输出的结构化标签列表
+    _REASONING_TAGS = ('think', 'thinking', 'analysis', 'reasoning', 'reflection', 'step')
+
+    # reasoning 模型常见的元数据行模式（如 "**生成的叙述文本：**"、"---"、"*字符数：128字*" 等）
+    _METADATA_LINE_PATTERNS = [
+        re.compile(r'^\*{1,2}生成的.*?[:：]\*{1,2}\s*$', re.MULTILINE),  # **生成的叙述文本：**
+        re.compile(r'^---+\s*$', re.MULTILINE),                            # 分隔线
+        re.compile(r'^\*字符数[:：].*?\*\s*$', re.MULTILINE),             # *字符数：128字*
+        re.compile(r'^\*.*?(?:字数|字符|上限|下限).*?\*\s*$', re.MULTILINE),  # 通用字数统计行
+        re.compile(r'^#{1,3}\s*(?:生成的)?(?:开场)?叙述.*$', re.MULTILINE),   # ## 生成的开场叙述 / ## 开场叙述：XXX
+    ]
+
+    # reasoning 模型在正文输出之后常附加的"创作思路说明"等尾部段落，
+    # 一旦匹配到这些标题行，截断其后的所有内容。
+    # 注意：关键词必须足够精确（使用多字组合短语），避免在正文叙事中
+    # 误匹配到单字关键词如"设计"、"元素"、"角色"等常见词汇。
+    _TAIL_SECTION_PATTERN = re.compile(
+        r'(?:\n|\r\n?)#{1,3}\s*(?:'
+        r'创作思路|创作说明|写作说明|设计思路|设计说明|'
+        r'分析说明|补充说明|注释说明|思路说明|'
+        r'字数统计|词数统计|字符统计|生成说明|元素说明|'
+        r'备注说明|实现说明|对照说明|参考说明|技巧说明|'
+        r'创作解释|写作思考|设计解释|生成方案'
+        r').*$',
+        re.DOTALL
+    )
+
+    @staticmethod
+    def _strip_thinking_tags(text: str, aggressive: bool = False) -> str:
+        """移除 reasoning 模型输出中的推理过程标签块，可选清理元数据垃圾。
+
+        **分层清理策略**：
+        - **基础层（所有渠道）**：清除 ``<think>``/``<Thinking>``/``<analysis>``
+          等标签块。OpenAI 的 o1/o3 reasoning 模型也可能输出这类标签，因此
+          此层对所有渠道无条件执行，不会误伤正常叙事文本。
+        - **激进层（仅 LMStudio 等本地模型）**：清理元数据行（粗体标题、字数
+          统计、分隔线、markdown 标题等）和截断"创作思路/说明"等尾部段落。
+          这些规则针对本地 reasoning/蒸馏模型的特有杂质设计，对 OpenAI/Gemini
+          等云端模型可能造成误伤（如误删正文中的 ``---`` 分隔线或含关键词的
+          标题），因此仅在 ``aggressive=True`` 时执行。
+
+        Args:
+            text: 待清理的原始文本
+            aggressive: 是否启用激进清理（元数据行 + 尾部截断），
+                        仅建议对 LMStudio 等本地 reasoning 模型开启
+        """
+        if not text:
+            return text
+        cleaned = text
+        # 基础层：清除 reasoning 标签块（对所有渠道安全）
+        # 使用 DOTALL 使 . 匹配换行符，IGNORECASE 匹配大小写变体
+        for tag in LLMService._REASONING_TAGS:
+            cleaned = re.sub(
+                rf'<{tag}>.*?</{tag}>', '', cleaned, flags=re.DOTALL | re.IGNORECASE
+            )
+        # 激进层：仅对本地 reasoning 模型执行，避免误伤 OpenAI 等强模型的正常输出
+        if aggressive:
+            # 清理前置思考块：部分蒸馏模型会在正文之前输出 "## 思考过程"
+            # 等 markdown 标题引导的内联思考段落（<think> 标签被清理后的变体）。
+            # 匹配该标题行及其后续非粗体行，直到遇到 ** 粗体开头的正式叙事。
+            cleaned = re.sub(
+                r'^#{1,3}\s*(?:思考过程|思考|分析过程|分析|推理过程|推理)\b.*?\n'
+                r'(?:(?!\*\*).*\n)*',   # 匹配后续行直到遇到 ** 开头行
+                '', cleaned, flags=re.MULTILINE
+            )
+            # 截断尾部的"创作思路说明"等段落（含后续所有内容）
+            cleaned = LLMService._TAIL_SECTION_PATTERN.sub('', cleaned)
+            # 清理元数据行
+            for pattern in LLMService._METADATA_LINE_PATTERNS:
+                cleaned = pattern.sub('', cleaned)
+        return cleaned.strip()
 
     def _parse_json_response(self, text: str) -> Dict[str, Any]:
         """
@@ -122,6 +201,14 @@ class LLMService:
 
         # 清理文本
         cleaned_text = text.strip()
+
+        # 移除 reasoning 模型的 <think> 标签块
+        # 安全策略：统一只做基础标签清理，避免激进规则误删正文/JSON。
+        cleaned_text = self._strip_thinking_tags(cleaned_text, aggressive=False)
+
+        if not cleaned_text:
+            logger.warning("Response text empty after stripping thinking tags")
+            return {}
 
         # 移除BOM字符
         if cleaned_text.startswith('\ufeff'):
@@ -147,6 +234,9 @@ class LLMService:
             lambda: self._parse_with_encoding_converter(cleaned_text),
             # 方法4：修复常见JSON格式问题
             lambda: self._parse_with_json_fixes(cleaned_text),
+            # 方法5：从混合文本中提取第一个完整 JSON 对象
+            #（reasoning 模型可能在 JSON 前后夹杂 markdown/推理文本）
+            lambda: self._extract_json_from_mixed_text(cleaned_text),
         ]
 
         for i, parse_func in enumerate(parse_attempts, 1):
@@ -203,13 +293,72 @@ class LLMService:
         fixed_text = fixed_text.replace("'", '"')
 
         # 修复尾随逗号
-        import re
         fixed_text = re.sub(r',(\s*[}\]])', r'\1', fixed_text)
 
         # 修复未转义的换行符
         fixed_text = fixed_text.replace('\n', '\\n').replace('\r', '\\r')
 
         return json.loads(fixed_text)
+
+    def _extract_json_from_mixed_text(self, text: str) -> Dict[str, Any]:
+        """从混合文本中提取第一个完整的 JSON 对象。
+
+        reasoning/蒸馏模型可能在 JSON 前后夹杂 markdown 标题、推理说明等
+        非 JSON 文本。本方法通过花括号匹配来定位并提取最外层 JSON 对象。
+        """
+        # 先尝试提取 ```json ... ``` 代码块中的 JSON
+        code_block_match = re.search(
+            r'```(?:json)?\s*(\{.*?\})\s*```', text, flags=re.DOTALL
+        )
+        if code_block_match:
+            try:
+                return json.loads(code_block_match.group(1))
+            except json.JSONDecodeError:
+                pass
+
+        # 手动定位最外层的 { ... } 对象
+        start_idx = text.find('{')
+        if start_idx == -1:
+            return {}
+
+        depth = 0
+        in_string = False
+        escape_next = False
+        for i in range(start_idx, len(text)):
+            ch = text[i]
+            if escape_next:
+                escape_next = False
+                continue
+            if ch == '\\':
+                escape_next = True
+                continue
+            if ch == '"':
+                in_string = not in_string
+                continue
+            if in_string:
+                continue
+            if ch == '{':
+                depth += 1
+            elif ch == '}':
+                depth -= 1
+                if depth == 0:
+                    candidate = text[start_idx:i + 1]
+                    try:
+                        return json.loads(candidate)
+                    except json.JSONDecodeError:
+                        # 尝试修复后解析
+                        try:
+                            fixed = re.sub(r',(\s*[}\]])', r'\1', candidate)
+                            return json.loads(fixed)
+                        except json.JSONDecodeError:
+                            pass
+                    # 继续查找下一个可能的 JSON 对象
+                    next_start = text.find('{', i + 1)
+                    if next_start == -1:
+                        return {}
+                    start_idx = next_start
+                    depth = 0
+        return {}
 
     async def _async_generate(self, prompt: str, timeout: Optional[float] = None, **kwargs) -> str:
         """
@@ -324,11 +473,23 @@ class LLMService:
                         if "max_output_tokens" in generation_config:
                             generation_config["max_tokens"] = generation_config.pop("max_output_tokens")
 
+                        # LMStudio: 注入 enable_thinking 参数（Qwen3/3.5 混合思考模型支持）
+                        if self.provider == LLMProvider.LMSTUDIO:
+                            _et = config.llm.lmstudio.enable_thinking
+                            if _et is not None:
+                                generation_config["chat_template_kwargs"] = {
+                                    "enable_thinking": _et
+                                }
+
                         response_text = self.client.single_chat(
                             message=processed_prompt,
                             model=config.llm.model_name,
                             **generation_config
                         )
+                        # 清理 reasoning 模型可能嵌入的 <think> 标签
+                        # 安全策略：统一只做基础标签清理，避免激进规则误删正文。
+                        if isinstance(response_text, str):
+                            response_text = self._strip_thinking_tags(response_text, aggressive=False)
                         if isinstance(response_text, str) and response_text.strip():
                             return response_text
                         if hard_dependency:
@@ -483,20 +644,64 @@ class LLMService:
                         if "max_output_tokens" in generation_config:
                             generation_config["max_tokens"] = generation_config.pop("max_output_tokens")
 
-                        # 设置response_format为json_object
-                        response_format = {"type": "json_object"}
-                        if schema:
-                            response_format["schema"] = schema
-
                         # 在提示词中明确要求JSON格式
                         json_prompt = f"{processed_prompt}\n\n请以JSON格式返回结果。"
 
-                        response_text = self.client.single_chat(
-                            message=json_prompt,
-                            model=config.llm.model_name,
-                            response_format=response_format,
-                            **generation_config
-                        )
+                        # LMStudio: 注入 enable_thinking 参数（Qwen3/3.5 混合思考模型支持）
+                        if self.provider == LLMProvider.LMSTUDIO:
+                            _et = config.llm.lmstudio.enable_thinking
+                            if _et is not None:
+                                generation_config["chat_template_kwargs"] = {
+                                    "enable_thinking": _et
+                                }
+
+                        # LMStudio 本地模型仅支持 response_format.type = json_schema | text，
+                        # 不支持 json_object。因此：
+                        #   - 有 schema 时，尝试 json_schema 模式（降级为纯提示词）
+                        #   - 无 schema 时，直接走纯提示词模式，避免不必要的 400 错误
+                        response_text = None
+                        if self.provider == LLMProvider.LMSTUDIO:
+                            if schema:
+                                try:
+                                    response_format = {
+                                        "type": "json_schema",
+                                        "json_schema": {
+                                            "name": "response",
+                                            "schema": schema
+                                        }
+                                    }
+                                    response_text = self.client.single_chat(
+                                        message=json_prompt,
+                                        model=config.llm.model_name,
+                                        response_format=response_format,
+                                        **generation_config
+                                    )
+                                except Exception as rf_err:
+                                    logger.warning(
+                                        f"LMStudio json_schema 模式不受支持，降级为纯提示词模式: {rf_err}"
+                                    )
+                                    response_text = self.client.single_chat(
+                                        message=json_prompt,
+                                        model=config.llm.model_name,
+                                        **generation_config
+                                    )
+                            else:
+                                # 无 schema 时直接用纯提示词模式，跳过 response_format
+                                response_text = self.client.single_chat(
+                                    message=json_prompt,
+                                    model=config.llm.model_name,
+                                    **generation_config
+                                )
+                        else:
+                            response_format = {"type": "json_object"}
+                            if schema:
+                                response_format["schema"] = schema
+                            response_text = self.client.single_chat(
+                                message=json_prompt,
+                                model=config.llm.model_name,
+                                response_format=response_format,
+                                **generation_config
+                            )
 
                         parsed_json = self._parse_json_response(response_text)
                         if isinstance(parsed_json, dict) and parsed_json:
@@ -734,7 +939,28 @@ class LLMService:
         return await self._async_generate(prompt)
 
     async def generate_opening_narrative(self, game_state: GameState) -> str:
-        """生成开场叙述"""
+        """生成开场叙述（结构化优先）。
+
+        优先使用 JSON 模式仅提取 ``narrative`` 字段，减少 reasoning 模型
+        将“思路说明/字数统计”等解释信息混入正文的概率；若 JSON 失败，
+        自动回退到纯文本模式，保证链路可用性。
+        """
+        active_quest = next(
+            (q for q in getattr(game_state, "quests", []) if getattr(q, "is_active", False)),
+            None
+        )
+        if active_quest:
+            quest_objectives = getattr(active_quest, "objectives", []) or []
+            objective_preview = "；".join(str(x) for x in quest_objectives[:3]) if quest_objectives else "无"
+            quest_info = (
+                f"- 当前任务标题：{getattr(active_quest, 'title', '未知任务')}\n"
+                f"- 当前任务描述：{getattr(active_quest, 'description', '无')}\n"
+                f"- 当前任务目标摘要：{objective_preview}\n"
+                f"- 当前任务进度：{float(getattr(active_quest, 'progress_percentage', 0.0) or 0.0):.1f}%"
+            )
+        else:
+            quest_info = "- 当前任务：暂无活跃任务"
+
         prompt = f"""
         为一个DnD风格的冒险游戏生成开场叙述。
 
@@ -746,9 +972,30 @@ class LLMService:
         当前地图：{game_state.current_map.name}
         地图描述：{game_state.current_map.description}
 
+        任务信息：
+        {quest_info}
+
         请生成一段引人入胜的开场叙述（100-200字），描述玩家刚刚抵达当前场景/地图的情景，
-        包括环境描述、氛围营造和对即将到来的冒险的暗示。
+        并将当前任务目标自然融入叙事动机中（不剧透后续细节）。
+
+        仅在 narrative 字段中返回最终正文，不要在字段外输出任何解释。
         """
+
+        schema = {
+            "type": "object",
+            "properties": {
+                "narrative": {"type": "string"}
+            },
+            "required": ["narrative"]
+        }
+
+        try:
+            result = await self._async_generate_json(prompt, schema=schema)
+            narrative = (result or {}).get("narrative", "") if isinstance(result, dict) else ""
+            if isinstance(narrative, str) and narrative.strip():
+                return narrative.strip()
+        except Exception as e:
+            logger.warning(f"Opening narrative JSON mode failed, fallback to text mode: {e}")
 
         return await self._async_generate(prompt)
 

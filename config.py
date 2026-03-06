@@ -59,10 +59,15 @@ class _OpenAIConfig:
 
 @dataclass
 class _LMStudioConfig:
-    """LMStudio Provider Specific Config (Future Implementation)"""
+    """LMStudio Provider Specific Config（通过 OpenAI 兼容 API 驱动本地模型）"""
     api_key: str = "lm-studio"
     model_name: str = "local-model"
     base_url: str = "http://localhost:1234/v1"
+    # Qwen3/3.5 混合思考模型支持 enable_thinking 参数控制是否输出思考过程。
+    # True = 开启思考（模型先 <think>...</think> 再回复，默认行为）
+    # False = 关闭思考（模型直接回复，不输出推理过程，输出更干净但推理能力可能下降）
+    # None = 不传递此参数（由模型/服务端决定默认行为）
+    enable_thinking: Optional[bool] = None
 
 
 @dataclass
@@ -359,6 +364,13 @@ class Config:
             self.llm.lmstudio.base_url = lmstudio_base_url
         if lmstudio_model := os.getenv("LMSTUDIO_MODEL_NAME"):
             self.llm.lmstudio.model_name = lmstudio_model
+        # enable_thinking: "true"→True, "false"→False, 未设置或其他→None
+        _et = os.getenv("LMSTUDIO_ENABLE_THINKING", "").strip().lower()
+        if _et == "true":
+            self.llm.lmstudio.enable_thinking = True
+        elif _et == "false":
+            self.llm.lmstudio.enable_thinking = False
+        # else: 保持 None（不传递此参数）
 
         # 3. 根据最终确定的provider，动态填充Active LLM Configuration
         provider_config_map = {
