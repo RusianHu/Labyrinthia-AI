@@ -47,25 +47,43 @@ Object.assign(LabyrinthiaGame.prototype, {
                 saves.forEach(save => {
                     const saveElement = document.createElement('div');
                     saveElement.className = 'save-item';
-                    saveElement.innerHTML = `
-                        <h4>${save.player_name} (等级 ${save.player_level})</h4>
-                        <p>${save.map_name} - 回合 ${save.turn_count}</p>
-                        <p>最后保存: ${new Date(save.last_saved).toLocaleString()}</p>
-                        <div class="save-item-buttons">
-                            <button onclick="game.loadGame('${save.id}')">
-                                <i class="material-icons">play_arrow</i>
-                                加载
-                            </button>
-                            <button onclick="game.exportSave('${save.id}')">
-                                <i class="material-icons">file_download</i>
-                                导出
-                            </button>
-                            <button onclick="game.deleteGame('${save.id}')">
-                                <i class="material-icons">delete</i>
-                                删除
-                            </button>
-                        </div>
-                    `;
+
+                    const rawDescription = typeof save.map_description === 'string'
+                        ? save.map_description.trim()
+                        : '';
+                    const displayLocation = rawDescription || save.map_name || 'Unknown';
+
+                    const title = document.createElement('h4');
+                    title.textContent = `${save.player_name || 'Unknown'} (等级 ${save.player_level || 1})`;
+
+                    const location = document.createElement('p');
+                    location.textContent = `${displayLocation} - 回合 ${save.turn_count || 0}`;
+
+                    const lastSaved = document.createElement('p');
+                    lastSaved.textContent = `最后保存: ${new Date(save.last_saved).toLocaleString()}`;
+
+                    const buttons = document.createElement('div');
+                    buttons.className = 'save-item-buttons';
+
+                    const createButton = (iconName, label, handler) => {
+                        const button = document.createElement('button');
+                        const icon = document.createElement('i');
+                        icon.className = 'material-icons';
+                        icon.textContent = iconName;
+                        button.appendChild(icon);
+                        button.appendChild(document.createTextNode(label));
+                        button.addEventListener('click', handler);
+                        return button;
+                    };
+
+                    buttons.appendChild(createButton('play_arrow', '加载', () => game.loadGame(save.id)));
+                    buttons.appendChild(createButton('file_download', '导出', () => game.exportSave(save.id)));
+                    buttons.appendChild(createButton('delete', '删除', () => game.deleteGame(save.id)));
+
+                    saveElement.appendChild(title);
+                    saveElement.appendChild(location);
+                    saveElement.appendChild(lastSaved);
+                    saveElement.appendChild(buttons);
                     savesList.appendChild(saveElement);
                 });
             }

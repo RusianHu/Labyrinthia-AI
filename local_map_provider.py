@@ -46,7 +46,7 @@ class LocalMapProvider:
         game_map.depth = max(1, depth)
         game_map.floor_theme = self._infer_floor_theme(theme, quest_context)
         game_map.name = self._build_map_name(theme, game_map.depth)
-        game_map.description = self._build_map_description(theme, quest_context)
+        game_map.description = self._build_map_description(game_map.floor_theme, quest_context)
 
         provided_contract, requested_contract_version, contract_source_hint = extract_contract_request(quest_context)
         contract_resolution = resolve_generation_contract(
@@ -131,10 +131,22 @@ class LocalMapProvider:
         if quest_context:
             quest_text = quest_context.get("description", "") or ""
         if quest_text:
-            return f"围绕任务推进构建的区域：{quest_text}"
-        if theme:
-            return f"围绕{theme}主题构建的探索区域。"
-        return "一个由本地算法构建的探索区域。"
+            return quest_text
+
+        # 叙事风格回退模板，按主题生成感官细节
+        theme_narratives = {
+            "normal": "昏暗的石质走廊中，火把的光影在石壁上跳动，空气中弥漫着陈旧与潮湿的气息。",
+            "magic": "大理石地面上刻满发光的符文，魔力在空气中震颤，蓝紫色的光晕照亮了神秘的大厅。",
+            "abandoned": "被遗忘的古老遗迹内部，断裂的石柱斜倚在积满尘埃的角落，腐朽的木板发出吱呀的声响。",
+            "cave": "天然洞穴深处，潮湿的石壁上凝结着水珠，远处传来地下河流的低鸣，空气中带着泥土与苔藓的气息。",
+            "combat": "古老的竞技场中央，干涸的血迹斑驳地染红了石板，断裂的武器散落在四周，无声诉说着曾经的厮杀。",
+            "grassland": "广阔的草原在风中起伏，野花的芬芳混合着泥土的清新，远处的树影在午后的阳光中摇曳。",
+            "desert": "无尽的沙丘延伸至天际，烈日将沙粒烤得滚烫，干燥的风裹挟着细沙掠过荒芜的大地。",
+            "farmland": "整齐的田垄间作物随风轻摆，远处农舍的炊烟袅袅升起，泥土与青草的芬芳弥漫在宁静的空气中。",
+            "snowfield": "银白的雪原在月光下闪烁着微光，刺骨的寒风卷着冰晶呼啸而过，寂静中只有雪层下的细微声响。",
+            "town": "古老的石板街道两旁，陈旧的木窗透出昏黄的灯光，酒馆里传来模糊的笑语，混杂着烤面包的香气。",
+        }
+        return theme_narratives.get(theme, "未知的领域中，光影交错，空气中弥漫着难以名状的气息，等待勇者探索。")
 
     def _init_walls(self, game_map: GameMap) -> None:
         for x in range(game_map.width):

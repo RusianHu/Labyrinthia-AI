@@ -730,6 +730,7 @@ class DataManager:
                     "player_name": data.get("player", {}).get("name", "Unknown"),
                     "player_level": data.get("player", {}).get("stats", {}).get("level", 1),
                     "map_name": data.get("current_map", {}).get("name", "Unknown"),
+                    "map_description": data.get("current_map", {}).get("description", ""),
                     "turn_count": data.get("turn_count", 0),
                     "created_at": data.get("created_at", ""),
                     "last_saved": data.get("last_saved", ""),

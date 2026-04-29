@@ -211,7 +211,7 @@ class ContentGenerator:
             map_info = await llm_service._async_generate_json(map_prompt)
             if map_info:
                 game_map.name = map_info.get("name", f"冒险区域（第{depth}阶段/层级）")
-                game_map.description = map_info.get("description", "一个神秘的冒险区域")
+                game_map.description = map_info.get("description", "未知的领域中，光影交错，空气中弥漫着难以名状的气息，等待勇者探索。")
                 # 获取地板主题，验证是否为有效值
                 floor_theme = map_info.get("floor_theme", "normal")
                 valid_themes = ["normal", "magic", "abandoned", "cave", "combat", "grassland", "desert", "farmland", "snowfield", "town"]
@@ -224,7 +224,7 @@ class ContentGenerator:
         except Exception as e:
             logger.error(f"Failed to generate map info: {e}")
             game_map.name = f"冒险区域（第{depth}阶段/层级）"
-            game_map.description = "一个神秘的冒险区域"
+            game_map.description = "未知的领域中，光影交错，空气中弥漫着难以名状的气息，等待勇者探索。"
             # 【修复】使用推断的主题而不是总是使用"normal"
             game_map.floor_theme = inferred_theme if inferred_theme in ["normal", "magic", "abandoned", "cave", "combat", "grassland", "desert", "farmland", "snowfield", "town"] else "normal"
             logger.info(f"Using fallback floor_theme: {game_map.floor_theme}")

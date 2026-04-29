@@ -128,8 +128,8 @@ class PromptManager:
 
 请返回JSON格式：
 {{
-    "name": "地图名称（中文，体现主题和任务特色）",
-    "description": "地图描述（详细描述环境、氛围和可能的挑战）",
+    "name": "地图名称（中文，简洁有力，8-16字，如'古代遗迹入口''冰霜神殿大厅'）",
+    "description": "场景叙事描述（中文，50-80字，像小说开场白：描绘光线、气味、温度、声音、质感等感官细节，营造沉浸感。例如'被遗忘的古代遗迹内部，潮湿的石壁上爬满发光藤蔓，空气中弥漫着陈旧与未知的气息。'）",
     "floor_theme": "地板主题类型（必须从以下选项中选择一个）"
 }}
 
@@ -165,7 +165,8 @@ class PromptManager:
             """.strip(),
             required_params=["width", "height", "depth", "theme"],
             optional_params={"quest_info": ""},
-            description="生成地图基本信息（名称、描述和地板主题）"
+            description="生成地图基本信息（名称、描述和地板主题）",
+            version="1.4"
         )
         self.register_template(map_info_template)
         
