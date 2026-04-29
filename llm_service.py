@@ -113,6 +113,30 @@ class LLMService:
         else:
             raise NotImplementedError(f"LLM provider {self.provider} not implemented yet")
 
+    def _apply_openai_compatible_thinking_config(self, generation_config: Dict[str, Any]) -> Dict[str, Any]:
+        """为 OpenAI 兼容接口注入统一的 thinking 配置。"""
+        updated_config = dict(generation_config)
+
+        if self.provider == LLMProvider.OPENAI:
+            if "thinking" not in updated_config:
+                updated_config["thinking"] = {
+                    "type": "enabled" if bool(getattr(config.llm, "thinking_enabled", False)) else "disabled"
+                }
+            return updated_config
+
+        if self.provider == LLMProvider.LMSTUDIO:
+            chat_template_kwargs = dict(updated_config.get("chat_template_kwargs") or {})
+            if "enable_thinking" not in chat_template_kwargs:
+                provider_override = getattr(config.llm.lmstudio, "enable_thinking", None)
+                effective_thinking_enabled = provider_override
+                if effective_thinking_enabled is None:
+                    effective_thinking_enabled = bool(getattr(config.llm, "thinking_enabled", False))
+                chat_template_kwargs["enable_thinking"] = bool(effective_thinking_enabled)
+            updated_config["chat_template_kwargs"] = chat_template_kwargs
+            return updated_config
+
+        return updated_config
+
     # reasoning 模型可能输出的结构化标签列表
     _REASONING_TAGS = ('think', 'thinking', 'analysis', 'reasoning', 'reflection', 'step')
 
@@ -473,13 +497,7 @@ class LLMService:
                         if "max_output_tokens" in generation_config:
                             generation_config["max_tokens"] = generation_config.pop("max_output_tokens")
 
-                        # LMStudio: 注入 enable_thinking 参数（Qwen3/3.5 混合思考模型支持）
-                        if self.provider == LLMProvider.LMSTUDIO:
-                            _et = config.llm.lmstudio.enable_thinking
-                            if _et is not None:
-                                generation_config["chat_template_kwargs"] = {
-                                    "enable_thinking": _et
-                                }
+                        generation_config = self._apply_openai_compatible_thinking_config(generation_config)
 
                         response_text = self.client.single_chat(
                             message=processed_prompt,
@@ -647,13 +665,7 @@ class LLMService:
                         # 在提示词中明确要求JSON格式
                         json_prompt = f"{processed_prompt}\n\n请以JSON格式返回结果。"
 
-                        # LMStudio: 注入 enable_thinking 参数（Qwen3/3.5 混合思考模型支持）
-                        if self.provider == LLMProvider.LMSTUDIO:
-                            _et = config.llm.lmstudio.enable_thinking
-                            if _et is not None:
-                                generation_config["chat_template_kwargs"] = {
-                                    "enable_thinking": _et
-                                }
+                        generation_config = self._apply_openai_compatible_thinking_config(generation_config)
 
                         # LMStudio 本地模型仅支持 response_format.type = json_schema | text，
                         # 不支持 json_object。因此：
@@ -1472,8 +1484,7 @@ class LLMService:
         if hasattr(self.client, 'last_request_payload'):
             return copy.deepcopy(self.client.last_request_payload)
 
-        # OpenAI API工具类没有内置的请求跟踪，返回None
-        # 如果需要，可以在OpenAIAPITool中添加类似的功能
+        # 其他客户端若未暴露调试报文则返回None
         return None
 
     def get_last_response_payload(self) -> Optional[Dict[str, Any]]:
@@ -1489,8 +1500,7 @@ class LLMService:
         if hasattr(self.client, 'last_response_payload'):
             return copy.deepcopy(self.client.last_response_payload)
 
-        # OpenAI API工具类没有内置的响应跟踪，返回None
-        # 如果需要，可以在OpenAIAPITool中添加类似的功能
+        # 其他客户端若未暴露调试报文则返回None
         return None
     def _get_nearby_terrain(self, game_state: GameState, x: int, y: int, radius: int = 2) -> List[str]:
         """获取周围地形信息"""

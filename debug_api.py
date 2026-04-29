@@ -181,6 +181,7 @@ class DebugAPI:
                     "version": config.game.version,
                     "llm_provider": config.llm.provider.value,
                     "llm_model": config.llm.model_name,
+                    "llm_thinking_enabled": config.llm.thinking_enabled,
                     "map_generation_release_stage": getattr(config.game, "map_generation_release_stage", "debug"),
                     "map_generation_canary_percent": getattr(config.game, "map_generation_canary_percent", 0),
                     "map_generation_force_legacy_chain": getattr(config.game, "map_generation_force_legacy_chain", False),
@@ -505,7 +506,8 @@ class DebugAPI:
                     "provider": config.llm.provider.value,
                     "model": config.llm.model_name,
                     "max_tokens": config.llm.max_output_tokens,
-                    "temperature": config.llm.temperature
+                    "temperature": config.llm.temperature,
+                    "thinking_enabled": config.llm.thinking_enabled
                 }
             }
 
@@ -534,6 +536,7 @@ class DebugAPI:
                     "model_name": config.llm.model_name,
                     "max_output_tokens": config.llm.max_output_tokens,
                     "temperature": config.llm.temperature,
+                    "thinking_enabled": config.llm.thinking_enabled,
                     "timeout": config.llm.timeout
                 },
                 "data": {

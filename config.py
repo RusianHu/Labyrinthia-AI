@@ -94,6 +94,7 @@ class LLMConfig:
     use_generation_params: bool = False  # 是否使用temperature和top_p参数，False时使用LLM默认值
     temperature: float = 0.8
     top_p: float = 0.9
+    thinking_enabled: bool = False
     timeout: int = 120
     hard_dependency: bool = True  # LLM是否为硬依赖；true时失败将中止主链路
     # 历史记录管理参数
@@ -590,6 +591,9 @@ class Config:
                     self.llm.max_output_tokens = int(llm_max_output)
                 except ValueError:
                     pass
+
+        if llm_thinking_enabled := os.getenv("LLM_THINKING_ENABLED"):
+            self.llm.thinking_enabled = llm_thinking_enabled.lower() in ("true", "1", "yes")
 
         if llm_use_gen_params := os.getenv("LLM_USE_GENERATION_PARAMS"):
             self.llm.use_generation_params = llm_use_gen_params.lower() in ("true", "1", "yes")

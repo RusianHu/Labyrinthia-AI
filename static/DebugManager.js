@@ -135,6 +135,15 @@ const DebugMethods = {
             console.log('DebugManager: Debug mode status:', this.debugMode);
             console.log('DebugManager: Full config:', config);
 
+            // 更新思考模式状态指示
+            const thinkingEnabled = config.llm?.thinking_enabled || false;
+            const badge = document.getElementById('debug-thinking-badge');
+            if (badge) {
+                badge.textContent = thinkingEnabled ? 'ON' : 'OFF';
+                badge.classList.toggle('enabled', thinkingEnabled);
+                badge.classList.toggle('disabled', !thinkingEnabled);
+            }
+
             this.updateDebugFabVisibility();
         } catch (error) {
             console.error('DebugManager: Failed to check debug mode:', error);

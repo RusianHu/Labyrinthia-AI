@@ -7,6 +7,7 @@ OpenAI API 兼容工具类
 import requests
 import json
 import base64
+import copy
 from typing import List, Dict, Optional, Union, Any
 from pathlib import Path
 
@@ -51,6 +52,7 @@ class OpenAIAPITool:
         # 用于调试的请求/响应跟踪
         self.last_request_payload: Optional[Dict[str, Any]] = None
         self.last_response_payload: Optional[Dict[str, Any]] = None
+        self._history: List[Dict[str, Any]] = []
     
     def _make_request(
         self,
@@ -74,7 +76,7 @@ class OpenAIAPITool:
         url = f"{self.base_url}/{endpoint}"
 
         # 保存请求数据用于调试
-        self.last_request_payload = data.copy() if isinstance(data, dict) else data
+        self.last_request_payload = copy.deepcopy(data) if isinstance(data, dict) else data
 
         try:
             if method == "POST":
@@ -99,7 +101,7 @@ class OpenAIAPITool:
             if return_json:
                 response_data = response.json()
                 # 保存响应数据用于调试
-                self.last_response_payload = response_data
+                self.last_response_payload = copy.deepcopy(response_data)
                 return response_data
             else:
                 return response.content
@@ -115,6 +117,187 @@ class OpenAIAPITool:
                 except:
                     pass
             raise Exception(error_msg)
+
+    def _uses_mimo_completion_tokens(self) -> bool:
+        return "xiaomimimo.com" in self.base_url.lower()
+
+    def _apply_completion_token_limit(
+        self,
+        data: Dict[str, Any],
+        max_tokens: Optional[int],
+        max_completion_tokens: Optional[int]
+    ) -> None:
+        if max_completion_tokens is not None:
+            data["max_completion_tokens"] = max_completion_tokens
+            return
+        if max_tokens is None:
+            return
+        if self._uses_mimo_completion_tokens():
+            data["max_completion_tokens"] = max_tokens
+        else:
+            data["max_tokens"] = max_tokens
+
+    def _extract_assistant_message(self, response: Dict[str, Any]) -> Dict[str, Any]:
+        choices = response.get("choices")
+        if not isinstance(choices, list) or not choices:
+            raise Exception("API 响应缺少 choices")
+        first_choice = choices[0]
+        if not isinstance(first_choice, dict):
+            raise Exception("API 响应 choices[0] 格式无效")
+        message = first_choice.get("message")
+        if not isinstance(message, dict):
+            raise Exception("API 响应缺少有效的 assistant message")
+        return message
+
+    def chat_completion(
+        self,
+        messages: List[Dict[str, Any]],
+        model: Optional[str] = None,
+        temperature: float = 0.7,
+        max_tokens: Optional[int] = None,
+        max_completion_tokens: Optional[int] = None,
+        response_format: Optional[Dict[str, Any]] = None,
+        **kwargs
+    ) -> Dict[str, Any]:
+        model = model or self.default_model
+
+        data = {
+            "model": model,
+            "messages": messages,
+            "temperature": temperature,
+            **kwargs
+        }
+
+        self._apply_completion_token_limit(data, max_tokens, max_completion_tokens)
+
+        if response_format is not None:
+            data["response_format"] = response_format
+
+        return self._make_request("chat/completions", data)
+
+    def single_chat_message(
+        self,
+        message: str,
+        model: Optional[str] = None,
+        temperature: float = 0.7,
+        max_tokens: Optional[int] = None,
+        max_completion_tokens: Optional[int] = None,
+        response_format: Optional[Dict[str, Any]] = None,
+        **kwargs
+    ) -> Dict[str, Any]:
+        response = self.chat_completion(
+            messages=[{"role": "user", "content": message}],
+            model=model,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            max_completion_tokens=max_completion_tokens,
+            response_format=response_format,
+            **kwargs,
+        )
+        return self._extract_assistant_message(response)
+
+    def multi_turn_chat_message(
+        self,
+        messages: List[Dict[str, Any]],
+        model: Optional[str] = None,
+        temperature: float = 0.7,
+        max_tokens: Optional[int] = None,
+        max_completion_tokens: Optional[int] = None,
+        response_format: Optional[Dict[str, Any]] = None,
+        **kwargs
+    ) -> Dict[str, Any]:
+        response = self.chat_completion(
+            messages=messages,
+            model=model,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            max_completion_tokens=max_completion_tokens,
+            response_format=response_format,
+            **kwargs,
+        )
+        return self._extract_assistant_message(response)
+
+    def add_message(self, message: Dict[str, Any]) -> None:
+        self._history.append(copy.deepcopy(message))
+
+    def add_user(self, content: Any, name: Optional[str] = None) -> None:
+        message: Dict[str, Any] = {"role": "user", "content": content}
+        if name is not None:
+            message["name"] = name
+        self.add_message(message)
+
+    def add_system(self, content: Any, name: Optional[str] = None) -> None:
+        message: Dict[str, Any] = {"role": "system", "content": content}
+        if name is not None:
+            message["name"] = name
+        self.add_message(message)
+
+    def add_developer(self, content: Any, name: Optional[str] = None) -> None:
+        message: Dict[str, Any] = {"role": "developer", "content": content}
+        if name is not None:
+            message["name"] = name
+        self.add_message(message)
+
+    def add_tool(self, content: Any, tool_call_id: str, name: Optional[str] = None) -> None:
+        message: Dict[str, Any] = {
+            "role": "tool",
+            "content": content,
+            "tool_call_id": tool_call_id,
+        }
+        if name is not None:
+            message["name"] = name
+        self.add_message(message)
+
+    def add_assistant_message(self, message: Dict[str, Any]) -> None:
+        self.add_message(message)
+
+    def get_history(self) -> List[Dict[str, Any]]:
+        return copy.deepcopy(self._history)
+
+    def clear_history(self) -> None:
+        self._history = []
+
+    def chat_message(
+        self,
+        model: Optional[str] = None,
+        temperature: float = 0.7,
+        max_tokens: Optional[int] = None,
+        max_completion_tokens: Optional[int] = None,
+        response_format: Optional[Dict[str, Any]] = None,
+        **kwargs
+    ) -> Dict[str, Any]:
+        if not self._history:
+            raise ValueError("No messages in history; call add_user/add_system/add_developer first.")
+        assistant_message = self.multi_turn_chat_message(
+            messages=self._history,
+            model=model,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            max_completion_tokens=max_completion_tokens,
+            response_format=response_format,
+            **kwargs,
+        )
+        self.add_assistant_message(assistant_message)
+        return assistant_message
+
+    def chat(
+        self,
+        model: Optional[str] = None,
+        temperature: float = 0.7,
+        max_tokens: Optional[int] = None,
+        max_completion_tokens: Optional[int] = None,
+        response_format: Optional[Dict[str, Any]] = None,
+        **kwargs
+    ) -> str:
+        assistant_message = self.chat_message(
+            model=model,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            max_completion_tokens=max_completion_tokens,
+            response_format=response_format,
+            **kwargs,
+        )
+        return assistant_message.get("content") or ""
     
     def single_chat(
         self,
@@ -122,6 +305,7 @@ class OpenAIAPITool:
         model: Optional[str] = None,
         temperature: float = 0.7,
         max_tokens: Optional[int] = None,
+        max_completion_tokens: Optional[int] = None,
         response_format: Optional[Dict[str, Any]] = None,
         **kwargs
     ) -> str:
@@ -139,30 +323,24 @@ class OpenAIAPITool:
         Returns:
             AI 回复内容
         """
-        model = model or self.default_model
-
-        data = {
-            "model": model,
-            "messages": [{"role": "user", "content": message}],
-            "temperature": temperature,
-            **kwargs
-        }
-
-        if max_tokens is not None:
-            data["max_tokens"] = max_tokens
-
-        if response_format is not None:
-            data["response_format"] = response_format
-
-        response = self._make_request("chat/completions", data)
-        return response["choices"][0]["message"]["content"]
+        assistant_message = self.single_chat_message(
+            message=message,
+            model=model,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            max_completion_tokens=max_completion_tokens,
+            response_format=response_format,
+            **kwargs,
+        )
+        return assistant_message.get("content") or ""
     
     def multi_turn_chat(
         self,
-        messages: List[Dict[str, str]],
+        messages: List[Dict[str, Any]],
         model: Optional[str] = None,
         temperature: float = 0.7,
         max_tokens: Optional[int] = None,
+        max_completion_tokens: Optional[int] = None,
         **kwargs
     ) -> str:
         """
@@ -178,20 +356,15 @@ class OpenAIAPITool:
         Returns:
             AI 回复内容
         """
-        model = model or self.default_model
-        
-        data = {
-            "model": model,
-            "messages": messages,
-            "temperature": temperature,
-            **kwargs
-        }
-        
-        if max_tokens is not None:
-            data["max_tokens"] = max_tokens
-        
-        response = self._make_request("chat/completions", data)
-        return response["choices"][0]["message"]["content"]
+        assistant_message = self.multi_turn_chat_message(
+            messages=messages,
+            model=model,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            max_completion_tokens=max_completion_tokens,
+            **kwargs,
+        )
+        return assistant_message.get("content") or ""
     
     def _encode_image(self, image_path: str) -> str:
         """
@@ -252,6 +425,7 @@ class OpenAIAPITool:
         model: Optional[str] = None,
         temperature: float = 0.7,
         max_tokens: Optional[int] = None,
+        max_completion_tokens: Optional[int] = None,
         detail: str = "auto",
         **kwargs
     ) -> str:
@@ -288,12 +462,12 @@ class OpenAIAPITool:
             "temperature": temperature,
             **kwargs
         }
-        
-        if max_tokens is not None:
-            data["max_tokens"] = max_tokens
+
+        self._apply_completion_token_limit(data, max_tokens, max_completion_tokens)
         
         response = self._make_request("chat/completions", data)
-        return response["choices"][0]["message"]["content"]
+        assistant_message = self._extract_assistant_message(response)
+        return assistant_message.get("content") or ""
     
     def generate_image(
         self,
@@ -358,6 +532,7 @@ class OpenAIAPITool:
         image_model: Optional[str] = None,
         temperature: float = 0.7,
         max_tokens: Optional[int] = None,
+        max_completion_tokens: Optional[int] = None,
         image_size: str = "1024x1024",
         image_quality: str = "standard",
         **kwargs
@@ -394,6 +569,7 @@ class OpenAIAPITool:
                 model=model,
                 temperature=temperature,
                 max_tokens=max_tokens,
+                max_completion_tokens=max_completion_tokens,
                 **kwargs
             )
         else:
@@ -402,6 +578,7 @@ class OpenAIAPITool:
                 model=model,
                 temperature=temperature,
                 max_tokens=max_tokens,
+                max_completion_tokens=max_completion_tokens,
                 **kwargs
             )
         
