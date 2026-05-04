@@ -545,6 +545,8 @@ class Character:
             "shield": shield,
             "temporary_hp": temporary_hp,
         }
+        stats_data = dict(self.stats.__dict__)
+        stats_data["ac_components"] = dict(getattr(self.stats, "ac_components", {}) or {})
 
         return {
             "id": self.id,
@@ -552,8 +554,8 @@ class Character:
             "description": self.description,
             "character_class": self.character_class.value,
             "creature_type": self.creature_type.value,
-            "abilities": self.abilities.__dict__,
-            "stats": self.stats.__dict__,
+            "abilities": dict(self.abilities.__dict__),
+            "stats": stats_data,
             "resistances": self.resistances,
             "vulnerabilities": self.vulnerabilities,
             "immunities": self.immunities,

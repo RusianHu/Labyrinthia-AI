@@ -210,6 +210,254 @@ def _safe_authority_mode(value: Any, fallback: str = "local") -> str:
     return mode
 
 
+def _repair_character_tile_index(game_state: GameState) -> None:
+    if not game_state or not game_state.current_map:
+        return
+
+    for tile in game_state.current_map.tiles.values():
+        tile.character_id = None
+
+    player_tile = game_state.current_map.get_tile(*game_state.player.position)
+    if player_tile:
+        player_tile.character_id = game_state.player.id
+        player_tile.is_explored = True
+        player_tile.is_visible = True
+
+    for monster in game_state.monsters:
+        monster_tile = game_state.current_map.get_tile(*monster.position)
+        if monster_tile:
+            monster_tile.character_id = monster.id
+
+
+def _merge_frontend_map_computational_state(
+    backend_game_state: GameState,
+    frontend_game_state: GameState,
+) -> Dict[str, Any]:
+    backend_map = getattr(backend_game_state, "current_map", None)
+    frontend_map = getattr(frontend_game_state, "current_map", None)
+
+    if not frontend_map or not getattr(frontend_map, "tiles", None):
+        return {"map_merged": False, "reason": "missing_frontend_map"}
+
+    if not backend_map or not getattr(backend_map, "tiles", None):
+        backend_game_state.current_map = frontend_map
+        return {
+            "map_merged": True,
+            "strategy": "frontend_map_adopted",
+            "tiles_seen": len(frontend_map.tiles),
+        }
+
+    same_map = (
+        str(getattr(backend_map, "id", "") or "") == str(getattr(frontend_map, "id", "") or "")
+        and _safe_int(getattr(backend_map, "depth", 0), 0) == _safe_int(getattr(frontend_map, "depth", 0), 0)
+        and _safe_int(getattr(backend_map, "width", 0), 0) == _safe_int(getattr(frontend_map, "width", 0), 0)
+        and _safe_int(getattr(backend_map, "height", 0), 0) == _safe_int(getattr(frontend_map, "height", 0), 0)
+    )
+    if not same_map:
+        return {
+            "map_merged": False,
+            "reason": "map_identity_mismatch",
+            "backend_map_id": str(getattr(backend_map, "id", "") or ""),
+            "frontend_map_id": str(getattr(frontend_map, "id", "") or ""),
+        }
+
+    updated_tiles = 0
+    missing_tiles = 0
+    for coord, frontend_tile in frontend_map.tiles.items():
+        backend_tile = backend_map.tiles.get(coord)
+        if not backend_tile:
+            missing_tiles += 1
+            continue
+
+        backend_tile.is_explored = bool(getattr(frontend_tile, "is_explored", False))
+        backend_tile.is_visible = bool(getattr(frontend_tile, "is_visible", False))
+
+        # Local play may discover or disarm traps before the next sync. Keep these
+        # monotonic so stale client snapshots cannot hide known server facts.
+        backend_tile.trap_detected = bool(getattr(backend_tile, "trap_detected", False)) or bool(
+            getattr(frontend_tile, "trap_detected", False)
+        )
+        backend_tile.trap_disarmed = bool(getattr(backend_tile, "trap_disarmed", False)) or bool(
+            getattr(frontend_tile, "trap_disarmed", False)
+        )
+        if backend_tile.has_event and backend_tile.event_type == "trap":
+            if not isinstance(backend_tile.event_data, dict):
+                backend_tile.event_data = {}
+            frontend_event_data = (
+                getattr(frontend_tile, "event_data", {})
+                if isinstance(getattr(frontend_tile, "event_data", {}), dict)
+                else {}
+            )
+            if backend_tile.trap_detected or bool(frontend_event_data.get("is_detected", False)):
+                backend_tile.event_data["is_detected"] = True
+            if backend_tile.trap_disarmed or bool(frontend_event_data.get("is_disarmed", False)):
+                backend_tile.event_data["is_disarmed"] = True
+
+        updated_tiles += 1
+
+    return {
+        "map_merged": True,
+        "strategy": "computational_tile_fields",
+        "tiles_seen": len(frontend_map.tiles),
+        "tiles_updated": updated_tiles,
+        "missing_tiles": missing_tiles,
+    }
+
+
+def _merge_frontend_player_combat_state(
+    backend_game_state: GameState,
+    frontend_game_state: GameState,
+) -> None:
+    backend_player = backend_game_state.player
+    frontend_player = frontend_game_state.player
+
+    backend_player.position = tuple(frontend_player.position)
+
+    for stat_name in ("hp", "mp", "shield", "temporary_hp"):
+        if hasattr(backend_player.stats, stat_name) and hasattr(frontend_player.stats, stat_name):
+            current_value = _safe_int(getattr(frontend_player.stats, stat_name), getattr(backend_player.stats, stat_name))
+            if stat_name in {"hp", "mp"}:
+                max_name = f"max_{stat_name}"
+                max_value = _safe_int(getattr(backend_player.stats, max_name, current_value), current_value)
+                current_value = max(0, min(current_value, max_value))
+                current_value = min(current_value, _safe_int(getattr(backend_player.stats, stat_name), current_value))
+            else:
+                current_value = max(0, current_value)
+            setattr(backend_player.stats, stat_name, current_value)
+
+    backend_player.combat_runtime = dict(getattr(backend_player, "combat_runtime", {}) or {})
+    backend_player.combat_runtime["shield"] = _safe_int(getattr(backend_player.stats, "shield", 0), 0)
+    backend_player.combat_runtime["temporary_hp"] = _safe_int(getattr(backend_player.stats, "temporary_hp", 0), 0)
+
+
+def _merge_frontend_computational_state(
+    backend_game_state: GameState,
+    frontend_payload: Any,
+    *,
+    source: str,
+) -> Dict[str, Any]:
+    """Merge locally-computed state into the server state for local authority mode."""
+    authority_mode = _safe_authority_mode(
+        getattr(backend_game_state, "combat_authority_mode", None),
+        _safe_authority_mode(config.game.combat_authority_mode),
+    )
+    backend_game_state.combat_authority_mode = authority_mode
+    backend_game_state.combat_rule_version = max(
+        1,
+        _safe_int(getattr(backend_game_state, "combat_rule_version", 1), 1),
+    )
+
+    if authority_mode != "local":
+        return {
+            "merged": False,
+            "authority_mode": authority_mode,
+            "reason": "server_authoritative_state",
+        }
+
+    if not isinstance(frontend_payload, dict):
+        return {
+            "merged": False,
+            "authority_mode": authority_mode,
+            "reason": "missing_frontend_state",
+        }
+
+    try:
+        frontend_game_state = data_manager._dict_to_game_state(frontend_payload)
+    except Exception as exc:
+        logger.warning("Failed to parse frontend state for merge (%s): %s", source, exc)
+        return {
+            "merged": False,
+            "authority_mode": authority_mode,
+            "reason": "invalid_frontend_state",
+        }
+
+    if (
+        getattr(frontend_game_state, "id", None)
+        and getattr(backend_game_state, "id", None)
+        and str(frontend_game_state.id) != str(backend_game_state.id)
+    ):
+        return {
+            "merged": False,
+            "authority_mode": authority_mode,
+            "reason": "game_id_mismatch",
+        }
+
+    frontend_turn_count = _safe_int(getattr(frontend_game_state, "turn_count", 0), 0)
+    backend_turn_count = _safe_int(getattr(backend_game_state, "turn_count", 0), 0)
+    if frontend_turn_count < backend_turn_count:
+        return {
+            "merged": False,
+            "authority_mode": authority_mode,
+            "reason": "stale_frontend_turn",
+            "frontend_turn_count": frontend_turn_count,
+            "backend_turn_count": backend_turn_count,
+        }
+
+    old_position = tuple(backend_game_state.player.position)
+
+    _merge_frontend_player_combat_state(backend_game_state, frontend_game_state)
+    backend_game_state.monsters = frontend_game_state.monsters
+    backend_game_state.turn_count = frontend_turn_count
+    backend_game_state.game_time = max(
+        _safe_int(getattr(frontend_game_state, "game_time", 0), 0),
+        _safe_int(getattr(backend_game_state, "game_time", 0), 0),
+    )
+    frontend_game_over = bool(frontend_game_state.is_game_over)
+    backend_game_state.is_game_over = bool(backend_game_state.is_game_over) or frontend_game_over
+    if frontend_game_over or not backend_game_state.game_over_reason:
+        backend_game_state.game_over_reason = frontend_game_state.game_over_reason
+    backend_game_state.pending_map_transition = frontend_game_state.pending_map_transition
+
+    map_merge_result = _merge_frontend_map_computational_state(backend_game_state, frontend_game_state)
+
+    _repair_character_tile_index(backend_game_state)
+
+    return {
+        "merged": True,
+        "authority_mode": authority_mode,
+        "source": source,
+        "old_position": list(old_position),
+        "new_position": list(backend_game_state.player.position),
+        "turn_count": backend_game_state.turn_count,
+        **map_merge_result,
+    }
+
+
+def _resolve_tile_event_source(game_state: GameState, event_data: Dict[str, Any]) -> Tuple[Any, bool]:
+    """Resolve a tile event from server map first, then fallback to client payload."""
+    from data_models import MapTile, TerrainType
+
+    position = event_data.get("position", [0, 0]) if isinstance(event_data, dict) else [0, 0]
+    if not isinstance(position, (list, tuple)) or len(position) < 2:
+        position = [0, 0]
+
+    x = _safe_int(position[0], 0)
+    y = _safe_int(position[1], 0)
+
+    server_tile = game_state.current_map.get_tile(x, y) if game_state and game_state.current_map else None
+    if server_tile:
+        return server_tile, True
+
+    tile_data = event_data.get("tile", {}) if isinstance(event_data, dict) else {}
+    tile = MapTile()
+    tile.x = _safe_int(tile_data.get("x", x), x) if isinstance(tile_data, dict) else x
+    tile.y = _safe_int(tile_data.get("y", y), y) if isinstance(tile_data, dict) else y
+
+    terrain_value = tile_data.get("terrain", "floor") if isinstance(tile_data, dict) else "floor"
+    try:
+        tile.terrain = TerrainType(terrain_value)
+    except ValueError:
+        tile.terrain = TerrainType.FLOOR
+
+    if isinstance(tile_data, dict):
+        tile.has_event = bool(tile_data.get("has_event", False))
+        tile.event_type = str(tile_data.get("event_type", "") or "")
+        tile.event_data = tile_data.get("event_data", {}) if isinstance(tile_data.get("event_data", {}), dict) else {}
+        tile.event_triggered = bool(tile_data.get("event_triggered", False))
+
+    return tile, False
+
+
 def _build_http_exception_detail(
     message: str,
     trace_id: str,
@@ -882,34 +1130,39 @@ async def handle_llm_event(request: LLMEventRequest, http_request: Request, resp
             if game_key not in game_engine.active_games:
                 raise HTTPException(status_code=404, detail="游戏未找到")
 
-            # 仅使用服务端权威状态，避免客户端提交完整状态覆盖内存态
+            # 默认使用服务端权威状态；local 模式下合并前端已计算的移动/地图索引。
             game_state = game_engine.active_games[game_key]
+
+            merge_result = _merge_frontend_computational_state(
+                game_state,
+                request.game_state,
+                source=f"llm_event:{event_type}",
+            )
+            if merge_result.get("merged"):
+                logger.info(
+                    "Merged frontend computational state before LLM event: %s",
+                    json.dumps(merge_result, ensure_ascii=False),
+                )
 
             # 根据事件类型处理
             if event_type == "tile_event":
-                # 处理瓦片事件
-                tile_data = event_data.get("tile", {})
-                position = event_data.get("position", [0, 0])
-
-                # 重建MapTile对象
-                from data_models import MapTile, TerrainType
-
-                tile = MapTile()
-                tile.x = tile_data.get("x", position[0])
-                tile.y = tile_data.get("y", position[1])
-                tile.terrain = TerrainType(tile_data.get("terrain", "floor"))
-                tile.has_event = tile_data.get("has_event", False)
-                tile.event_type = tile_data.get("event_type", "")
-                tile.event_data = tile_data.get("event_data", {})
-                tile.event_triggered = tile_data.get("event_triggered", False)
+                tile, from_server_map = _resolve_tile_event_source(game_state, event_data)
+                if not from_server_map:
+                    logger.warning(
+                        "Tile event resolved from client fallback at (%s, %s)",
+                        getattr(tile, "x", 0),
+                        getattr(tile, "y", 0),
+                    )
 
                 # 触发事件
                 event_result = await game_engine._trigger_tile_event(game_state, tile)
+                has_pending_choice = bool(getattr(game_state, "pending_choice_context", None))
 
                 return {
                     "success": True,
                     "message": event_result,
                     "events": [event_result],
+                    "has_pending_choice": has_pending_choice,
                     "game_state": _serialize_game_state_for_client(game_state),
                 }
 
@@ -1192,6 +1445,17 @@ async def trigger_trap(request: Request, response: Response):
             if not game_state:
                 raise HTTPException(status_code=404, detail="游戏未找到")
 
+            merge_result = _merge_frontend_computational_state(
+                game_state,
+                data.get("game_state"),
+                source="trap_trigger",
+            )
+            if merge_result.get("merged"):
+                logger.info(
+                    "Merged frontend computational state before trap trigger: %s",
+                    json.dumps(merge_result, ensure_ascii=False),
+                )
+
             # 获取目标瓦片
             tile = game_state.current_map.get_tile(position[0], position[1])
             if not tile or not tile.is_trap():
@@ -1305,41 +1569,14 @@ async def sync_game_state(request: SyncStateRequest, http_request: Request, resp
             if not backend_game_state:
                 raise HTTPException(status_code=404, detail="游戏未找到")
 
-            # 从请求中重建前端游戏状态
-            from data_manager import data_manager
-            frontend_game_state = data_manager._dict_to_game_state(request.game_state)
-
             # 【关键】按权威模式合并前后端状态
             # local: 兼容旧客户端，同步更多前端计算字段
             # hybrid/server: 后端权威，禁止前端覆盖战斗核心字段（position/monsters/current_map/turn_count）
-            authority_mode = _safe_authority_mode(
-                getattr(backend_game_state, "combat_authority_mode", None),
-                _safe_authority_mode(config.game.combat_authority_mode),
+            merge_result = _merge_frontend_computational_state(
+                backend_game_state,
+                request.game_state,
+                source="sync_state",
             )
-            backend_game_state.combat_authority_mode = authority_mode
-            backend_game_state.combat_rule_version = max(
-                1,
-                _safe_int(getattr(backend_game_state, "combat_rule_version", 1), 1),
-            )
-
-            if authority_mode == "local":
-                backend_game_state.player.position = frontend_game_state.player.position
-                backend_game_state.monsters = frontend_game_state.monsters
-                backend_game_state.current_map = frontend_game_state.current_map
-                backend_game_state.turn_count = frontend_game_state.turn_count
-
-                # 修复地图角色索引，避免客户端提交导致的 character_id 不一致
-                for tile in backend_game_state.current_map.tiles.values():
-                    tile.character_id = None
-                player_tile = backend_game_state.current_map.get_tile(*backend_game_state.player.position)
-                if player_tile:
-                    player_tile.character_id = backend_game_state.player.id
-                    player_tile.is_explored = True
-                    player_tile.is_visible = True
-                for monster in backend_game_state.monsters:
-                    monster_tile = backend_game_state.current_map.get_tile(*monster.position)
-                    if monster_tile:
-                        monster_tile.character_id = monster.id
 
             # 后端状态：任务进度、经验值、等级、物品栏（后端生成）
             # 这些数据保持后端的值，不被前端覆盖

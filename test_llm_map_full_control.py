@@ -493,6 +493,202 @@ def test_apply_player_updates_main_path_available_and_effective():
     assert any(item.name == "测试药剂" for item in game_state.player.inventory)
 
 
+def test_local_llm_event_merge_keeps_latest_player_position():
+    from main import _merge_frontend_computational_state
+
+    backend_state = GameState()
+    backend_state.combat_authority_mode = "local"
+    backend_state.current_map = _build_basic_map(depth=1)
+    backend_state.player.position = (2, 2)
+    backend_state.current_map.tiles[(2, 2)].character_id = backend_state.player.id
+
+    frontend_state = GameState()
+    frontend_state.id = backend_state.id
+    frontend_state.combat_authority_mode = "local"
+    frontend_state.player.id = backend_state.player.id
+    frontend_state.player.position = (5, 5)
+    frontend_state.current_map = _build_basic_map(depth=1)
+    frontend_state.current_map.tiles[(2, 2)].character_id = backend_state.player.id
+    frontend_state.current_map.tiles[(5, 5)].character_id = backend_state.player.id
+    frontend_state.current_map.tiles[(5, 5)].has_event = True
+    frontend_state.current_map.tiles[(5, 5)].event_type = "story"
+    frontend_state.turn_count = 4
+    frontend_state.game_time = 4
+
+    result = _merge_frontend_computational_state(
+        backend_state,
+        frontend_state.to_dict(),
+        source="test_llm_event",
+    )
+
+    assert result["merged"] is True
+    assert backend_state.player.position == (5, 5)
+    assert backend_state.turn_count == 4
+    assert backend_state.game_time == 4
+    assert backend_state.current_map.tiles[(2, 2)].character_id is None
+    assert backend_state.current_map.tiles[(5, 5)].character_id == backend_state.player.id
+
+
+def test_tile_event_resolution_prefers_server_map_over_client_snapshot():
+    from main import _resolve_tile_event_source
+
+    game_state = GameState()
+    game_state.current_map = _build_basic_map(depth=1)
+    server_tile = game_state.current_map.tiles[(5, 5)]
+    server_tile.has_event = True
+    server_tile.event_type = "story"
+    server_tile.event_data = {"story_type": "server_truth"}
+
+    tile, from_server_map = _resolve_tile_event_source(
+        game_state,
+        {
+            "position": [5, 5],
+            "tile": {
+                "x": 5,
+                "y": 5,
+                "terrain": "floor",
+                "has_event": True,
+                "event_type": "combat",
+                "event_data": {"difficulty": "stale_client_snapshot"},
+            },
+        },
+    )
+
+    assert from_server_map is True
+    assert tile is server_tile
+    assert tile.event_type == "story"
+    assert tile.event_data["story_type"] == "server_truth"
+
+
+def test_local_merge_preserves_server_tile_event_truth_from_stale_client_snapshot():
+    from main import _merge_frontend_computational_state, _resolve_tile_event_source
+
+    backend_state = GameState()
+    backend_state.combat_authority_mode = "local"
+    backend_state.current_map = _build_basic_map(depth=1)
+    backend_state.current_map.id = "same-map"
+    backend_state.player.position = (2, 2)
+
+    server_tile = backend_state.current_map.tiles[(5, 5)]
+    server_tile.has_event = True
+    server_tile.event_type = "story"
+    server_tile.event_data = {"story_type": "server_truth"}
+
+    frontend_state = backend_state.to_dict()
+    frontend_state["player"]["position"] = [5, 5]
+    frontend_state["current_map"]["id"] = "same-map"
+    frontend_tile = frontend_state["current_map"]["tiles"]["5,5"]
+    frontend_tile["has_event"] = True
+    frontend_tile["event_type"] = "combat"
+    frontend_tile["event_data"] = {"difficulty": "stale_client_snapshot"}
+
+    merge_result = _merge_frontend_computational_state(
+        backend_state,
+        frontend_state,
+        source="test_stale_tile_event",
+    )
+    tile, from_server_map = _resolve_tile_event_source(
+        backend_state,
+        {
+            "position": [5, 5],
+            "tile": frontend_tile,
+        },
+    )
+
+    assert merge_result["merged"] is True
+    assert merge_result["map_merged"] is True
+    assert from_server_map is True
+    assert tile is server_tile
+    assert tile.event_type == "story"
+    assert tile.event_data["story_type"] == "server_truth"
+
+
+def test_local_merge_records_frontend_combat_damage_without_client_healing():
+    from main import _merge_frontend_computational_state
+
+    backend_state = GameState()
+    backend_state.combat_authority_mode = "local"
+    backend_state.current_map = _build_basic_map(depth=1)
+    backend_state.player.stats.hp = 80
+    backend_state.player.stats.max_hp = 100
+
+    frontend_state = backend_state.to_dict()
+    frontend_state["player"]["position"] = [3, 3]
+    frontend_state["player"]["stats"]["hp"] = 70
+
+    result = _merge_frontend_computational_state(
+        backend_state,
+        frontend_state,
+        source="test_frontend_damage",
+    )
+
+    assert result["merged"] is True
+    assert backend_state.player.position == (3, 3)
+    assert backend_state.player.stats.hp == 70
+
+    stale_frontend_state = backend_state.to_dict()
+    backend_state.player.stats.hp = 60
+    stale_frontend_state["player"]["stats"]["hp"] = 90
+
+    _merge_frontend_computational_state(
+        backend_state,
+        stale_frontend_state,
+        source="test_stale_frontend_hp",
+    )
+
+    assert backend_state.player.stats.hp == 60
+
+
+def test_local_merge_rejects_stale_or_wrong_game_frontend_snapshot():
+    from main import _merge_frontend_computational_state
+
+    backend_state = GameState()
+    backend_state.combat_authority_mode = "local"
+    backend_state.current_map = _build_basic_map(depth=1)
+    backend_state.player.position = (4, 4)
+    backend_state.turn_count = 5
+
+    stale_state = backend_state.to_dict()
+    stale_state["turn_count"] = 4
+    stale_state["player"]["position"] = [1, 1]
+
+    stale_result = _merge_frontend_computational_state(
+        backend_state,
+        stale_state,
+        source="test_stale_snapshot",
+    )
+
+    assert stale_result["merged"] is False
+    assert stale_result["reason"] == "stale_frontend_turn"
+    assert backend_state.player.position == (4, 4)
+
+    wrong_game_state = backend_state.to_dict()
+    wrong_game_state["id"] = "other-game"
+    wrong_game_state["turn_count"] = 6
+
+    wrong_game_result = _merge_frontend_computational_state(
+        backend_state,
+        wrong_game_state,
+        source="test_wrong_game_snapshot",
+    )
+
+    assert wrong_game_result["merged"] is False
+    assert wrong_game_result["reason"] == "game_id_mismatch"
+
+
+def test_character_to_dict_does_not_expose_live_stats_or_abilities_refs():
+    game_state = GameState()
+    state_dict = game_state.to_dict()
+
+    state_dict["player"]["stats"]["hp"] = 1
+    state_dict["player"]["stats"]["ac_components"]["base"] = 99
+    state_dict["player"]["abilities"]["wisdom"] = 1
+
+    assert game_state.player.stats.hp != 1
+    assert game_state.player.stats.ac_components["base"] != 99
+    assert game_state.player.abilities.wisdom != 1
+
+
 def test_patch_stage_fallback_to_config_when_map_metadata_missing():
     game_state = GameState()
     game_state.current_map = _build_basic_map(depth=1)

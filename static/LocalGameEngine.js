@@ -278,6 +278,81 @@ class LocalGameEngine {
         return false;
     }
 
+    getTrapData(tile) {
+        if (!tile) return {};
+
+        if (tile.has_event && tile.event_type === 'trap') {
+            return tile.event_data || {};
+        }
+
+        if (tile.terrain === 'trap') {
+            return {
+                trap_type: 'damage',
+                damage: 15,
+                damage_type: 'physical',
+                detect_dc: 15,
+                disarm_dc: 18,
+                save_dc: 14,
+                save_half_damage: true
+            };
+        }
+
+        return {};
+    }
+
+    getAbilityModifierFromScore(score) {
+        const value = Number(score);
+        if (!Number.isFinite(value)) return 0;
+        return Math.floor((value - 10) / 2);
+    }
+
+    getPlayerProficiencyBonus(player) {
+        const explicitBonus = Number(player?.proficiency_bonus);
+        if (Number.isFinite(explicitBonus) && explicitBonus > 0) {
+            return explicitBonus;
+        }
+
+        const level = Number(player?.stats?.level || 1);
+        if (level <= 4) return 2;
+        if (level <= 8) return 3;
+        if (level <= 12) return 4;
+        if (level <= 16) return 5;
+        return 6;
+    }
+
+    getPassivePerception(player) {
+        const explicitPassive = Number(player?.passive_perception);
+        if (Number.isFinite(explicitPassive)) {
+            return explicitPassive;
+        }
+
+        const wisdom = player?.abilities?.wisdom;
+        const wisdomModifier = this.getAbilityModifierFromScore(wisdom);
+        const skillProficiencies = Array.isArray(player?.skill_proficiencies)
+            ? player.skill_proficiencies
+            : [];
+        const proficiency = skillProficiencies.includes('perception')
+            ? this.getPlayerProficiencyBonus(player)
+            : 0;
+
+        return 10 + wisdomModifier + proficiency;
+    }
+
+    evaluateTrapPassiveDetection(tile) {
+        const gameState = this.getGameState();
+        const trapData = this.getTrapData(tile);
+        const explicitDC = Number(trapData.detect_dc);
+        const detectDC = Number.isFinite(explicitDC) ? explicitDC : 15;
+        const passivePerception = this.getPassivePerception(gameState?.player);
+
+        return {
+            detected: passivePerception >= detectDC,
+            trapData,
+            detectDC,
+            passivePerception
+        };
+    }
+
     /**
      * 检查陷阱侦测（被动感知）
      */
@@ -312,20 +387,10 @@ class LocalGameEngine {
         // 【修复】设置加载状态以阻止键盘输入
         this.game.isLoading = true;
 
-        // 调用后端检查被动侦测
         try {
-            const response = await fetch('/api/check-trap', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    game_id: gameState.id,
-                    position: [position.x, position.y]
-                })
-            });
+            const result = this.evaluateTrapPassiveDetection(tile);
 
-            const result = await response.json();
-
-            if (result.trap_detected) {
+            if (result.detected) {
                 // 被动侦测成功！
                 console.log('[LocalGameEngine] Trap detected by passive perception');
 
@@ -336,7 +401,10 @@ class LocalGameEngine {
                 }
 
                 // 显示发现陷阱的消息
-                this.addMessage(result.message, 'warning');
+                this.addMessage(
+                    `你的敏锐感知发现了陷阱！（被动感知 ${result.passivePerception} vs DC ${result.detectDC}）`,
+                    'warning'
+                );
 
                 // 播放发现陷阱特效
                 this.showTrapDetectedEffect([position.x, position.y]);
@@ -355,21 +423,16 @@ class LocalGameEngine {
                 // 未能发现陷阱，直接触发
                 console.log('[LocalGameEngine] Trap not detected, triggering...');
 
-                // 【新增】显示判定失败信息（如果后端提供了数据）
-                if (result.passive_perception !== undefined && result.detect_dc !== undefined) {
-                    this.addMessage(
-                        `你踩到了什么东西... 🎲 被动感知 ${result.passive_perception} vs DC ${result.detect_dc} - 失败`,
-                        'warning'
-                    );
-                } else {
-                    this.addMessage('你踩到了什么东西...', 'warning');
-                }
+                this.addMessage(
+                    `你踩到了什么东西... 🎲 被动感知 ${result.passivePerception} vs DC ${result.detectDC} - 失败`,
+                    'warning'
+                );
 
                 // handleTrap内部会管理isLoading状态
                 await this.handleTrap(tile);
             }
         } catch (error) {
-            console.error('[LocalGameEngine] Failed to check trap detection:', error);
+            console.error('[LocalGameEngine] Failed to evaluate trap detection:', error);
             // 【修复】重置加载状态
             this.game.isLoading = false;
             // 出错时直接触发陷阱
@@ -531,7 +594,8 @@ class LocalGameEngine {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     game_id: gameState.id,
-                    position: position
+                    position: position,
+                    game_state: gameState
                 })
             });
 
