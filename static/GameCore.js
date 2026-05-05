@@ -365,7 +365,7 @@ class LabyrinthiaGame {
 
     addMessage(text, type = 'system', options = {}) {
         const messageLog = document.getElementById('message-log');
-        if (!messageLog) return;
+        if (!messageLog) return null;
 
         const message = document.createElement('div');
         message.className = `message message-${type}`;
@@ -378,38 +378,66 @@ class LabyrinthiaGame {
         message.appendChild(messageText);
 
         const canReplay = this.ttsManager?.isMessageReadable(text, type);
+        let replayButton = null;
         if (canReplay) {
             const actions = document.createElement('div');
             actions.className = 'message-actions';
 
-            const replayButton = document.createElement('button');
+            replayButton = document.createElement('button');
             replayButton.type = 'button';
             replayButton.className = 'message-tts-btn';
             replayButton.title = this.ttsManager?.isAvailable() ? '复读这条消息' : '语音GM未启用';
             replayButton.setAttribute('aria-label', '复读这条消息');
+            replayButton.setAttribute('aria-pressed', 'false');
             replayButton.disabled = !(this.ttsManager?.isAvailable());
-            replayButton.innerHTML = '<i class="material-icons" aria-hidden="true">volume_up</i>';
+            // 喇叭 + 两道声波弧线（弧线在 .is-speaking 时由 CSS 动画驱动扩散）
+            replayButton.innerHTML = `
+                <svg class="message-tts-icon" viewBox="0 0 24 24" aria-hidden="true">
+                    <path class="tts-horn" d="M4.5 9.5h3.2L12 6v12l-4.3-3.5H4.5z"
+                          fill="currentColor" stroke="currentColor"
+                          stroke-width="1.4" stroke-linejoin="round"/>
+                    <path class="tts-wave tts-wave-1" d="M14.6 9.2c1.3 1.6 1.3 4 0 5.6"
+                          fill="none" stroke="currentColor"
+                          stroke-width="1.6" stroke-linecap="round"/>
+                    <path class="tts-wave tts-wave-2" d="M17.2 7c2.7 2.9 2.7 7.1 0 10"
+                          fill="none" stroke="currentColor"
+                          stroke-width="1.6" stroke-linecap="round"/>
+                </svg>`;
             replayButton.addEventListener('click', (event) => {
                 event.preventDefault();
                 event.stopPropagation();
-                this.ttsManager?.replayMessage(text, type);
+                if (!this.ttsManager) return;
+                // 正在朗读这一条 → 再点一下停止；否则发起复读
+                this.ttsManager.toggleMessageButton(replayButton, text, type);
             });
 
             actions.appendChild(replayButton);
             message.appendChild(actions);
         }
-        
+
         messageLog.appendChild(message);
         messageLog.scrollTop = messageLog.scrollHeight;
 
         if (this.ttsManager && !options.suppressAutoTTS) {
-            this.ttsManager.speakFromMessage(text, type);
+            // 把按钮一起交给 TTS，自动朗读时也能在对应消息上展示播放动效
+            this.ttsManager.speakFromMessage(text, type, { button: replayButton });
         }
-        
+
         // 限制消息数量
         while (messageLog.children.length > 50) {
-            messageLog.removeChild(messageLog.firstChild);
+            const oldest = messageLog.firstChild;
+            if (oldest) {
+                const oldBtn = oldest.querySelector?.('.message-tts-btn');
+                if (oldBtn && this.ttsManager?.isButtonSpeaking?.(oldBtn)) {
+                    // 被裁剪掉的消息正在朗读 → 先停掉，避免动效绑在已脱离 DOM 的节点上
+                    this.ttsManager.stop();
+                }
+            }
+            messageLog.removeChild(oldest);
         }
+
+        // 把刚创建的按钮返回出去（可能为 null），便于调用方在播放期挂动效或后续操作。
+        return replayButton;
     }
 
     handleGameOver(reason) {

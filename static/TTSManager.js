@@ -201,6 +201,8 @@ class TTSManager {
         this.currentAudio = null;
         this.isPlaying = false;
         this.lastAutoKey = '';
+        // 当前“正在朗读”所对应的消息日志按钮（用于驱动按钮播放动效）
+        this.currentSpeakingButton = null;
 
         // 音量控制状态
         this.volume = this.loadStoredVolume();
@@ -216,6 +218,8 @@ class TTSManager {
             blocked: 0,
             byCategory: {},
         };
+        this.controlSetupRetryTimer = null;
+        this.controlSetupRetryCount = 0;
 
         this.setupControls();
     }
@@ -370,9 +374,17 @@ class TTSManager {
         this.shell = this.shells[0] || null;
 
         if (this.toggles.length === 0) {
-            setTimeout(() => this.setupControls(), 250);
+            const canRetry = document.readyState === 'loading' && this.controlSetupRetryCount < 8;
+            if (canRetry) {
+                this.controlSetupRetryCount += 1;
+                clearTimeout(this.controlSetupRetryTimer);
+                this.controlSetupRetryTimer = setTimeout(() => this.setupControls(), 250);
+            }
             return;
         }
+        this.controlSetupRetryCount = 0;
+        clearTimeout(this.controlSetupRetryTimer);
+        this.controlSetupRetryTimer = null;
 
         this.toggles.forEach((toggle) => {
             toggle.checked = this.autoEnabled;
@@ -822,7 +834,7 @@ class TTSManager {
         return decision.shouldRead;
     }
 
-    speakFromMessage(text, type = 'system') {
+    speakFromMessage(text, type = 'system', options = {}) {
         if (!this.autoEnabled || !this.isAvailable()) {
             return;
         }
@@ -864,6 +876,7 @@ class TTSManager {
             text: normalized,
             category: ttsCategory,
             immediate: false,
+            button: options?.button || null,
         });
     }
 
@@ -891,10 +904,14 @@ class TTSManager {
     }
 
     prepareOpeningSegments(segments = []) {
-        if (!this.autoEnabled || !this.isAvailable() || !Array.isArray(segments)) {
+        if (!this.isAvailable() || !Array.isArray(segments)) {
             return;
         }
 
+        // 仅做“合成预热”：把音频提前 fetch 到 audioCache，但不入队播放。
+        // 入队播放由 SaveManager 在对应消息条目（带按钮）出现后用 playOpeningSegment 触发，
+        // 这样按钮才能在播放期间挂上 .is-speaking 动效。
+        // 注意：开场属于 GM 设定的“必须预热”，绕过白名单（白名单只控制运行时自动朗读）。
         const prepared = segments
             .map((segment) => ({
                 text: this.normalizeText(segment?.text),
@@ -902,35 +919,44 @@ class TTSManager {
             }))
             .filter((segment) => segment.text);
 
-        if (prepared.length === 0) return;
-
-        // 开场片段属于 GM 设定的"必须预热"，绕过白名单（白名单仅控制运行时自动朗读）。
         prepared.forEach((segment) => {
             this.getAudioUrl(segment.text, segment.category).catch((error) => {
                 console.warn('[TTSManager] Opening speech prefetch skipped:', error);
             });
         });
+    }
 
-        prepared.forEach((segment) => {
-            this.recordDecision({
-                voiceCategory: segment.category === 'event' ? 'event' : 'narrative',
-                ttsCategory: segment.category,
-                rawType: segment.category,
-                source: 'opening',
-                spoken: true,
-                reason: 'opening_segment',
-                length: segment.text.length,
-                preview: segment.text.slice(0, 36),
-            });
-            this.enqueue({
-                text: segment.text,
-                category: segment.category,
-                immediate: false,
-            });
+    /**
+     * 触发某段开场白的实际朗读，并把对应消息条目按钮串到队列项里。
+     *  - 绕过白名单（开场白属于 GM 必读）
+     *  - 仍尊重硬黑名单 / 长度
+     *  - immediate=false：narrative 与 opening_quest 顺序播放，互不打断
+     */
+    playOpeningSegment(text, category = 'narrative', options = {}) {
+        if (!this.isAvailable()) return;
+        const normalized = this.normalizeText(text);
+        if (!normalized) return;
+
+        this.recordDecision({
+            voiceCategory: category === 'event' ? 'event' : 'narrative',
+            ttsCategory: category,
+            rawType: category,
+            source: 'opening',
+            spoken: true,
+            reason: 'opening_play',
+            length: normalized.length,
+            preview: normalized.slice(0, 36),
+        });
+
+        this.enqueue({
+            text: normalized,
+            category,
+            immediate: false,
+            button: options?.button || null,
         });
     }
 
-    replayMessage(text, type = 'system') {
+    replayMessage(text, type = 'system', options = {}) {
         if (!this.isAvailable()) {
             this.flashUnavailable();
             return;
@@ -959,7 +985,57 @@ class TTSManager {
             text: this.normalizeText(text),
             category: decision.ttsCategory,
             immediate: true,
+            button: options?.button || null,
         });
+    }
+
+    /**
+     * 用户在消息日志条目按下朗读按钮时调用：
+     *  - 当前正是这条消息在朗读 → 立即停止（实现 "再点一下停下" 体验）
+     *  - 否则 → 复读这条消息，并把按钮标记为正在播放
+     */
+    toggleMessageButton(button, text, type = 'system') {
+        if (!button) return;
+        if (this.isButtonSpeaking(button)) {
+            this.stop();
+            return;
+        }
+        this.replayMessage(text, type, { button });
+    }
+
+    /** 当前正在播放的按钮是不是这一个？ */
+    isButtonSpeaking(button) {
+        return Boolean(button && this.currentSpeakingButton === button);
+    }
+
+    /** 给指定按钮挂上 “正在朗读” 视觉态：渐变背景 + 圆环扩散 + 喇叭弧线扩散。 */
+    setSpeakingButton(button) {
+        // 先清掉旧的，避免多个按钮同时处于播放态
+        if (this.currentSpeakingButton && this.currentSpeakingButton !== button) {
+            this.clearSpeakingButton();
+        }
+        if (!button || typeof button !== 'object' || !(button instanceof HTMLElement)) {
+            return;
+        }
+        // 已被移出 DOM（消息日志超过 50 条裁剪掉了）就不再触发动效
+        if (!button.isConnected) {
+            this.currentSpeakingButton = null;
+            return;
+        }
+        button.classList.add('is-speaking');
+        button.setAttribute('aria-pressed', 'true');
+        button.title = '点击停止朗读';
+        this.currentSpeakingButton = button;
+    }
+
+    /** 清除当前“正在朗读”按钮的视觉态，把图标和提示词复原。 */
+    clearSpeakingButton() {
+        const btn = this.currentSpeakingButton;
+        this.currentSpeakingButton = null;
+        if (!btn) return;
+        btn.classList.remove('is-speaking');
+        btn.setAttribute('aria-pressed', 'false');
+        btn.title = this.isAvailable() ? '复读这条消息' : '语音GM未启用';
     }
 
     speakChoiceContext(choiceContext) {
@@ -1019,17 +1095,19 @@ class TTSManager {
     enqueue(item) {
         if (!item?.text) return;
         const key = this.buildCacheKey(item.text, item.category);
+        const button = (item.button && item.button instanceof HTMLElement) ? item.button : null;
+        const queued = { ...item, button };
 
         if (item.immediate) {
             this.stop();
             this.queuedKeys.delete(key);
-            this.queue.unshift(item);
+            this.queue.unshift(queued);
         } else {
             if (this.queuedKeys.has(key) || this.currentQueueKey === key) {
                 return;
             }
             this.queuedKeys.add(key);
-            this.queue.push(item);
+            this.queue.push(queued);
         }
 
         this.processQueue();
@@ -1043,6 +1121,8 @@ class TTSManager {
         this.queuedKeys.delete(key);
         this.currentQueueKey = key;
         this.isPlaying = true;
+        // 立刻给按钮挂上 “正在朗读” 视觉态，覆盖网络合成等待期，避免空窗
+        this.setSpeakingButton(item.button);
 
         try {
             const url = await this.getAudioUrl(item.text, item.category);
@@ -1052,6 +1132,7 @@ class TTSManager {
         } finally {
             this.isPlaying = false;
             this.currentQueueKey = '';
+            this.clearSpeakingButton();
             if (this.queue.length > 0) {
                 setTimeout(() => this.processQueue(), 80);
             }
@@ -1110,6 +1191,8 @@ class TTSManager {
             this.currentAudio = null;
         }
         this.isPlaying = false;
+        // 用户主动停止 / 被 immediate 抢占时，及时关闭旧按钮的播放动效
+        this.clearSpeakingButton();
     }
 
     flashUnavailable() {

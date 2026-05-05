@@ -264,6 +264,8 @@ Object.assign(LabyrinthiaGame.prototype, {
             if (result.success) {
                 if (this.ttsManager && Array.isArray(result.opening_speech_segments)) {
                     this.updateOverlayProgress(55, '语音GM正在准备开场旁白...');
+                    // 先做合成预热（不入队播放）；真正入队播放放到 addMessage 之后，
+                    // 这样按钮就能携带 .is-speaking 动效。
                     this.ttsManager.prepareOpeningSegments(result.opening_speech_segments);
                 }
 
@@ -279,16 +281,44 @@ Object.assign(LabyrinthiaGame.prototype, {
                 this.updateOverlayProgress(90, '生成开场故事...');
                 this.addMessage('新游戏开始！', 'success');
 
-                // 显示叙述文本
+                // ----- 开场叙述 -----
+                // narrative：addMessage 时通过 suppressAutoTTS 跳过常规自动朗读，
+                // 然后用 playOpeningSegment 触发开场专用播放（绕过白名单 + 携带按钮）
+                const openingSegments = Array.isArray(result.opening_speech_segments)
+                    ? result.opening_speech_segments
+                    : [];
+                const narrativeSegment = openingSegments.find(
+                    seg => seg && seg.id === 'opening_narrative' && seg.text
+                );
+
                 if (result.narrative) {
-                    this.addMessage(result.narrative, 'narrative');
+                    const narrativeBtn = this.addMessage(result.narrative, 'narrative', {
+                        suppressAutoTTS: Boolean(narrativeSegment && this.ttsManager?.isAvailable()),
+                    });
+                    if (narrativeSegment && this.ttsManager?.isAvailable()) {
+                        this.ttsManager.playOpeningSegment(
+                            narrativeSegment.text,
+                            narrativeSegment.category || 'narrative',
+                            { button: narrativeBtn }
+                        );
+                    }
                 }
 
-                const openingQuestSegment = Array.isArray(result.opening_speech_segments)
-                    ? result.opening_speech_segments.find(segment => segment && segment.id === 'opening_quest' && segment.text)
-                    : null;
+                // ----- 开场任务 -----
+                const openingQuestSegment = openingSegments.find(
+                    seg => seg && seg.id === 'opening_quest' && seg.text
+                );
                 if (openingQuestSegment) {
-                    this.addMessage(openingQuestSegment.text, 'event', { suppressAutoTTS: true });
+                    const questBtn = this.addMessage(openingQuestSegment.text, 'event', {
+                        suppressAutoTTS: true,
+                    });
+                    if (this.ttsManager?.isAvailable()) {
+                        this.ttsManager.playOpeningSegment(
+                            openingQuestSegment.text,
+                            openingQuestSegment.category || 'event',
+                            { button: questBtn }
+                        );
+                    }
                 }
 
                 this.updateOverlayProgress(100, '准备就绪！');
