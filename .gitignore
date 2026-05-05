@@ -24,3 +24,4 @@ Thumbs.db
 # 用户私有记录文档
 /doc
 .ace-tool/
+/.playwright-mcp

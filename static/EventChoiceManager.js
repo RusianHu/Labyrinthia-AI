@@ -185,6 +185,10 @@ class EventChoiceManager {
         // 播放音效（如果有）
         this.playChoiceSound();
 
+        if (window.game?.ttsManager) {
+            window.game.ttsManager.speakChoiceContext(choiceContext);
+        }
+
         console.log('[EventChoiceManager] Dialog display initiated');
     }
 

@@ -147,7 +147,7 @@ Object.assign(LabyrinthiaGame.prototype, {
 
                 // 显示叙述文本
                 if (result.narrative) {
-                    this.addMessage(result.narrative, 'narrative');
+                    this.addMessage(result.narrative, 'narrative', { suppressAutoTTS: true });
                 }
 
                 this.updateOverlayProgress(100, '加载完成！');
@@ -262,6 +262,11 @@ Object.assign(LabyrinthiaGame.prototype, {
             const result = await response.json();
 
             if (result.success) {
+                if (this.ttsManager && Array.isArray(result.opening_speech_segments)) {
+                    this.updateOverlayProgress(55, '语音GM正在准备开场旁白...');
+                    this.ttsManager.prepareOpeningSegments(result.opening_speech_segments);
+                }
+
                 this.updateOverlayProgress(65, '构建游戏世界...');
                 this.gameId = result.game_id;
 
@@ -277,6 +282,13 @@ Object.assign(LabyrinthiaGame.prototype, {
                 // 显示叙述文本
                 if (result.narrative) {
                     this.addMessage(result.narrative, 'narrative');
+                }
+
+                const openingQuestSegment = Array.isArray(result.opening_speech_segments)
+                    ? result.opening_speech_segments.find(segment => segment && segment.id === 'opening_quest' && segment.text)
+                    : null;
+                if (openingQuestSegment) {
+                    this.addMessage(openingQuestSegment.text, 'event', { suppressAutoTTS: true });
                 }
 
                 this.updateOverlayProgress(100, '准备就绪！');

@@ -680,3 +680,56 @@ class OpenAIAPITool:
         # TTS API 返回音频字节流
         return self._make_request("audio/speech", data, return_json=False)
 
+    def mimo_text_to_speech_chat(
+        self,
+        text: str,
+        model: Optional[str] = None,
+        voice: str = "mimo_default",
+        response_format: str = "wav",
+        style_hint: Optional[str] = None,
+        **kwargs
+    ) -> bytes:
+        """
+        MiMo-V2.5-TTS 语音合成。
+
+        MiMo TTS 使用 chat/completions 协议：待朗读文本必须放在
+        assistant message 中，语音以 message.audio.data 的 base64 返回。
+        """
+        model = model or self.default_tts_model
+        messages: List[Dict[str, Any]] = []
+
+        if style_hint:
+            messages.append({
+                "role": "user",
+                "content": str(style_hint),
+            })
+
+        messages.append({
+            "role": "assistant",
+            "content": text,
+        })
+
+        data = {
+            "model": model,
+            "messages": messages,
+            "audio": {
+                "format": response_format,
+                "voice": voice,
+            },
+            **kwargs
+        }
+
+        response = self._make_request("chat/completions", data)
+        message = self._extract_assistant_message(response)
+        audio = message.get("audio")
+        if not isinstance(audio, dict):
+            raise Exception("API 响应缺少有效的 audio 数据")
+
+        audio_data = audio.get("data")
+        if not isinstance(audio_data, str) or not audio_data:
+            raise Exception("API 响应缺少 audio.data")
+
+        try:
+            return base64.b64decode(audio_data)
+        except Exception as exc:
+            raise Exception("API 响应 audio.data 不是有效的 base64") from exc

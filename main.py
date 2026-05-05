@@ -28,6 +28,7 @@ from config import config
 from game_engine import game_engine
 from data_manager import data_manager
 from llm_service import llm_service, LLMUnavailableError
+from openai_api_tool import OpenAIAPITool
 from progress_manager import progress_manager
 from event_choice_system import event_choice_system
 from data_models import GameState
@@ -72,6 +73,92 @@ class LLMEventRequest(BaseModel):
     event_type: str
     event_data: Dict[str, Any]
     game_state: Dict[str, Any]
+
+
+class TTSRequest(BaseModel):
+    text: str
+    category: str = "narrative"
+    style_hint: Optional[str] = None
+    voice: Optional[str] = None
+
+
+def _tts_media_type(output_format: str) -> str:
+    format_map = {
+        "wav": "audio/wav",
+        "mp3": "audio/mpeg",
+        "pcm16": "application/octet-stream",
+    }
+    return format_map.get(str(output_format or "wav").lower(), "application/octet-stream")
+
+
+def _build_tts_style_hint(category: str, style_hint: Optional[str]) -> str:
+    base_styles = {
+        "narrative": "用适合奇幻地牢GM旁白的语气朗读，节奏清晰，略带神秘感。",
+        "combat": "用紧凑、有冲击力的战斗解说语气朗读，语速略快但吐字清楚。",
+        "event": "用沉浸式桌面角色扮演主持人的语气朗读，保持戏剧感但不过度夸张。",
+        "choice": "用清晰的GM提示语气朗读，突出当前事件和可选行动。",
+        "system": "用简洁清晰的提示语气朗读，只强调对冒险有意义的信息。",
+        "action": "用简短自然的GM反馈语气朗读。",
+    }
+    category_key = str(category or "narrative").strip().lower()
+    default_hint = base_styles.get(category_key, base_styles["narrative"])
+    custom_hint = str(style_hint or "").strip()
+    return f"{default_hint} {custom_hint}".strip() if custom_hint else default_hint
+
+
+def _compact_tts_text(text: str, max_chars: int = 280) -> str:
+    text = re.sub(r"\s+", " ", str(text or "")).strip()
+    if len(text) <= max_chars:
+        return text
+
+    cut = text[:max_chars]
+    sentence_end = max(cut.rfind("。"), cut.rfind("！"), cut.rfind("？"), cut.rfind("."))
+    if sentence_end >= max_chars * 0.55:
+        return cut[:sentence_end + 1].strip()
+    return cut.rstrip("，,；;：:、 ") + "。"
+
+
+def _build_opening_speech_segments(game_state: GameState) -> List[Dict[str, str]]:
+    """为新游戏首屏预热语音构建稳定的朗读段。"""
+    segments: List[Dict[str, str]] = []
+
+    narrative = str(getattr(game_state, "last_narrative", "") or "").strip()
+    if narrative:
+        segments.append({
+            "id": "opening_narrative",
+            "category": "narrative",
+            "text": _compact_tts_text(narrative, 320),
+        })
+
+    active_quest = None
+    for quest in getattr(game_state, "quests", []) or []:
+        if getattr(quest, "is_active", False) and not getattr(quest, "is_completed", False):
+            active_quest = quest
+            break
+
+    if active_quest:
+        quest_parts = []
+        if getattr(active_quest, "title", ""):
+            quest_parts.append(f"当前任务：{active_quest.title}")
+        if getattr(active_quest, "description", ""):
+            quest_parts.append(_compact_tts_text(active_quest.description, 180))
+        objectives = [
+            str(obj).strip()
+            for obj in (getattr(active_quest, "objectives", []) or [])
+            if str(obj).strip()
+        ]
+        if objectives:
+            quest_parts.append("任务目标：" + "；".join(objectives[:4]))
+
+        quest_text = "。".join(part for part in quest_parts if part).strip()
+        if quest_text:
+            segments.append({
+                "id": "opening_quest",
+                "category": "event",
+                "text": _compact_tts_text(quest_text, 320),
+            })
+
+    return segments
 
 
 def _normalize_action_response(
@@ -735,6 +822,7 @@ async def create_new_game(request: NewGameRequest, http_request: Request, respon
             "game_id": game_state.id,
             "message": f"欢迎 {sanitized_name}！你的冒险开始了！",
             "narrative": game_state.last_narrative,
+            "opening_speech_segments": _build_opening_speech_segments(game_state),
             "warnings": name_validation.warnings if name_validation.warnings else []
         }
 
@@ -2320,6 +2408,29 @@ async def get_config():
                     "temperature": config.llm.temperature,
                     "max_output_tokens": config.llm.max_output_tokens
                 },
+                "tts": {
+                    "enabled": bool(config.tts.enabled),
+                    "provider": config.tts.provider,
+                    "model_name": config.tts.model_name,
+                    "default_voice": config.tts.default_voice,
+                    "output_format": config.tts.output_format,
+                    "max_text_chars": config.tts.max_text_chars,
+                    "voice_whitelist_defaults": {
+                        "narrative": bool(config.tts.voice_whitelist_narrative),
+                        "event": bool(config.tts.voice_whitelist_event),
+                        "combat_narrative": bool(config.tts.voice_whitelist_combat_narrative),
+                        "choice": bool(config.tts.voice_whitelist_choice),
+                        "quest": bool(config.tts.voice_whitelist_quest),
+                        "milestone": bool(config.tts.voice_whitelist_milestone),
+                        "combat_summary": bool(config.tts.voice_whitelist_combat_summary),
+                        "action": bool(config.tts.voice_whitelist_action),
+                        "status": bool(config.tts.voice_whitelist_status),
+                        "system_state": bool(config.tts.voice_whitelist_system_state),
+                        "error": bool(config.tts.voice_whitelist_error),
+                        "warning": bool(config.tts.voice_whitelist_warning),
+                        "debug": bool(config.tts.voice_whitelist_debug),
+                    }
+                },
                 "web": {
                     "host": config.web.host,
                     "port": config.web.port
@@ -2329,6 +2440,89 @@ async def get_config():
     except Exception as e:
         logger.error(f"Failed to get config: {e}")
         raise HTTPException(status_code=500, detail=f"获取配置失败: {str(e)}")
+
+
+@app.post("/api/tts/synthesize")
+async def synthesize_tts(request: TTSRequest):
+    """按需合成语音，仅返回音频字节，不做服务端缓存。"""
+    if not config.tts.enabled:
+        raise HTTPException(
+            status_code=503,
+            detail={"error_code": "TTS_DISABLED", "message": "语音GM未启用"}
+        )
+
+    if config.tts.provider != "mimo_openai_compatible":
+        raise HTTPException(
+            status_code=503,
+            detail={"error_code": "TTS_PROVIDER_UNSUPPORTED", "message": "当前TTS源不支持"}
+        )
+
+    text = str(request.text or "").strip()
+    if not text:
+        raise HTTPException(
+            status_code=400,
+            detail={"error_code": "TTS_EMPTY_TEXT", "message": "朗读文本不能为空"}
+        )
+
+    if len(text) > config.tts.max_text_chars:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error_code": "TTS_TEXT_TOO_LONG",
+                "message": f"朗读文本不能超过 {config.tts.max_text_chars} 个字符"
+            }
+        )
+
+    api_key = str(config.tts.api_key or "").strip()
+    base_url = str(config.tts.base_url or "").strip()
+    if not api_key or not base_url:
+        raise HTTPException(
+            status_code=503,
+            detail={"error_code": "TTS_NOT_CONFIGURED", "message": "TTS源未配置完整"}
+        )
+
+    proxies = None
+    if config.llm.use_proxy and config.llm.proxy_url:
+        proxies = {
+            "http": config.llm.proxy_url,
+            "https": config.llm.proxy_url,
+        }
+
+    client = OpenAIAPITool(
+        api_key=api_key,
+        base_url=base_url,
+        default_tts_model=config.tts.model_name,
+        timeout=config.tts.timeout,
+        proxies=proxies,
+    )
+    voice = str(request.voice or config.tts.default_voice or "mimo_default").strip()
+    style_hint = _build_tts_style_hint(request.category, request.style_hint)
+
+    try:
+        audio_bytes = await asyncio.to_thread(
+            client.mimo_text_to_speech_chat,
+            text=text,
+            model=config.tts.model_name,
+            voice=voice,
+            response_format=config.tts.output_format,
+            style_hint=style_hint,
+        )
+    except Exception as exc:
+        logger.warning("TTS synthesis failed: %s", str(exc)[:500])
+        raise HTTPException(
+            status_code=502,
+            detail={"error_code": "TTS_SYNTHESIS_FAILED", "message": "语音合成失败"}
+        )
+
+    return Response(
+        content=audio_bytes,
+        media_type=_tts_media_type(config.tts.output_format),
+        headers={
+            "Cache-Control": "no-store",
+            "X-TTS-Model": config.tts.model_name,
+            "X-TTS-Voice": voice,
+        },
+    )
 
 
 @app.post("/api/config")

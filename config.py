@@ -71,6 +71,47 @@ class _LMStudioConfig:
 
 
 @dataclass
+class TTSConfig:
+    """Text-to-Speech配置类
+
+    设计原则：
+    - TTS 是与 LLM Provider 完全解耦的独立链路；
+      `api_key` / `base_url` / `model_name` 必须由专属环境变量
+      `TTS_API_KEY` / `TTS_BASE_URL` / `TTS_MODEL_NAME` 显式提供，
+      不再回退到 `OPENAI_API_KEY` / `OPENAI_BASE_URL`。
+    - 当 `enabled=True` 但关键字段缺失时，`Config._validate_critical_config`
+      会发出明确警告；运行期 `/api/tts/synthesize` 端点也会以
+      `TTS_NOT_CONFIGURED` 错误码拦截请求。
+    """
+    enabled: bool = False
+    provider: str = "mimo_openai_compatible"
+    api_key: str = ""
+    base_url: str = ""
+    model_name: str = "mimo-v2.5-tts"
+    default_voice: str = "mimo_default"
+    output_format: str = "wav"
+    timeout: int = 120
+    max_text_chars: int = 800
+
+    # ---- 语音白名单分级（默认朗读） ----
+    # 这些字段会作为前端 voice_whitelist_defaults 下发，前端的用户偏好（localStorage）会覆盖此处。
+    # 设计目标：让 GM 语音聚焦于叙事/事件/任务/选项/里程碑，不要朗读 “攻击了 xxx / 移动到 xxx” 等模板消息。
+    voice_whitelist_narrative: bool = True       # LLM 旁白（必读）
+    voice_whitelist_event: bool = True           # 事件描述（必读）
+    voice_whitelist_combat_narrative: bool = True  # 长战斗叙事（≥30字）
+    voice_whitelist_choice: bool = True          # 事件选项汇总
+    voice_whitelist_quest: bool = True           # 任务进展叙事
+    voice_whitelist_milestone: bool = True       # 升级/楼梯/重大发现
+    voice_whitelist_combat_summary: bool = False  # “X 攻击了 Y 造成 N 伤害”模板
+    voice_whitelist_action: bool = False          # “攻击了 xxx / 移动到 xxx”
+    voice_whitelist_status: bool = False          # “获得 5 点经验 / 恢复 N HP”
+    voice_whitelist_system_state: bool = False    # “游戏已保存/已加载”
+    voice_whitelist_error: bool = False           # 错误提示
+    voice_whitelist_warning: bool = False         # 会话失效等
+    voice_whitelist_debug: bool = False           # Emoji 前缀的调试输出
+
+
+@dataclass
 class LLMConfig:
     """LLM配置类"""
     # ------------------- LLM Provider Master Configuration --------------------
@@ -315,6 +356,7 @@ class Config:
 
     def __init__(self):
         self.llm = LLMConfig()
+        self.tts = TTSConfig()
         self.game = GameConfig()
         self.web = WebConfig()
         self.data = DataConfig()
@@ -396,6 +438,74 @@ class Config:
 
         if llm_hard_dependency := os.getenv("LLM_HARD_DEPENDENCY"):
             self.llm.hard_dependency = llm_hard_dependency.lower() in ("true", "1", "yes")
+
+        # ------------------- Load TTS Configuration -------------------
+        # 设计：TTS 配置完全独立于 LLM Provider，禁止回退至 OPENAI_API_KEY/BASE_URL。
+        # 仅当 TTS_API_KEY / TTS_BASE_URL / TTS_MODEL_NAME 显式提供时，才会被采用；
+        # 否则保留 TTSConfig dataclass 中的默认值（空串或安全占位），
+        # 由 _validate_critical_config + /api/tts/synthesize 联合兜底校验。
+        if tts_enabled := os.getenv("TTS_ENABLED"):
+            self.tts.enabled = tts_enabled.lower() in ("true", "1", "yes")
+
+        if tts_provider := os.getenv("TTS_PROVIDER"):
+            provider = tts_provider.strip().lower()
+            if provider:
+                self.tts.provider = provider
+
+        if tts_api_key := os.getenv("TTS_API_KEY"):
+            self.tts.api_key = tts_api_key.strip()
+
+        if tts_base_url := os.getenv("TTS_BASE_URL"):
+            self.tts.base_url = tts_base_url.strip().rstrip("/")
+
+        if tts_model := os.getenv("TTS_MODEL_NAME"):
+            self.tts.model_name = tts_model.strip() or self.tts.model_name
+
+        if tts_voice := os.getenv("TTS_DEFAULT_VOICE"):
+            self.tts.default_voice = tts_voice.strip() or self.tts.default_voice
+
+        if tts_format := os.getenv("TTS_OUTPUT_FORMAT"):
+            output_format = tts_format.strip().lower()
+            if output_format in ("wav", "mp3", "pcm16"):
+                self.tts.output_format = output_format
+
+        if tts_timeout := os.getenv("TTS_TIMEOUT"):
+            try:
+                self.tts.timeout = max(1, int(tts_timeout))
+            except ValueError:
+                pass
+
+        if tts_max_chars := os.getenv("TTS_MAX_TEXT_CHARS"):
+            try:
+                self.tts.max_text_chars = max(1, int(tts_max_chars))
+            except ValueError:
+                pass
+
+        # 语音白名单分级覆盖：TTS_VOICE_<CATEGORY>=true|false
+        voice_whitelist_env = {
+            "TTS_VOICE_NARRATIVE": "voice_whitelist_narrative",
+            "TTS_VOICE_EVENT": "voice_whitelist_event",
+            "TTS_VOICE_COMBAT_NARRATIVE": "voice_whitelist_combat_narrative",
+            "TTS_VOICE_CHOICE": "voice_whitelist_choice",
+            "TTS_VOICE_QUEST": "voice_whitelist_quest",
+            "TTS_VOICE_MILESTONE": "voice_whitelist_milestone",
+            "TTS_VOICE_COMBAT_SUMMARY": "voice_whitelist_combat_summary",
+            "TTS_VOICE_ACTION": "voice_whitelist_action",
+            "TTS_VOICE_STATUS": "voice_whitelist_status",
+            "TTS_VOICE_SYSTEM_STATE": "voice_whitelist_system_state",
+            "TTS_VOICE_ERROR": "voice_whitelist_error",
+            "TTS_VOICE_WARNING": "voice_whitelist_warning",
+            "TTS_VOICE_DEBUG": "voice_whitelist_debug",
+        }
+        for env_key, attr_name in voice_whitelist_env.items():
+            raw_value = os.getenv(env_key)
+            if raw_value is None:
+                continue
+            normalized = str(raw_value).strip().lower()
+            if normalized in ("true", "1", "yes", "on"):
+                setattr(self.tts, attr_name, True)
+            elif normalized in ("false", "0", "no", "off"):
+                setattr(self.tts, attr_name, False)
 
         # ------------------- Load Proxy Configuration -------------------
         if proxy_url := os.getenv("PROXY_URL"):
@@ -720,6 +830,33 @@ class Config:
         else:
             logger.debug(f"✓ API Key 已配置 (Provider: {self.llm.provider.value})")
 
+        # ---- TTS 独立性校验 ----
+        # TTS 已与 LLM Provider 解耦，启用时必须显式提供 TTS_API_KEY 与 TTS_BASE_URL。
+        if self.tts.enabled:
+            tts_missing = []
+            if not (self.tts.api_key or "").strip():
+                tts_missing.append("TTS_API_KEY")
+            if not (self.tts.base_url or "").strip():
+                tts_missing.append("TTS_BASE_URL")
+            if not (self.tts.model_name or "").strip():
+                tts_missing.append("TTS_MODEL_NAME")
+
+            if tts_missing:
+                logger.warning(
+                    "⚠️  TTS 已启用但配置不完整，缺失变量: %s",
+                    ", ".join(tts_missing),
+                )
+                logger.info(
+                    "💡 TTS 现已与 OpenAI 配置解耦，请在 .env 中独立设置以上 TTS_* 变量；"
+                    "缺失时 /api/tts/synthesize 将返回 TTS_NOT_CONFIGURED。"
+                )
+            else:
+                logger.debug(
+                    "✓ TTS 配置已就绪 (provider=%s, model=%s)",
+                    self.tts.provider,
+                    self.tts.model_name,
+                )
+
     def _create_directories(self):
         """创建必要的目录"""
         directories = [
@@ -754,8 +891,13 @@ class Config:
 
     def to_dict(self) -> Dict[str, Any]:
         """转换为字典格式"""
+        tts_dict = dict(self.tts.__dict__)
+        if tts_dict.get("api_key"):
+            tts_dict["api_key"] = "***"
+
         return {
             "llm": self.llm.__dict__,
+            "tts": tts_dict,
             "game": self.game.__dict__,
             "web": self.web.__dict__,
             "data": self.data.__dict__,
@@ -770,6 +912,7 @@ config = Config()
 __all__ = [
     "Config",
     "LLMConfig",
+    "TTSConfig",
     "GameConfig",
     "WebConfig",
     "DataConfig",

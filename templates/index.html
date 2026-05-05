@@ -10,7 +10,7 @@
     <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
 
     <!-- 样式表 -->
-    <link rel="stylesheet" href="/static/style.css?v=16">
+    <link rel="stylesheet" href="/static/style.css?v=19">
     <link rel="stylesheet" href="/static/css/dungeon_border.css">
     <link rel="stylesheet" href="/static/css/floor_layers.css">
     <link rel="stylesheet" href="/static/css/fog_canvas.css">
@@ -50,6 +50,30 @@
             <div class="menu-panel elevation-3">
                 <h2>欢迎来到 Labyrinthia AI 老司机地牢</h2>
                 <p>让LLM驱动世界！</p>
+
+                <div class="menu-voice-gm-row">
+                    <div class="voice-gm-panel menu-voice-gm-panel" data-voice-panel>
+                        <label class="voice-gm-control" title="开启后会在创建新游戏期间提前准备开场语音">
+                            <input type="checkbox" class="voice-gm-toggle" aria-label="主菜单语音GM开关">
+                            <span class="voice-gm-track">
+                                <span class="voice-gm-thumb">
+                                    <i class="material-icons" aria-hidden="true">record_voice_over</i>
+                                </span>
+                            </span>
+                            <span class="voice-gm-status">语音GM</span>
+                        </label>
+                        <div class="voice-volume-control" role="group" aria-label="语音音量">
+                            <button type="button" class="voice-volume-icon" aria-label="切换静音" title="点击静音/恢复">
+                                <i class="material-icons" aria-hidden="true">volume_up</i>
+                            </button>
+                            <div class="voice-volume-slider">
+                                <input type="range" class="voice-volume-input" min="0" max="100" value="80" step="1" aria-label="音量大小">
+                                <span class="voice-volume-fill" aria-hidden="true"></span>
+                            </div>
+                            <span class="voice-volume-value" aria-live="polite">80</span>
+                        </div>
+                    </div>
+                </div>
 
                 <!-- 主要操作按钮 -->
                 <div class="menu-buttons">
@@ -292,10 +316,36 @@
 
                 <!-- 消息日志 -->
                 <div class="panel message-log-panel">
-                    <h3>
-                        <i class="material-icons">chat</i>
-                        消息日志
-                    </h3>
+                    <div class="message-log-header">
+                        <h3>
+                            <i class="material-icons">chat</i>
+                            消息日志
+                        </h3>
+                        <div id="voice-gm-control" class="voice-gm-panel" data-voice-panel>
+                            <label class="voice-gm-control" title="开启后自动朗读重要冒险信息">
+                                <input id="voice-gm-toggle" type="checkbox" class="voice-gm-toggle" aria-label="语音GM开关">
+                                <span class="voice-gm-track">
+                                    <span class="voice-gm-thumb">
+                                        <i class="material-icons" aria-hidden="true">record_voice_over</i>
+                                    </span>
+                                </span>
+                                <span id="voice-gm-status" class="voice-gm-status">语音GM</span>
+                            </label>
+                            <div class="voice-volume-control" role="group" aria-label="语音音量">
+                                <button type="button" class="voice-volume-icon" aria-label="切换静音" title="点击静音/恢复">
+                                    <i class="material-icons" aria-hidden="true">volume_up</i>
+                                </button>
+                                <div class="voice-volume-slider">
+                                    <input type="range" class="voice-volume-input" min="0" max="100" value="80" step="1" aria-label="音量大小">
+                                    <span class="voice-volume-fill" aria-hidden="true"></span>
+                                </div>
+                                <span class="voice-volume-value" aria-live="polite">80</span>
+                            </div>
+                            <button type="button" id="voice-gm-settings-btn" class="voice-gm-settings-btn" aria-label="语音白名单设置" title="语音白名单与朗读分级设置">
+                                <i class="material-icons" aria-hidden="true">tune</i>
+                            </button>
+                        </div>
+                    </div>
                     <div id="message-log" class="message-log"></div>
                 </div>
             </div>
@@ -650,12 +700,51 @@
     <!-- 地图瓦片工具提示 -->
     <div id="tile-tooltip" class="tile-tooltip"></div>
 
+    <!-- 语音白名单设置浮层 (默认隐藏) -->
+    <div id="voice-whitelist-modal" class="voice-whitelist-modal" hidden>
+        <div class="voice-whitelist-overlay" data-voice-close></div>
+        <div class="voice-whitelist-dialog elevation-3" role="dialog" aria-modal="true" aria-labelledby="voice-whitelist-title">
+            <div class="voice-whitelist-header">
+                <h3 id="voice-whitelist-title">
+                    <i class="material-icons" aria-hidden="true">record_voice_over</i>
+                    语音白名单分级
+                </h3>
+                <button type="button" class="voice-whitelist-close" data-voice-close aria-label="关闭">
+                    <i class="material-icons" aria-hidden="true">close</i>
+                </button>
+            </div>
+            <div class="voice-whitelist-summary">
+                <p>勾选后该分类会被朗读；取消勾选后即使语音 GM 已开启也不会朗读。</p>
+                <p class="voice-whitelist-hint">
+                    建议保留 <strong>叙事/事件/选项/任务/里程碑</strong>，
+                    取消 <strong>战斗模板/玩家行动/状态变化/系统提示</strong> 等模板消息。
+                </p>
+            </div>
+            <div id="voice-whitelist-list" class="voice-whitelist-list"></div>
+            <div class="voice-whitelist-stats" id="voice-whitelist-stats">
+                <span class="voice-whitelist-stat-item" title="累计朗读次数">朗读 <strong data-stat="spoken">0</strong></span>
+                <span class="voice-whitelist-stat-item" title="累计跳过次数">跳过 <strong data-stat="blocked">0</strong></span>
+                <span class="voice-whitelist-stat-item" title="累计决策总数">总数 <strong data-stat="total">0</strong></span>
+            </div>
+            <div class="voice-whitelist-actions">
+                <label class="voice-whitelist-debug-toggle" title="开启后控制台会逐条记录朗读决策">
+                    <input type="checkbox" id="voice-whitelist-debug-toggle">
+                    <span>调试日志</span>
+                </label>
+                <button type="button" class="btn btn-secondary" id="voice-whitelist-reset">恢复默认</button>
+                <button type="button" class="btn btn-primary" data-voice-close>完成</button>
+            </div>
+        </div>
+    </div>
+
     <!-- 脚本 - 按依赖顺序加载模块化的JavaScript文件 -->
     <!-- 1. 本地游戏引擎 - 必须在核心游戏类之前加载 -->
     <script src="/static/LocalGameEngine.js?v=8"></script>
 
     <!-- 2. 核心游戏类 -->
-    <script src="/static/GameCore.js?v=7"></script>
+    <script src="/static/GameCore.js?v=8"></script>
+    <script src="/static/TTSManager.js?v=4"></script>
+    <script src="/static/VoiceWhitelistPanel.js?v=1"></script>
 
     <!-- 3. 角色精灵图系统 - 在UI模块之前加载 -->
     <script src="/static/CharacterSprites.js?v=4"></script>
@@ -664,7 +753,7 @@
     <script src="/static/js/anime.min.js"></script>
 
     <!-- 4. 功能扩展模块 - 按依赖关系顺序加载 -->
-    <script src="/static/DebugManager.js?v=9"></script>
+    <script src="/static/DebugManager.js?v=10"></script>
     <script src="/static/OverlayManager.js?v=4"></script>
     <script src="/static/EffectsManager.js?v=4"></script>
     <script src="/static/EnhancedEffectsManager.js?v=2"></script>
@@ -674,10 +763,10 @@
     <script src="/static/MapZoomManager.js?v=7"></script>
     <script src="/static/CameraFollowManager.js?v=1"></script>
     <script src="/static/GameActions.js?v=5"></script>
-    <script src="/static/SaveManager.js?v=7"></script>
+    <script src="/static/SaveManager.js?v=8"></script>
     <script src="/static/SaveImportExport.js?v=4"></script>
     <script src="/static/EventHandler.js?v=5"></script>
-    <script src="/static/EventChoiceManager.js?v=6"></script>
+    <script src="/static/EventChoiceManager.js?v=7"></script>
     <script src="/static/DirectionButtonManager.js?v=1"></script>
     <script src="/static/js/dungeon_border.js"></script>
     <script src="/static/js/floor_layers.js"></script>

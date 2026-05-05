@@ -19,6 +19,7 @@ class LabyrinthiaGame {
         this.cameraFollowManager = null; // 视角追踪管理器
         this.enhancedEffects = null; // 增强版特效管理器
         this.mapVisualManager = null; // 地图视觉管理器
+        this.ttsManager = null; // 语音GM管理器
 
         this.init();
         this.initializeDebugMode();
@@ -45,6 +46,12 @@ class LabyrinthiaGame {
         if (typeof MapVisualManager !== 'undefined') {
             this.mapVisualManager = new MapVisualManager(this);
             console.log('[GameCore] MapVisualManager initialized');
+        }
+
+        // 初始化语音GM管理器
+        if (typeof TTSManager !== 'undefined') {
+            this.ttsManager = new TTSManager(this);
+            console.log('[GameCore] TTSManager initialized');
         }
 
         // 初始化视角追踪管理器
@@ -152,6 +159,9 @@ class LabyrinthiaGame {
 
             // 更新调试模式状态
             this.debugMode = this.config.game?.show_llm_debug || false;
+            if (this.ttsManager && this.config.tts) {
+                this.ttsManager.updateConfig(this.config.tts);
+            }
             this.updateDebugFabVisibility();
         } catch (error) {
             console.error('Failed to load config:', error);
@@ -353,14 +363,48 @@ class LabyrinthiaGame {
         }
     }
 
-    addMessage(text, type = 'system') {
+    addMessage(text, type = 'system', options = {}) {
         const messageLog = document.getElementById('message-log');
+        if (!messageLog) return;
+
         const message = document.createElement('div');
         message.className = `message message-${type}`;
-        message.textContent = text;
+        message.dataset.messageType = type;
+        message.dataset.rawText = String(text || '');
+
+        const messageText = document.createElement('div');
+        messageText.className = 'message-text';
+        messageText.textContent = text;
+        message.appendChild(messageText);
+
+        const canReplay = this.ttsManager?.isMessageReadable(text, type);
+        if (canReplay) {
+            const actions = document.createElement('div');
+            actions.className = 'message-actions';
+
+            const replayButton = document.createElement('button');
+            replayButton.type = 'button';
+            replayButton.className = 'message-tts-btn';
+            replayButton.title = this.ttsManager?.isAvailable() ? '复读这条消息' : '语音GM未启用';
+            replayButton.setAttribute('aria-label', '复读这条消息');
+            replayButton.disabled = !(this.ttsManager?.isAvailable());
+            replayButton.innerHTML = '<i class="material-icons" aria-hidden="true">volume_up</i>';
+            replayButton.addEventListener('click', (event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                this.ttsManager?.replayMessage(text, type);
+            });
+
+            actions.appendChild(replayButton);
+            message.appendChild(actions);
+        }
         
         messageLog.appendChild(message);
         messageLog.scrollTop = messageLog.scrollHeight;
+
+        if (this.ttsManager && !options.suppressAutoTTS) {
+            this.ttsManager.speakFromMessage(text, type);
+        }
         
         // 限制消息数量
         while (messageLog.children.length > 50) {

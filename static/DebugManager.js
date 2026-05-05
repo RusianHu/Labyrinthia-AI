@@ -130,7 +130,11 @@ const DebugMethods = {
             const response = await fetch('/api/config');
             const result = await response.json();
             const config = result.config || result; // 兼容新旧格式
+            this.config = config;
             this.debugMode = config.game?.show_llm_debug || false;
+            if (this.ttsManager && config.tts) {
+                this.ttsManager.updateConfig(config.tts);
+            }
 
             console.log('DebugManager: Debug mode status:', this.debugMode);
             console.log('DebugManager: Full config:', config);

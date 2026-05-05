@@ -1,4 +1,5 @@
 import copy
+import base64
 
 from config import config, LLMProvider
 from llm_service import llm_service
@@ -40,6 +41,50 @@ def test_mimo_uses_max_completion_tokens_for_chat_completions():
     assert assistant_message["content"] == "ok"
     assert client.last_request_payload["max_completion_tokens"] == 321
     assert "max_tokens" not in client.last_request_payload
+
+
+def test_mimo_tts_chat_returns_audio_bytes_and_uses_assistant_text():
+    audio_bytes = b"RIFF-test-audio"
+    client = _FakeOpenAIAPITool(
+        responses=[
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": "",
+                            "audio": {
+                                "data": base64.b64encode(audio_bytes).decode("ascii"),
+                            },
+                        }
+                    }
+                ]
+            }
+        ]
+    )
+
+    result = client.mimo_text_to_speech_chat(
+        text="地牢入口已经打开。",
+        model="mimo-v2.5-tts",
+        voice="mimo_default",
+        response_format="wav",
+        style_hint="用GM旁白语气朗读。",
+    )
+
+    assert result == audio_bytes
+    assert client.last_request_payload["model"] == "mimo-v2.5-tts"
+    assert client.last_request_payload["audio"] == {
+        "format": "wav",
+        "voice": "mimo_default",
+    }
+    assert client.last_request_payload["messages"][0] == {
+        "role": "user",
+        "content": "用GM旁白语气朗读。",
+    }
+    assert client.last_request_payload["messages"][1] == {
+        "role": "assistant",
+        "content": "地牢入口已经打开。",
+    }
 
 
 def test_stateful_history_preserves_reasoning_content_and_tool_calls():
