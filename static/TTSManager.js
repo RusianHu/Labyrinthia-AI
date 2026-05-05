@@ -17,6 +17,7 @@
 
 const TTS_VOLUME_STORAGE_KEY = 'labyrinthia.tts.volume';
 const TTS_MUTE_STORAGE_KEY = 'labyrinthia.tts.muted';
+const TTS_AUTO_ENABLED_STORAGE_KEY = 'labyrinthia.tts.autoEnabled';
 const TTS_WHITELIST_STORAGE_KEY = 'labyrinthia.tts.whitelist';
 const TTS_DEBUG_STORAGE_KEY = 'labyrinthia.tts.debug';
 const TTS_DECISION_HISTORY_LIMIT = 60;
@@ -182,7 +183,7 @@ const TTS_MILESTONE_PATTERNS = [
 class TTSManager {
     constructor(game) {
         this.game = game;
-        this.autoEnabled = false;
+        this.autoEnabled = this.loadStoredAutoEnabled();
         this.config = {
             enabled: false,
             provider: 'mimo_openai_compatible',
@@ -257,6 +258,23 @@ class TTSManager {
     persistMute() {
         try {
             window.localStorage?.setItem(TTS_MUTE_STORAGE_KEY, this.muted ? '1' : '0');
+        } catch (error) {
+            // ignore storage errors silently
+        }
+    }
+
+    loadStoredAutoEnabled() {
+        try {
+            return window.localStorage?.getItem(TTS_AUTO_ENABLED_STORAGE_KEY) === '1';
+        } catch (error) {
+            console.warn('[TTSManager] Failed to read stored auto-enabled flag:', error);
+            return false;
+        }
+    }
+
+    persistAutoEnabled() {
+        try {
+            window.localStorage?.setItem(TTS_AUTO_ENABLED_STORAGE_KEY, this.autoEnabled ? '1' : '0');
         } catch (error) {
             // ignore storage errors silently
         }
@@ -392,6 +410,7 @@ class TTSManager {
             toggle.dataset.ttsBound = 'true';
             toggle.addEventListener('change', () => {
                 this.autoEnabled = Boolean(toggle.checked);
+                this.persistAutoEnabled();
                 if (!this.autoEnabled) {
                     this.stop();
                     this.queue = [];
@@ -453,9 +472,10 @@ class TTSManager {
         if (!this.toggles || this.toggles.length === 0) return;
 
         const available = this.isAvailable();
-        if (!available) {
-            this.autoEnabled = false;
-        }
+        // 注意：当 available=false（如 /api/config 尚未返回 / TTS 后端未配置）时，
+        // 不要把内存中的 this.autoEnabled 清零——否则会覆盖用户存在 localStorage 的偏好，
+        // 导致刷新后即使后端可用，开关也回不到上次开启状态。
+        // UI 层通过 (autoEnabled && available) 控制显示，播放入口本身也已检查 isAvailable()。
 
         this.toggles.forEach((toggle) => {
             toggle.disabled = !available;
