@@ -201,6 +201,7 @@ class TTSManager {
         this.currentQueueKey = '';
         this.currentAudio = null;
         this.isPlaying = false;
+        this.playbackToken = 0;
         this.lastAutoKey = '';
         // 当前“正在朗读”所对应的消息日志按钮（用于驱动按钮播放动效）
         this.currentSpeakingButton = null;
@@ -936,11 +937,13 @@ class TTSManager {
             .map((segment) => ({
                 text: this.normalizeText(segment?.text),
                 category: segment?.category || 'narrative',
+                prefetchUrl: segment?.prefetch_url || segment?.prefetchUrl || null,
+                prefetchKey: segment?.cache_key || segment?.prefetchKey || null,
             }))
             .filter((segment) => segment.text);
 
         prepared.forEach((segment) => {
-            this.getAudioUrl(segment.text, segment.category).catch((error) => {
+            this.getAudioUrl(segment.text, segment.category, segment).catch((error) => {
                 console.warn('[TTSManager] Opening speech prefetch skipped:', error);
             });
         });
@@ -973,6 +976,8 @@ class TTSManager {
             category,
             immediate: false,
             button: options?.button || null,
+            prefetchUrl: options?.prefetchUrl || options?.prefetch_url || null,
+            prefetchKey: options?.prefetchKey || options?.cache_key || null,
         });
     }
 
@@ -1105,16 +1110,20 @@ class TTSManager {
         this.enqueue({ text, category: 'choice', immediate: false });
     }
 
-    buildCacheKey(text, category) {
+    buildCacheKey(text, category, options = {}) {
         const voice = this.config?.default_voice || 'mimo_default';
         const model = this.config?.model_name || 'mimo-v2.5-tts';
         const format = this.config?.output_format || 'wav';
+        const prefetchKey = options?.prefetchKey || options?.cacheKey || '';
+        if (prefetchKey) {
+            return [model, voice, format, 'opening', prefetchKey].join('|');
+        }
         return [model, voice, format, category, this.normalizeText(text)].join('|');
     }
 
     enqueue(item) {
         if (!item?.text) return;
-        const key = this.buildCacheKey(item.text, item.category);
+        const key = this.buildCacheKey(item.text, item.category, item);
         const button = (item.button && item.button instanceof HTMLElement) ? item.button : null;
         const queued = { ...item, button };
 
@@ -1137,30 +1146,36 @@ class TTSManager {
         if (this.isPlaying || this.queue.length === 0) return;
 
         const item = this.queue.shift();
-        const key = this.buildCacheKey(item.text, item.category);
+        const key = this.buildCacheKey(item.text, item.category, item);
         this.queuedKeys.delete(key);
         this.currentQueueKey = key;
         this.isPlaying = true;
+        const playbackToken = ++this.playbackToken;
         // 立刻给按钮挂上 “正在朗读” 视觉态，覆盖网络合成等待期，避免空窗
         this.setSpeakingButton(item.button);
 
         try {
-            const url = await this.getAudioUrl(item.text, item.category);
+            const url = await this.getAudioUrl(item.text, item.category, item);
+            if (playbackToken !== this.playbackToken) {
+                return;
+            }
             await this.playUrl(url);
         } catch (error) {
             console.warn('[TTSManager] Speech playback skipped:', error);
         } finally {
-            this.isPlaying = false;
-            this.currentQueueKey = '';
-            this.clearSpeakingButton();
-            if (this.queue.length > 0) {
-                setTimeout(() => this.processQueue(), 80);
+            if (playbackToken === this.playbackToken) {
+                this.isPlaying = false;
+                this.currentQueueKey = '';
+                this.clearSpeakingButton();
+                if (this.queue.length > 0) {
+                    setTimeout(() => this.processQueue(), 80);
+                }
             }
         }
     }
 
-    async getAudioUrl(text, category) {
-        const key = this.buildCacheKey(text, category);
+    async getAudioUrl(text, category, options = {}) {
+        const key = this.buildCacheKey(text, category, options);
         if (this.audioCache.has(key)) {
             return this.audioCache.get(key);
         }
@@ -1168,7 +1183,9 @@ class TTSManager {
             return this.audioPromises.get(key);
         }
 
-        const promise = fetch('/api/tts/synthesize', {
+        const prefetchUrl = options?.prefetchUrl || options?.prefetch_url || null;
+
+        const fetchSynthesize = () => fetch('/api/tts/synthesize', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -1177,15 +1194,52 @@ class TTSManager {
                 voice: this.config?.default_voice || undefined
             })
         }).then(async (response) => {
-            if (!response.ok) {
+            if (response.status !== 200) {
                 throw new Error(`TTS request failed: ${response.status}`);
             }
-
+            const ctype = response.headers.get('content-type') || '';
+            if (!ctype.startsWith('audio/')) {
+                throw new Error(`TTS unexpected content-type: ${ctype}`);
+            }
             const blob = await response.blob();
             const url = URL.createObjectURL(blob);
             this.audioCache.set(key, url);
             return url;
-        }).finally(() => {
+        });
+
+        const tryPrefetchFirst = async () => {
+            // 后端 opening_fetch_wait_seconds 内若仍未合成完，会返回 202 pending。
+            // 客户端此时应该等待并重试（最多约 30 秒），而不是立即退回 /api/tts/synthesize
+            // 触发重复合成。只有在真正 4xx/5xx 或非音频响应时才 fallback。
+            const maxAttempts = 12;
+            const retryIntervalMs = 1500;
+            for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+                try {
+                    const response = await fetch(prefetchUrl, { credentials: 'same-origin' });
+                    const ctype = response.headers.get('content-type') || '';
+                    if (response.status === 200 && ctype.startsWith('audio/')) {
+                        const blob = await response.blob();
+                        const url = URL.createObjectURL(blob);
+                        this.audioCache.set(key, url);
+                        return url;
+                    }
+                    if (response.status === 202) {
+                        // 还在合成中，丢弃响应体并等待下一轮
+                        await response.arrayBuffer().catch(() => null);
+                        await new Promise((r) => setTimeout(r, retryIntervalMs));
+                        continue;
+                    }
+                    // 其他状态视为缓存未命中或失败，立即 fallback 合成
+                    break;
+                } catch (error) {
+                    console.warn('[TTSManager] Opening prefetch fetch failed, falling back:', error);
+                    break;
+                }
+            }
+            return fetchSynthesize();
+        };
+
+        const promise = (prefetchUrl ? tryPrefetchFirst() : fetchSynthesize()).finally(() => {
             this.audioPromises.delete(key);
         });
 
@@ -1205,12 +1259,14 @@ class TTSManager {
     }
 
     stop() {
+        this.playbackToken += 1;
         if (this.currentAudio) {
             this.currentAudio.pause();
             this.currentAudio.currentTime = 0;
             this.currentAudio = null;
         }
         this.isPlaying = false;
+        this.currentQueueKey = '';
         // 用户主动停止 / 被 immediate 抢占时，及时关闭旧按钮的播放动效
         this.clearSpeakingButton();
     }

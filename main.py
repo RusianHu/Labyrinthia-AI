@@ -16,6 +16,7 @@ from typing import Dict, List, Optional, Any, Tuple
 from contextlib import asynccontextmanager
 from pathlib import Path
 import hashlib
+from dataclasses import dataclass
 
 from fastapi import FastAPI, HTTPException, Request, Response, UploadFile, File
 from fastapi.staticfiles import StaticFiles
@@ -48,6 +49,23 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class OpeningTTSEntry:
+    user_id: str
+    game_id: str
+    segment_id: str
+    text: str
+    category: str
+    voice: str
+    created_at: float
+    future: Optional[asyncio.Task]
+
+
+_opening_tts_cache: Dict[Tuple[str, str, str], OpeningTTSEntry] = {}
+_opening_tts_semaphore: Optional[asyncio.Semaphore] = None
+_opening_tts_semaphore_loop: Optional[asyncio.AbstractEventLoop] = None
 
 
 # Pydantic模型
@@ -159,6 +177,231 @@ def _build_opening_speech_segments(game_state: GameState) -> List[Dict[str, str]
             })
 
     return segments
+
+
+def _get_opening_tts_semaphore() -> asyncio.Semaphore:
+    global _opening_tts_semaphore, _opening_tts_semaphore_loop
+    loop = asyncio.get_running_loop()
+    if _opening_tts_semaphore is None or _opening_tts_semaphore_loop is not loop:
+        _opening_tts_semaphore = asyncio.Semaphore(
+            max(1, int(getattr(config.tts, "opening_prefetch_max_concurrency", 2)))
+        )
+        _opening_tts_semaphore_loop = loop
+    return _opening_tts_semaphore
+
+
+def _validate_tts_request_text(text: str) -> str:
+    if not config.tts.enabled:
+        raise HTTPException(
+            status_code=503,
+            detail={"error_code": "TTS_DISABLED", "message": "语音GM未启用"}
+        )
+
+    if config.tts.provider != "mimo_openai_compatible":
+        raise HTTPException(
+            status_code=503,
+            detail={"error_code": "TTS_PROVIDER_UNSUPPORTED", "message": "当前TTS源不支持"}
+        )
+
+    normalized = str(text or "").strip()
+    if not normalized:
+        raise HTTPException(
+            status_code=400,
+            detail={"error_code": "TTS_EMPTY_TEXT", "message": "朗读文本不能为空"}
+        )
+
+    if len(normalized) > config.tts.max_text_chars:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error_code": "TTS_TEXT_TOO_LONG",
+                "message": f"朗读文本不能超过 {config.tts.max_text_chars} 个字符"
+            }
+        )
+
+    return normalized
+
+
+def _build_tts_client() -> OpenAIAPITool:
+    api_key = str(config.tts.api_key or "").strip()
+    base_url = str(config.tts.base_url or "").strip()
+    if not api_key or not base_url:
+        raise HTTPException(
+            status_code=503,
+            detail={"error_code": "TTS_NOT_CONFIGURED", "message": "TTS源未配置完整"}
+        )
+
+    proxies = None
+    if config.llm.use_proxy and config.llm.proxy_url:
+        proxies = {
+            "http": config.llm.proxy_url,
+            "https": config.llm.proxy_url,
+        }
+
+    return OpenAIAPITool(
+        api_key=api_key,
+        base_url=base_url,
+        default_tts_model=config.tts.model_name,
+        timeout=config.tts.timeout,
+        proxies=proxies,
+    )
+
+
+async def _synthesize_tts_bytes(
+    text: str,
+    category: str = "narrative",
+    voice: Optional[str] = None,
+    style_hint: Optional[str] = None,
+) -> Tuple[bytes, str]:
+    normalized = _validate_tts_request_text(text)
+    client = _build_tts_client()
+    resolved_voice = str(voice or config.tts.default_voice or "mimo_default").strip()
+    resolved_style_hint = _build_tts_style_hint(category, style_hint)
+
+    try:
+        audio_bytes = await asyncio.to_thread(
+            client.mimo_text_to_speech_chat,
+            text=normalized,
+            model=config.tts.model_name,
+            voice=resolved_voice,
+            response_format=config.tts.output_format,
+            style_hint=resolved_style_hint,
+        )
+    except Exception as exc:
+        logger.warning("TTS synthesis failed: %s", str(exc)[:500])
+        raise HTTPException(
+            status_code=502,
+            detail={"error_code": "TTS_SYNTHESIS_FAILED", "message": "语音合成失败"}
+        ) from exc
+
+    return audio_bytes, resolved_voice
+
+
+def _opening_tts_cache_key(user_id: str, game_id: str, segment_id: str) -> Tuple[str, str, str]:
+    return (str(user_id), str(game_id), str(segment_id))
+
+
+def _is_safe_opening_tts_id(value: str) -> bool:
+    return bool(re.fullmatch(r"[A-Za-z0-9_.:-]{1,120}", str(value or "")))
+
+
+def _get_existing_session_user_id(request: Request) -> Optional[str]:
+    user_id = request.cookies.get(user_session_manager.session_cookie_name)
+    if user_id and user_session_manager._is_valid_user_id(user_id):
+        return user_id
+    return None
+
+
+def _cleanup_opening_tts_cache() -> None:
+    now = time.time()
+    ttl = max(1, int(getattr(config.tts, "opening_cache_ttl_seconds", 600)))
+    max_entries = max(1, int(getattr(config.tts, "opening_cache_max_entries", 64)))
+
+    for key, entry in list(_opening_tts_cache.items()):
+        if now - entry.created_at <= ttl:
+            continue
+        if entry.future and not entry.future.done():
+            entry.future.cancel()
+        del _opening_tts_cache[key]
+
+    overflow = len(_opening_tts_cache) - max_entries
+    if overflow <= 0:
+        return
+
+    def sort_key(item: Tuple[Tuple[str, str, str], OpeningTTSEntry]) -> Tuple[int, float]:
+        entry = item[1]
+        is_pending = bool(entry.future and not entry.future.done())
+        return (1 if is_pending else 0, entry.created_at)
+
+    for key, entry in sorted(_opening_tts_cache.items(), key=sort_key)[:overflow]:
+        if entry.future and not entry.future.done():
+            entry.future.cancel()
+        del _opening_tts_cache[key]
+
+
+def _cancel_opening_tts_cache() -> None:
+    for entry in list(_opening_tts_cache.values()):
+        if entry.future and not entry.future.done():
+            entry.future.cancel()
+    _opening_tts_cache.clear()
+
+
+def _can_prefetch_opening_tts() -> bool:
+    return bool(
+        config.tts.enabled
+        and getattr(config.tts, "opening_prefetch_enabled", True)
+        and config.tts.provider == "mimo_openai_compatible"
+        and str(config.tts.api_key or "").strip()
+        and str(config.tts.base_url or "").strip()
+        and str(config.tts.model_name or "").strip()
+    )
+
+
+async def _run_opening_tts_prefetch(entry: OpeningTTSEntry) -> bytes:
+    start_time = time.time()
+    async with _get_opening_tts_semaphore():
+        audio_bytes, _ = await _synthesize_tts_bytes(
+            text=entry.text,
+            category=entry.category,
+            voice=entry.voice,
+        )
+    elapsed_ms = int((time.time() - start_time) * 1000)
+    logger.info(
+        "opening_tts_prefetch_done game_id=%s segment_id=%s elapsed_ms=%s bytes=%s",
+        entry.game_id,
+        entry.segment_id,
+        elapsed_ms,
+        len(audio_bytes),
+    )
+    return audio_bytes
+
+
+def _schedule_opening_tts_prefetch(
+    user_id: str,
+    game_id: str,
+    segments: List[Dict[str, str]],
+) -> List[Dict[str, str]]:
+    _cleanup_opening_tts_cache()
+    enhanced_segments: List[Dict[str, str]] = []
+    can_prefetch = _can_prefetch_opening_tts()
+
+    for segment in segments or []:
+        segment_id = str(segment.get("id") or "").strip()
+        text = str(segment.get("text") or "").strip()
+        if not segment_id or not text:
+            continue
+
+        enhanced = dict(segment)
+        enhanced["cache_key"] = f"{game_id}:{segment_id}"
+
+        if can_prefetch and _is_safe_opening_tts_id(game_id) and _is_safe_opening_tts_id(segment_id):
+            category = str(segment.get("category") or "narrative").strip() or "narrative"
+            voice = str(config.tts.default_voice or "mimo_default").strip()
+            key = _opening_tts_cache_key(user_id, game_id, segment_id)
+            if key not in _opening_tts_cache:
+                entry = OpeningTTSEntry(
+                    user_id=user_id,
+                    game_id=game_id,
+                    segment_id=segment_id,
+                    text=text,
+                    category=category,
+                    voice=voice,
+                    created_at=time.time(),
+                    future=None,
+                )
+                entry.future = asyncio.create_task(_run_opening_tts_prefetch(entry))
+                _opening_tts_cache[key] = entry
+                logger.info(
+                    "opening_tts_prefetch_scheduled game_id=%s segment_id=%s text_len=%s",
+                    game_id,
+                    segment_id,
+                    len(text),
+                )
+            enhanced["prefetch_url"] = f"/api/tts/opening/{game_id}/{segment_id}"
+
+        enhanced_segments.append(enhanced)
+
+    return enhanced_segments
 
 
 def _normalize_action_response(
@@ -717,10 +960,13 @@ async def lifespan(app: FastAPI):
             except Exception as e:
                 logger.error(f"Failed to save game {game_id}: {e}")
 
-        # 3. 关闭LLM服务
+        # 3. 清理仍在等待的开场语音预合成任务
+        _cancel_opening_tts_cache()
+
+        # 4. 关闭LLM服务
         llm_service.close()
 
-        # 4. 关闭异步任务管理器（会取消所有剩余任务并关闭线程池）
+        # 5. 关闭异步任务管理器（会取消所有剩余任务并关闭线程池）
         await async_task_manager.shutdown()
 
         logger.info("Server shutdown complete")
@@ -816,13 +1062,18 @@ async def create_new_game(request: NewGameRequest, http_request: Request, respon
             player_name=sanitized_name,
             character_class=sanitized_class
         )
+        opening_speech_segments = _schedule_opening_tts_prefetch(
+            user_id,
+            game_state.id,
+            _build_opening_speech_segments(game_state),
+        )
 
         return {
             "success": True,
             "game_id": game_state.id,
             "message": f"欢迎 {sanitized_name}！你的冒险开始了！",
             "narrative": game_state.last_narrative,
-            "opening_speech_segments": _build_opening_speech_segments(game_state),
+            "opening_speech_segments": opening_speech_segments,
             "warnings": name_validation.warnings if name_validation.warnings else []
         }
 
@@ -2415,6 +2666,11 @@ async def get_config():
                     "default_voice": config.tts.default_voice,
                     "output_format": config.tts.output_format,
                     "max_text_chars": config.tts.max_text_chars,
+                    "opening_prefetch_enabled": bool(config.tts.opening_prefetch_enabled),
+                    "opening_prefetch_max_concurrency": int(config.tts.opening_prefetch_max_concurrency),
+                    "opening_cache_ttl_seconds": int(config.tts.opening_cache_ttl_seconds),
+                    "opening_cache_max_entries": int(config.tts.opening_cache_max_entries),
+                    "opening_fetch_wait_seconds": float(config.tts.opening_fetch_wait_seconds),
                     "voice_whitelist_defaults": {
                         "narrative": bool(config.tts.voice_whitelist_narrative),
                         "event": bool(config.tts.voice_whitelist_event),
@@ -2445,74 +2701,12 @@ async def get_config():
 @app.post("/api/tts/synthesize")
 async def synthesize_tts(request: TTSRequest):
     """按需合成语音，仅返回音频字节，不做服务端缓存。"""
-    if not config.tts.enabled:
-        raise HTTPException(
-            status_code=503,
-            detail={"error_code": "TTS_DISABLED", "message": "语音GM未启用"}
-        )
-
-    if config.tts.provider != "mimo_openai_compatible":
-        raise HTTPException(
-            status_code=503,
-            detail={"error_code": "TTS_PROVIDER_UNSUPPORTED", "message": "当前TTS源不支持"}
-        )
-
-    text = str(request.text or "").strip()
-    if not text:
-        raise HTTPException(
-            status_code=400,
-            detail={"error_code": "TTS_EMPTY_TEXT", "message": "朗读文本不能为空"}
-        )
-
-    if len(text) > config.tts.max_text_chars:
-        raise HTTPException(
-            status_code=400,
-            detail={
-                "error_code": "TTS_TEXT_TOO_LONG",
-                "message": f"朗读文本不能超过 {config.tts.max_text_chars} 个字符"
-            }
-        )
-
-    api_key = str(config.tts.api_key or "").strip()
-    base_url = str(config.tts.base_url or "").strip()
-    if not api_key or not base_url:
-        raise HTTPException(
-            status_code=503,
-            detail={"error_code": "TTS_NOT_CONFIGURED", "message": "TTS源未配置完整"}
-        )
-
-    proxies = None
-    if config.llm.use_proxy and config.llm.proxy_url:
-        proxies = {
-            "http": config.llm.proxy_url,
-            "https": config.llm.proxy_url,
-        }
-
-    client = OpenAIAPITool(
-        api_key=api_key,
-        base_url=base_url,
-        default_tts_model=config.tts.model_name,
-        timeout=config.tts.timeout,
-        proxies=proxies,
+    audio_bytes, voice = await _synthesize_tts_bytes(
+        text=request.text,
+        category=request.category,
+        voice=request.voice,
+        style_hint=request.style_hint,
     )
-    voice = str(request.voice or config.tts.default_voice or "mimo_default").strip()
-    style_hint = _build_tts_style_hint(request.category, request.style_hint)
-
-    try:
-        audio_bytes = await asyncio.to_thread(
-            client.mimo_text_to_speech_chat,
-            text=text,
-            model=config.tts.model_name,
-            voice=voice,
-            response_format=config.tts.output_format,
-            style_hint=style_hint,
-        )
-    except Exception as exc:
-        logger.warning("TTS synthesis failed: %s", str(exc)[:500])
-        raise HTTPException(
-            status_code=502,
-            detail={"error_code": "TTS_SYNTHESIS_FAILED", "message": "语音合成失败"}
-        )
 
     return Response(
         content=audio_bytes,
@@ -2521,6 +2715,104 @@ async def synthesize_tts(request: TTSRequest):
             "Cache-Control": "no-store",
             "X-TTS-Model": config.tts.model_name,
             "X-TTS-Voice": voice,
+        },
+    )
+
+
+@app.get("/api/tts/opening/{game_id}/{segment_id}")
+async def get_opening_tts_audio(game_id: str, segment_id: str, request: Request):
+    """读取新游戏开场语音预合成结果；未命中时由前端回退到普通合成。"""
+    _cleanup_opening_tts_cache()
+
+    if not _is_safe_opening_tts_id(game_id) or not _is_safe_opening_tts_id(segment_id):
+        raise HTTPException(
+            status_code=400,
+            detail={"error_code": "TTS_PREFETCH_BAD_ID", "message": "开场语音缓存标识无效"}
+        )
+
+    user_id = _get_existing_session_user_id(request)
+    if not user_id:
+        raise HTTPException(
+            status_code=404,
+            detail={"error_code": "TTS_PREFETCH_MISS", "message": "开场语音缓存未命中"}
+        )
+
+    key = _opening_tts_cache_key(user_id, game_id, segment_id)
+    entry = _opening_tts_cache.get(key)
+    if not entry or not entry.future:
+        raise HTTPException(
+            status_code=404,
+            detail={"error_code": "TTS_PREFETCH_MISS", "message": "开场语音缓存未命中"}
+        )
+
+    wait_seconds = max(0.1, float(getattr(config.tts, "opening_fetch_wait_seconds", 2.0)))
+    cache_state = "hit"
+    if not entry.future.done():
+        cache_state = "waited"
+        try:
+            audio_bytes = await asyncio.wait_for(asyncio.shield(entry.future), timeout=wait_seconds)
+        except asyncio.TimeoutError:
+            return JSONResponse(
+                status_code=202,
+                content={"error_code": "TTS_PREFETCH_PENDING", "message": "开场语音仍在合成"},
+                headers={"Cache-Control": "no-store", "X-TTS-Cache": "pending"},
+            )
+        except asyncio.CancelledError:
+            _opening_tts_cache.pop(key, None)
+            logger.warning(
+                "opening_tts_prefetch_cancelled game_id=%s segment_id=%s",
+                game_id,
+                segment_id,
+            )
+            raise HTTPException(
+                status_code=404,
+                detail={"error_code": "TTS_PREFETCH_FAILED", "message": "开场语音预合成失败"}
+            )
+        except Exception:
+            _opening_tts_cache.pop(key, None)
+            logger.warning(
+                "opening_tts_prefetch_failed game_id=%s segment_id=%s",
+                game_id,
+                segment_id,
+            )
+            raise HTTPException(
+                status_code=404,
+                detail={"error_code": "TTS_PREFETCH_FAILED", "message": "开场语音预合成失败"}
+            )
+    else:
+        try:
+            audio_bytes = entry.future.result()
+        except asyncio.CancelledError:
+            _opening_tts_cache.pop(key, None)
+            logger.warning(
+                "opening_tts_prefetch_cancelled game_id=%s segment_id=%s",
+                game_id,
+                segment_id,
+            )
+            raise HTTPException(
+                status_code=404,
+                detail={"error_code": "TTS_PREFETCH_FAILED", "message": "开场语音预合成失败"}
+            )
+        except Exception:
+            _opening_tts_cache.pop(key, None)
+            logger.warning(
+                "opening_tts_prefetch_failed game_id=%s segment_id=%s",
+                game_id,
+                segment_id,
+            )
+            raise HTTPException(
+                status_code=404,
+                detail={"error_code": "TTS_PREFETCH_FAILED", "message": "开场语音预合成失败"}
+            )
+
+    return Response(
+        content=audio_bytes,
+        media_type=_tts_media_type(config.tts.output_format),
+        headers={
+            "Cache-Control": f"private, max-age={max(1, int(getattr(config.tts, 'opening_cache_ttl_seconds', 600)))}",
+            "X-TTS-Cache": cache_state,
+            "X-TTS-Model": config.tts.model_name,
+            "X-TTS-Voice": entry.voice,
         },
     )
 

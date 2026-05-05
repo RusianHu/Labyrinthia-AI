@@ -1,4 +1,7 @@
+from fastapi import HTTPException, Request
 from fastapi.testclient import TestClient
+
+import asyncio
 
 import main
 
@@ -138,4 +141,181 @@ def test_tts_config_picks_up_dedicated_env_vars(monkeypatch):
     assert fresh_cfg.tts.api_key != fresh_cfg.llm.openai.api_key
     assert fresh_cfg.tts.base_url != fresh_cfg.llm.openai.base_url
 
+
+def test_tts_opening_prefetch_config_loads_dedicated_env_vars(monkeypatch):
+    import importlib
+    import config as config_module
+
+    monkeypatch.setenv("TTS_OPENING_PREFETCH_ENABLED", "false")
+    monkeypatch.setenv("TTS_OPENING_PREFETCH_MAX_CONCURRENCY", "5")
+    monkeypatch.setenv("TTS_OPENING_CACHE_TTL_SECONDS", "30")
+    monkeypatch.setenv("TTS_OPENING_CACHE_MAX_ENTRIES", "8")
+    monkeypatch.setenv("TTS_OPENING_FETCH_WAIT_SECONDS", "1.5")
+
+    importlib.reload(config_module)
+    fresh_cfg = config_module.Config()
+
+    assert fresh_cfg.tts.opening_prefetch_enabled is False
+    assert fresh_cfg.tts.opening_prefetch_max_concurrency == 5
+    assert fresh_cfg.tts.opening_cache_ttl_seconds == 30
+    assert fresh_cfg.tts.opening_cache_max_entries == 8
+    assert fresh_cfg.tts.opening_fetch_wait_seconds == 1.5
+
+
+def _make_completed_entry(audio: bytes, *, user_id: str, game_id: str, segment_id: str):
+    loop = asyncio.new_event_loop()
+    try:
+        async def _result():
+            return audio
+        future = loop.create_task(_result())
+        loop.run_until_complete(future)
+        entry = main.OpeningTTSEntry(
+            user_id=user_id,
+            game_id=game_id,
+            segment_id=segment_id,
+            text="开场白",
+            category="narrative",
+            voice="mimo_default",
+            created_at=__import__("time").time(),
+            future=future,
+        )
+        return entry, loop
+    except Exception:
+        loop.close()
+        raise
+
+
+def _make_request_with_user(user_id: str) -> Request:
+    return Request({
+        "type": "http",
+        "method": "GET",
+        "path": "/api/tts/opening/game-abc/opening_narrative",
+        "headers": [(b"cookie", f"labyrinthia_user_id={user_id}".encode("ascii"))],
+    })
+
+
+def test_opening_tts_endpoint_returns_cached_audio(monkeypatch):
+    monkeypatch.setattr(main.config.tts, "enabled", True)
+    monkeypatch.setattr(main.config.tts, "provider", "mimo_openai_compatible")
+    monkeypatch.setattr(main.config.tts, "output_format", "wav")
+    monkeypatch.setattr(main.config.tts, "opening_cache_ttl_seconds", 600)
+
+    main._opening_tts_cache.clear()
+
+    fake_user_id = "11111111-1111-1111-1111-111111111111"
+    entry, loop = _make_completed_entry(
+        b"RIFF-cached-audio",
+        user_id=fake_user_id,
+        game_id="game-abc",
+        segment_id="opening_narrative",
+    )
+    main._opening_tts_cache[(fake_user_id, "game-abc", "opening_narrative")] = entry
+
+    try:
+        client = TestClient(main.app)
+        client.cookies.set("labyrinthia_user_id", fake_user_id)
+        response = client.get("/api/tts/opening/game-abc/opening_narrative")
+
+        assert response.status_code == 200
+        assert response.content == b"RIFF-cached-audio"
+        assert response.headers["content-type"].startswith("audio/wav")
+        assert response.headers.get("X-TTS-Cache") == "hit"
+    finally:
+        loop.close()
+        main._opening_tts_cache.clear()
+
+
+def test_opening_tts_endpoint_evicts_failed_pending_prefetch(monkeypatch):
+    monkeypatch.setattr(main.config.tts, "enabled", True)
+    monkeypatch.setattr(main.config.tts, "provider", "mimo_openai_compatible")
+    monkeypatch.setattr(main.config.tts, "opening_cache_ttl_seconds", 600)
+    monkeypatch.setattr(main.config.tts, "opening_fetch_wait_seconds", 0.5)
+
+    main._opening_tts_cache.clear()
+    fake_user_id = "11111111-1111-1111-1111-111111111111"
+    key = (fake_user_id, "game-abc", "opening_narrative")
+
+    async def _run():
+        async def _fail():
+            await asyncio.sleep(0)
+            raise RuntimeError("prefetch failed")
+
+        failed_task = asyncio.create_task(_fail())
+        main._opening_tts_cache[key] = main.OpeningTTSEntry(
+            user_id=fake_user_id,
+            game_id="game-abc",
+            segment_id="opening_narrative",
+            text="开场白",
+            category="narrative",
+            voice="mimo_default",
+            created_at=__import__("time").time(),
+            future=failed_task,
+        )
+
+        try:
+            await main.get_opening_tts_audio(
+                "game-abc",
+                "opening_narrative",
+                _make_request_with_user(fake_user_id),
+            )
+        except HTTPException as exc:
+            assert exc.status_code == 404
+            assert exc.detail["error_code"] == "TTS_PREFETCH_FAILED"
+        else:
+            raise AssertionError("failed prefetch should raise HTTPException")
+
+    try:
+        asyncio.run(_run())
+        assert key not in main._opening_tts_cache
+    finally:
+        main._opening_tts_cache.clear()
+
+
+def test_opening_tts_endpoint_returns_404_when_missing(monkeypatch):
+    monkeypatch.setattr(main.config.tts, "enabled", True)
+    monkeypatch.setattr(main.config.tts, "provider", "mimo_openai_compatible")
+    main._opening_tts_cache.clear()
+
+    fake_user_id = "11111111-1111-1111-1111-111111111111"
+    client = TestClient(main.app)
+    client.cookies.set("labyrinthia_user_id", fake_user_id)
+    response = client.get("/api/tts/opening/game-xyz/opening_narrative")
+
+    assert response.status_code == 404
+    # 全局 404 处理器统一改写 body，行为对等于现有 /api/load 等端点
+    body = response.json()
+    assert body["success"] is False
+    assert "API端点未找到" in body["message"]
+
+
+def test_opening_tts_endpoint_blocks_other_user(monkeypatch):
+    monkeypatch.setattr(main.config.tts, "enabled", True)
+    monkeypatch.setattr(main.config.tts, "provider", "mimo_openai_compatible")
+    monkeypatch.setattr(main.config.tts, "output_format", "wav")
+
+    main._opening_tts_cache.clear()
+
+    owner = "11111111-1111-1111-1111-111111111111"
+    intruder = "22222222-2222-2222-2222-222222222222"
+    entry, loop = _make_completed_entry(
+        b"RIFF-secret",
+        user_id=owner,
+        game_id="game-abc",
+        segment_id="opening_narrative",
+    )
+    main._opening_tts_cache[(owner, "game-abc", "opening_narrative")] = entry
+
+    try:
+        client = TestClient(main.app)
+        client.cookies.set("labyrinthia_user_id", intruder)
+        response = client.get("/api/tts/opening/game-abc/opening_narrative")
+
+        assert response.status_code == 404
+        body = response.json()
+        # 入侵用户不应拿到 owner 的音频，无论 body 形态如何
+        assert b"RIFF-secret" not in response.content
+        assert body.get("success") is False
+    finally:
+        loop.close()
+        main._opening_tts_cache.clear()
 

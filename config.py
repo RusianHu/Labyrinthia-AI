@@ -92,6 +92,11 @@ class TTSConfig:
     output_format: str = "wav"
     timeout: int = 120
     max_text_chars: int = 800
+    opening_prefetch_enabled: bool = True
+    opening_prefetch_max_concurrency: int = 2
+    opening_cache_ttl_seconds: int = 600
+    opening_cache_max_entries: int = 64
+    opening_fetch_wait_seconds: float = 2.0
 
     # ---- 语音白名单分级（默认朗读） ----
     # 这些字段会作为前端 voice_whitelist_defaults 下发，前端的用户偏好（localStorage）会覆盖此处。
@@ -478,6 +483,33 @@ class Config:
         if tts_max_chars := os.getenv("TTS_MAX_TEXT_CHARS"):
             try:
                 self.tts.max_text_chars = max(1, int(tts_max_chars))
+            except ValueError:
+                pass
+
+        if tts_opening_prefetch := os.getenv("TTS_OPENING_PREFETCH_ENABLED"):
+            self.tts.opening_prefetch_enabled = tts_opening_prefetch.lower() in ("true", "1", "yes", "on")
+
+        if tts_opening_concurrency := os.getenv("TTS_OPENING_PREFETCH_MAX_CONCURRENCY"):
+            try:
+                self.tts.opening_prefetch_max_concurrency = max(1, int(tts_opening_concurrency))
+            except ValueError:
+                pass
+
+        if tts_opening_ttl := os.getenv("TTS_OPENING_CACHE_TTL_SECONDS"):
+            try:
+                self.tts.opening_cache_ttl_seconds = max(1, int(tts_opening_ttl))
+            except ValueError:
+                pass
+
+        if tts_opening_max_entries := os.getenv("TTS_OPENING_CACHE_MAX_ENTRIES"):
+            try:
+                self.tts.opening_cache_max_entries = max(1, int(tts_opening_max_entries))
+            except ValueError:
+                pass
+
+        if tts_opening_wait := os.getenv("TTS_OPENING_FETCH_WAIT_SECONDS"):
+            try:
+                self.tts.opening_fetch_wait_seconds = max(0.1, float(tts_opening_wait))
             except ValueError:
                 pass
 

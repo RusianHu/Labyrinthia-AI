@@ -299,7 +299,11 @@ Object.assign(LabyrinthiaGame.prototype, {
                         this.ttsManager.playOpeningSegment(
                             narrativeSegment.text,
                             narrativeSegment.category || 'narrative',
-                            { button: narrativeBtn }
+                            {
+                                button: narrativeBtn,
+                                prefetchUrl: narrativeSegment.prefetch_url,
+                                prefetchKey: narrativeSegment.cache_key,
+                            }
                         );
                     }
                 }
@@ -316,7 +320,11 @@ Object.assign(LabyrinthiaGame.prototype, {
                         this.ttsManager.playOpeningSegment(
                             openingQuestSegment.text,
                             openingQuestSegment.category || 'event',
-                            { button: questBtn }
+                            {
+                                button: questBtn,
+                                prefetchUrl: openingQuestSegment.prefetch_url,
+                                prefetchKey: openingQuestSegment.cache_key,
+                            }
                         );
                     }
                 }
