@@ -1,2 +1,5 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+
+# git-crypt: 该文件在仓库中以密文存储，本地解锁后透明读写
+AGENTS.md filter=git-crypt diff=git-crypt
