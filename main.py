@@ -29,7 +29,8 @@ from config import config
 from game_engine import game_engine
 from data_manager import data_manager
 from llm_service import llm_service, LLMUnavailableError
-from openai_api_tool import OpenAIAPITool
+from tts_gateway import TTSGateway, TTSProviderBase
+import qwen_tts_adapter  # noqa: F401  # import side effect: 注册 qwen_gradio provider
 from progress_manager import progress_manager
 from event_choice_system import event_choice_system
 from data_models import GameState
@@ -107,6 +108,13 @@ def _tts_media_type(output_format: str) -> str:
         "pcm16": "application/octet-stream",
     }
     return format_map.get(str(output_format or "wav").lower(), "application/octet-stream")
+
+
+def _get_tts_response_format() -> str:
+    provider_cls = TTSGateway.peek(config.tts.provider)
+    if provider_cls is None:
+        return str(config.tts.output_format or "wav").strip().lower() or "wav"
+    return provider_cls.get_effective_response_format(config.tts.output_format)
 
 
 def _build_tts_style_hint(category: str, style_hint: Optional[str]) -> str:
@@ -197,7 +205,7 @@ def _validate_tts_request_text(text: str) -> str:
             detail={"error_code": "TTS_DISABLED", "message": "语音GM未启用"}
         )
 
-    if config.tts.provider != "mimo_openai_compatible":
+    if not TTSGateway.is_known(config.tts.provider):
         raise HTTPException(
             status_code=503,
             detail={"error_code": "TTS_PROVIDER_UNSUPPORTED", "message": "当前TTS源不支持"}
@@ -222,29 +230,36 @@ def _validate_tts_request_text(text: str) -> str:
     return normalized
 
 
-def _build_tts_client() -> OpenAIAPITool:
-    api_key = str(config.tts.api_key or "").strip()
-    base_url = str(config.tts.base_url or "").strip()
-    if not api_key or not base_url:
+def _get_tts_provider() -> TTSProviderBase:
+    """通过 TTSGateway 实例化当前 provider。
+
+    错误语义统一：
+    - provider 未注册 → 503 TTS_PROVIDER_UNSUPPORTED
+    - provider 配置缺失（ValueError）→ 503 TTS_NOT_CONFIGURED
+
+    注意：与旧 `_build_tts_client` 不同，本函数不再返回 `OpenAIAPITool`，
+    而是返回符合 `TTSProviderBase` 接口的 provider 实例。具体协议（mimo
+    OpenAI 兼容 / qwen Gradio）由 provider 内部封装。
+    """
+    if not TTSGateway.is_known(config.tts.provider):
         raise HTTPException(
             status_code=503,
-            detail={"error_code": "TTS_NOT_CONFIGURED", "message": "TTS源未配置完整"}
+            detail={
+                "error_code": "TTS_PROVIDER_UNSUPPORTED",
+                "message": f"未知 TTS provider: {config.tts.provider!r}",
+            },
         )
+    try:
+        return TTSGateway.get_provider(runtime_config=config)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={"error_code": "TTS_NOT_CONFIGURED", "message": "TTS源未配置完整"},
+        ) from exc
 
-    proxies = None
-    if config.llm.use_proxy and config.llm.proxy_url:
-        proxies = {
-            "http": config.llm.proxy_url,
-            "https": config.llm.proxy_url,
-        }
 
-    return OpenAIAPITool(
-        api_key=api_key,
-        base_url=base_url,
-        default_tts_model=config.tts.model_name,
-        timeout=config.tts.timeout,
-        proxies=proxies,
-    )
+# 保留旧名作为内部别名，便于旧测试 / 文档过渡（未来版本可移除）
+_build_tts_client = _get_tts_provider
 
 
 async def _synthesize_tts_bytes(
@@ -254,19 +269,26 @@ async def _synthesize_tts_bytes(
     style_hint: Optional[str] = None,
 ) -> Tuple[bytes, str]:
     normalized = _validate_tts_request_text(text)
-    client = _build_tts_client()
-    resolved_voice = str(voice or config.tts.default_voice or "mimo_default").strip()
+    provider = _get_tts_provider()
+    requested_voice = str(voice or config.tts.default_voice or "").strip() or None
     resolved_style_hint = _build_tts_style_hint(category, style_hint)
 
     try:
-        audio_bytes = await asyncio.to_thread(
-            client.mimo_text_to_speech_chat,
+        response_format = provider.__class__.get_effective_response_format(config.tts.output_format)
+        audio_bytes, resolved_voice = await asyncio.to_thread(
+            provider.synthesize,
             text=normalized,
-            model=config.tts.model_name,
-            voice=resolved_voice,
-            response_format=config.tts.output_format,
+            voice=requested_voice,
+            response_format=response_format,
             style_hint=resolved_style_hint,
         )
+    except ValueError as exc:
+        # 参数无效 / 未知音色 / 文本为空（理论上已被前置 validate 拦截）
+        logger.warning("TTS synthesis rejected: %s", str(exc)[:500])
+        raise HTTPException(
+            status_code=502,
+            detail={"error_code": "TTS_VOICE_UNKNOWN", "message": "语音合成参数无效"}
+        ) from exc
     except Exception as exc:
         logger.warning("TTS synthesis failed: %s", str(exc)[:500])
         raise HTTPException(
@@ -327,24 +349,35 @@ def _cancel_opening_tts_cache() -> None:
 
 
 def _can_prefetch_opening_tts() -> bool:
-    return bool(
-        config.tts.enabled
-        and getattr(config.tts, "opening_prefetch_enabled", True)
-        and config.tts.provider == "mimo_openai_compatible"
-        and str(config.tts.api_key or "").strip()
-        and str(config.tts.base_url or "").strip()
-        and str(config.tts.model_name or "").strip()
-    )
+    """判断当前 provider 是否具备开场预合成能力。
+
+    - 必须 `config.tts.enabled` 与 `opening_prefetch_enabled`
+    - provider 必须已注册 (`TTSGateway.is_known`)
+    - provider 类必须 `supports_prefetch=True`
+    - provider 声明的 `required_config_fields` 必须全部在 `config.tts` 中非空
+    """
+    if not config.tts.enabled:
+        return False
+    if not getattr(config.tts, "opening_prefetch_enabled", True):
+        return False
+    provider_cls = TTSGateway.peek(config.tts.provider)
+    if provider_cls is None or not getattr(provider_cls, "supports_prefetch", False):
+        return False
+    for field_name in provider_cls.get_required_config_fields():
+        if not str(getattr(config.tts, field_name, "") or "").strip():
+            return False
+    return True
 
 
 async def _run_opening_tts_prefetch(entry: OpeningTTSEntry) -> bytes:
     start_time = time.time()
     async with _get_opening_tts_semaphore():
-        audio_bytes, _ = await _synthesize_tts_bytes(
+        audio_bytes, resolved_voice = await _synthesize_tts_bytes(
             text=entry.text,
             category=entry.category,
             voice=entry.voice,
         )
+        entry.voice = resolved_voice
     elapsed_ms = int((time.time() - start_time) * 1000)
     logger.info(
         "opening_tts_prefetch_done game_id=%s segment_id=%s elapsed_ms=%s bytes=%s",
@@ -376,7 +409,7 @@ def _schedule_opening_tts_prefetch(
 
         if can_prefetch and _is_safe_opening_tts_id(game_id) and _is_safe_opening_tts_id(segment_id):
             category = str(segment.get("category") or "narrative").strip() or "narrative"
-            voice = str(config.tts.default_voice or "mimo_default").strip()
+            voice = str(config.tts.default_voice or "").strip()
             key = _opening_tts_cache_key(user_id, game_id, segment_id)
             if key not in _opening_tts_cache:
                 entry = OpeningTTSEntry(
@@ -2664,7 +2697,7 @@ async def get_config():
                     "provider": config.tts.provider,
                     "model_name": config.tts.model_name,
                     "default_voice": config.tts.default_voice,
-                    "output_format": config.tts.output_format,
+                    "output_format": _get_tts_response_format(),
                     "max_text_chars": config.tts.max_text_chars,
                     "opening_prefetch_enabled": bool(config.tts.opening_prefetch_enabled),
                     "opening_prefetch_max_concurrency": int(config.tts.opening_prefetch_max_concurrency),
@@ -2710,9 +2743,10 @@ async def synthesize_tts(request: TTSRequest):
 
     return Response(
         content=audio_bytes,
-        media_type=_tts_media_type(config.tts.output_format),
+        media_type=_tts_media_type(_get_tts_response_format()),
         headers={
             "Cache-Control": "no-store",
+            "X-TTS-Provider": config.tts.provider,
             "X-TTS-Model": config.tts.model_name,
             "X-TTS-Voice": voice,
         },
@@ -2807,10 +2841,11 @@ async def get_opening_tts_audio(game_id: str, segment_id: str, request: Request)
 
     return Response(
         content=audio_bytes,
-        media_type=_tts_media_type(config.tts.output_format),
+        media_type=_tts_media_type(_get_tts_response_format()),
         headers={
             "Cache-Control": f"private, max-age={max(1, int(getattr(config.tts, 'opening_cache_ttl_seconds', 600)))}",
             "X-TTS-Cache": cache_state,
+            "X-TTS-Provider": config.tts.provider,
             "X-TTS-Model": config.tts.model_name,
             "X-TTS-Voice": entry.voice,
         },

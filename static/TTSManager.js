@@ -1111,14 +1111,15 @@ class TTSManager {
     }
 
     buildCacheKey(text, category, options = {}) {
+        const provider = this.config?.provider || 'mimo_openai_compatible';
         const voice = this.config?.default_voice || 'mimo_default';
         const model = this.config?.model_name || 'mimo-v2.5-tts';
         const format = this.config?.output_format || 'wav';
         const prefetchKey = options?.prefetchKey || options?.cacheKey || '';
         if (prefetchKey) {
-            return [model, voice, format, 'opening', prefetchKey].join('|');
+            return [provider, model, voice, format, 'opening', prefetchKey].join('|');
         }
-        return [model, voice, format, category, this.normalizeText(text)].join('|');
+        return [provider, model, voice, format, category, this.normalizeText(text)].join('|');
     }
 
     enqueue(item) {

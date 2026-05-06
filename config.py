@@ -75,10 +75,10 @@ class TTSConfig:
     """Text-to-Speech配置类
 
     设计原则：
-    - TTS 是与 LLM Provider 完全解耦的独立链路；
-      `api_key` / `base_url` / `model_name` 必须由专属环境变量
-      `TTS_API_KEY` / `TTS_BASE_URL` / `TTS_MODEL_NAME` 显式提供，
-      不再回退到 `OPENAI_API_KEY` / `OPENAI_BASE_URL`。
+    - TTS 是与 LLM Provider 完全解耦的独立链路；所有 TTS 字段只读取
+      `TTS_*` 专属环境变量，不再回退到 `OPENAI_API_KEY` / `OPENAI_BASE_URL`。
+    - 必填项按 provider 声明校验。例如 mimo 需要 api_key/base_url/model_name，
+      qwen_gradio 可在 base_url 为空时使用内置公开 demo 地址。
     - 当 `enabled=True` 但关键字段缺失时，`Config._validate_critical_config`
       会发出明确警告；运行期 `/api/tts/synthesize` 端点也会以
       `TTS_NOT_CONFIGURED` 错误码拦截请求。
@@ -446,8 +446,9 @@ class Config:
 
         # ------------------- Load TTS Configuration -------------------
         # 设计：TTS 配置完全独立于 LLM Provider，禁止回退至 OPENAI_API_KEY/BASE_URL。
-        # 仅当 TTS_API_KEY / TTS_BASE_URL / TTS_MODEL_NAME 显式提供时，才会被采用；
-        # 否则保留 TTSConfig dataclass 中的默认值（空串或安全占位），
+        # TTS_API_KEY / TTS_BASE_URL / TTS_MODEL_NAME 一旦出现在环境变量中就会被采用；
+        # 空串也表示显式清空，便于 qwen_gradio 等无需 api_key/model 的 provider。
+        # 未出现时保留 TTSConfig dataclass 中的默认值（空串或安全占位），
         # 由 _validate_critical_config + /api/tts/synthesize 联合兜底校验。
         if tts_enabled := os.getenv("TTS_ENABLED"):
             self.tts.enabled = tts_enabled.lower() in ("true", "1", "yes")
@@ -457,17 +458,21 @@ class Config:
             if provider:
                 self.tts.provider = provider
 
-        if tts_api_key := os.getenv("TTS_API_KEY"):
+        tts_api_key = os.getenv("TTS_API_KEY")
+        if tts_api_key is not None:
             self.tts.api_key = tts_api_key.strip()
 
-        if tts_base_url := os.getenv("TTS_BASE_URL"):
+        tts_base_url = os.getenv("TTS_BASE_URL")
+        if tts_base_url is not None:
             self.tts.base_url = tts_base_url.strip().rstrip("/")
 
-        if tts_model := os.getenv("TTS_MODEL_NAME"):
-            self.tts.model_name = tts_model.strip() or self.tts.model_name
+        tts_model = os.getenv("TTS_MODEL_NAME")
+        if tts_model is not None:
+            self.tts.model_name = tts_model.strip()
 
-        if tts_voice := os.getenv("TTS_DEFAULT_VOICE"):
-            self.tts.default_voice = tts_voice.strip() or self.tts.default_voice
+        tts_voice = os.getenv("TTS_DEFAULT_VOICE")
+        if tts_voice is not None:
+            self.tts.default_voice = tts_voice.strip()
 
         if tts_format := os.getenv("TTS_OUTPUT_FORMAT"):
             output_format = tts_format.strip().lower()
@@ -862,20 +867,53 @@ class Config:
         else:
             logger.debug(f"✓ API Key 已配置 (Provider: {self.llm.provider.value})")
 
-        # ---- TTS 独立性校验 ----
-        # TTS 已与 LLM Provider 解耦，启用时必须显式提供 TTS_API_KEY 与 TTS_BASE_URL。
+        # ---- TTS 独立性校验（按 provider 动态决定必填字段）----
+        # TTS 已与 LLM Provider 解耦，启用时按 TTSGateway 中注册的 provider 类
+        # 声明的 required_config_fields 校验。例如：
+        #   - mimo_openai_compatible: api_key + base_url + model_name
+        #   - qwen_gradio: 无必填字段（base_url 为空时使用 provider 默认值）
+        # 局部 import 避免与 tts_gateway.py 形成循环依赖。
         if self.tts.enabled:
-            tts_missing = []
-            if not (self.tts.api_key or "").strip():
-                tts_missing.append("TTS_API_KEY")
-            if not (self.tts.base_url or "").strip():
-                tts_missing.append("TTS_BASE_URL")
-            if not (self.tts.model_name or "").strip():
-                tts_missing.append("TTS_MODEL_NAME")
+            tts_missing: list = []
+            provider_label = str(self.tts.provider or "").strip() or "<unset>"
+            try:
+                from tts_gateway import TTSGateway  # noqa: WPS433  (lazy import is intentional)
+                # 触发 qwen_gradio 注册（import 副作用），失败不影响 mimo 校验
+                try:
+                    import qwen_tts_adapter  # noqa: F401, WPS433
+                except Exception as exc:  # pragma: no cover
+                    logger.debug("qwen_tts_adapter import skipped during config validation: %s", exc)
+
+                provider_cls = TTSGateway.peek(self.tts.provider)
+                if provider_cls is None:
+                    logger.warning(
+                        "⚠️  TTS provider %s 未在 TTSGateway 注册，已知 provider: %s",
+                        provider_label,
+                        TTSGateway.known_providers(),
+                    )
+                else:
+                    env_key_map = {
+                        "api_key": "TTS_API_KEY",
+                        "base_url": "TTS_BASE_URL",
+                        "model_name": "TTS_MODEL_NAME",
+                        "default_voice": "TTS_DEFAULT_VOICE",
+                    }
+                    for field_name in provider_cls.get_required_config_fields():
+                        if not str(getattr(self.tts, field_name, "") or "").strip():
+                            tts_missing.append(env_key_map.get(field_name, field_name.upper()))
+            except Exception as exc:  # pragma: no cover - 兜底，避免启动期硬失败
+                logger.debug("TTSGateway 校验阶段异常，回退到旧版三件套校验: %s", exc)
+                if not (self.tts.api_key or "").strip():
+                    tts_missing.append("TTS_API_KEY")
+                if not (self.tts.base_url or "").strip():
+                    tts_missing.append("TTS_BASE_URL")
+                if not (self.tts.model_name or "").strip():
+                    tts_missing.append("TTS_MODEL_NAME")
 
             if tts_missing:
                 logger.warning(
-                    "⚠️  TTS 已启用但配置不完整，缺失变量: %s",
+                    "⚠️  TTS 已启用但配置不完整 (provider=%s)，缺失变量: %s",
+                    provider_label,
                     ", ".join(tts_missing),
                 )
                 logger.info(
@@ -885,7 +923,7 @@ class Config:
             else:
                 logger.debug(
                     "✓ TTS 配置已就绪 (provider=%s, model=%s)",
-                    self.tts.provider,
+                    provider_label,
                     self.tts.model_name,
                 )
 

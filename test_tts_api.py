@@ -4,6 +4,7 @@ from fastapi.testclient import TestClient
 import asyncio
 
 import main
+import tts_gateway
 
 
 def test_tts_endpoint_disabled(monkeypatch):
@@ -34,6 +35,11 @@ def test_tts_endpoint_rejects_long_text(monkeypatch):
 
 
 def test_tts_endpoint_uses_default_voice_and_returns_audio(monkeypatch):
+    """mimo provider 走 TTSGateway → MimoTTSProvider → OpenAIAPITool 链路。
+
+    重构后 mock 点变为 `tts_gateway.OpenAIAPITool`（而非旧版 `main.OpenAIAPITool`），
+    其余断言（透传 model/voice/response_format/text）保持不变。
+    """
     captured = {}
 
     class FakeOpenAIAPITool:
@@ -53,7 +59,7 @@ def test_tts_endpoint_uses_default_voice_and_returns_audio(monkeypatch):
     monkeypatch.setattr(main.config.tts, "output_format", "wav")
     monkeypatch.setattr(main.config.tts, "timeout", 120)
     monkeypatch.setattr(main.config.tts, "max_text_chars", 800)
-    monkeypatch.setattr(main, "OpenAIAPITool", FakeOpenAIAPITool)
+    monkeypatch.setattr(tts_gateway, "OpenAIAPITool", FakeOpenAIAPITool)
 
     client = TestClient(main.app)
     response = client.post(
@@ -64,11 +70,129 @@ def test_tts_endpoint_uses_default_voice_and_returns_audio(monkeypatch):
     assert response.status_code == 200
     assert response.content == b"RIFF-test-audio"
     assert response.headers["content-type"].startswith("audio/wav")
+    assert response.headers.get("X-TTS-Voice") == "mimo_default"
     assert captured["init"]["api_key"] == "test-key"
     assert captured["call"]["model"] == "mimo-v2.5-tts"
     assert captured["call"]["voice"] == "mimo_default"
     assert captured["call"]["response_format"] == "wav"
     assert captured["call"]["text"] == "地牢入口已经打开。"
+
+
+def test_tts_endpoint_uses_qwen_provider(monkeypatch):
+    """qwen_gradio provider 走 TTSGateway → 注册的 fake provider 实例。
+
+    通过临时覆盖 `TTSGateway._registry["qwen_gradio"]` 注入 fake provider，
+    断言 `/api/tts/synthesize` 在 provider 切换后仍按统一契约返回 audio bytes，
+    且响应头 `X-TTS-Voice` 反映 provider 解析后的真实音色。
+    """
+    captured = {}
+
+    class FakeQwenProvider(tts_gateway.TTSProviderBase):
+        name = "qwen_gradio"
+        supports_prefetch = True
+        required_config_fields = ("base_url",)
+        fixed_response_format = "wav"
+
+        def __init__(self):
+            captured["init"] = True
+
+        def synthesize(self, text, voice=None, response_format="wav", style_hint=None):
+            captured["call"] = {
+                "text": text,
+                "voice": voice,
+                "response_format": response_format,
+                "style_hint": style_hint,
+            }
+            return b"RIFF-qwen-fake", "vivian"
+
+    monkeypatch.setattr(main.config.tts, "enabled", True)
+    monkeypatch.setattr(main.config.tts, "provider", "qwen_gradio")
+    monkeypatch.setattr(main.config.tts, "base_url", "https://qwen-qwen3-tts-demo.ms.show")
+    monkeypatch.setattr(main.config.tts, "default_voice", "vivian")
+    monkeypatch.setattr(main.config.tts, "output_format", "mp3")
+    monkeypatch.setattr(main.config.tts, "timeout", 120)
+    monkeypatch.setattr(main.config.tts, "max_text_chars", 800)
+    monkeypatch.setattr(main.config.tts, "model_name", "")
+    monkeypatch.setattr(main.config.tts, "api_key", "")
+
+    monkeypatch.setitem(tts_gateway.TTSGateway._registry, "qwen_gradio", FakeQwenProvider)
+
+    client = TestClient(main.app)
+    response = client.post(
+        "/api/tts/synthesize",
+        json={"text": "迷雾中传来低沉吟唱。", "category": "narrative"},
+    )
+
+    assert response.status_code == 200
+    assert response.content == b"RIFF-qwen-fake"
+    assert response.headers["content-type"].startswith("audio/wav")
+    assert response.headers.get("X-TTS-Provider") == "qwen_gradio"
+    assert response.headers.get("X-TTS-Voice") == "vivian"
+    assert captured["init"] is True
+    assert captured["call"]["text"] == "迷雾中传来低沉吟唱。"
+    assert captured["call"]["voice"] == "vivian"
+    assert captured["call"]["response_format"] == "wav"
+
+
+def test_tts_config_allows_qwen_blank_dedicated_env_vars(monkeypatch):
+    """qwen_gradio 允许 API key / model / base_url 显式空串，不回填 mimo 默认值。"""
+    import importlib
+    import config as config_module
+
+    monkeypatch.setenv("TTS_ENABLED", "true")
+    monkeypatch.setenv("TTS_PROVIDER", "qwen_gradio")
+    monkeypatch.setenv("TTS_API_KEY", "")
+    monkeypatch.setenv("TTS_BASE_URL", "")
+    monkeypatch.setenv("TTS_MODEL_NAME", "")
+    monkeypatch.setenv("TTS_DEFAULT_VOICE", "")
+
+    importlib.reload(config_module)
+    fresh_cfg = config_module.Config()
+
+    assert fresh_cfg.tts.enabled is True
+    assert fresh_cfg.tts.provider == "qwen_gradio"
+    assert fresh_cfg.tts.api_key == ""
+    assert fresh_cfg.tts.base_url == ""
+    assert fresh_cfg.tts.model_name == ""
+    assert fresh_cfg.tts.default_voice == ""
+
+
+def test_tts_endpoint_unknown_provider(monkeypatch):
+    """未知 provider 必须被 TTSGateway.is_known 在 _validate_tts_request_text 阶段拦截。"""
+    monkeypatch.setattr(main.config.tts, "enabled", True)
+    monkeypatch.setattr(main.config.tts, "provider", "unknown_xyz_provider")
+    monkeypatch.setattr(main.config.tts, "max_text_chars", 800)
+
+    client = TestClient(main.app)
+    response = client.post(
+        "/api/tts/synthesize",
+        json={"text": "地牢入口已经打开。", "category": "narrative"},
+    )
+
+    assert response.status_code == 503
+    assert response.json()["detail"]["error_code"] == "TTS_PROVIDER_UNSUPPORTED"
+
+
+def test_tts_endpoint_provider_known_but_unconfigured(monkeypatch):
+    """provider 已注册但缺少必填字段（mimo 缺 api_key）→ 503 TTS_NOT_CONFIGURED。
+
+    覆盖 `_get_tts_provider` 中 ValueError → HTTPException(503) 的翻译路径。
+    """
+    monkeypatch.setattr(main.config.tts, "enabled", True)
+    monkeypatch.setattr(main.config.tts, "provider", "mimo_openai_compatible")
+    monkeypatch.setattr(main.config.tts, "api_key", "")  # 故意留空
+    monkeypatch.setattr(main.config.tts, "base_url", "https://api.xiaomimimo.com/v1")
+    monkeypatch.setattr(main.config.tts, "model_name", "mimo-v2.5-tts")
+    monkeypatch.setattr(main.config.tts, "max_text_chars", 800)
+
+    client = TestClient(main.app)
+    response = client.post(
+        "/api/tts/synthesize",
+        json={"text": "地牢入口已经打开。", "category": "narrative"},
+    )
+
+    assert response.status_code == 503
+    assert response.json()["detail"]["error_code"] == "TTS_NOT_CONFIGURED"
 
 
 def test_tts_config_does_not_fall_back_to_openai(monkeypatch):
@@ -318,4 +442,3 @@ def test_opening_tts_endpoint_blocks_other_user(monkeypatch):
     finally:
         loop.close()
         main._opening_tts_cache.clear()
-

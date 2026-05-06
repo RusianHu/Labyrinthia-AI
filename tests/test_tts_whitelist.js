@@ -182,6 +182,19 @@ const stats = tts.getDecisionStats();
 console.log(`  累计 total=${stats.total} spoken=${stats.spoken} blocked=${stats.blocked}`);
 console.log(`  分类分布: ${JSON.stringify(stats.byCategory)}`);
 
+console.log('\n=== 缓存 key provider 隔离 ===');
+tts.config = {
+    ...tts.config,
+    provider: 'mimo_openai_compatible',
+    model_name: 'shared-model',
+    default_voice: 'shared-voice',
+    output_format: 'wav',
+};
+const mimoKey = tts.buildCacheKey('同一句旁白。', 'narrative');
+tts.config.provider = 'qwen_gradio';
+const qwenKey = tts.buildCacheKey('同一句旁白。', 'narrative');
+expect('切换 provider 后缓存 key 必须变化', { changed: mimoKey !== qwenKey }, { changed: true });
+
 console.log('\n========================================');
 console.log(`测试结果: ${pass} 通过 / ${fail} 失败`);
 if (fail > 0) {

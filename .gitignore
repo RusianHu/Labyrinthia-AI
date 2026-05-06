@@ -9,6 +9,7 @@ AGENTS.md
 # 日志和缓存
 /logs
 /cache
+/artifacts
 *.log
 
 # IDE 配置

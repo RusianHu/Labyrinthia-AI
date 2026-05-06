@@ -12,6 +12,9 @@ python-multipart==0.0.9  # FastAPI文件上传支持
 # LLM API依赖
 google-genai==1.20.0  # Google Gemini API SDK
 
+# TTS Provider 依赖
+gradio_client>=2.0.0  # qwen_gradio provider 通过 gradio_client 调用魔搭社区 Qwen3-TTS Demo
+
 # 开发依赖
 pytest==8.3.3
 pytest-asyncio==0.24.0
