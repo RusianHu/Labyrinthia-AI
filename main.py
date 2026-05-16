@@ -500,6 +500,13 @@ def _build_context_key(user_id: str, game_id: str) -> str:
     return f"{user_id}:{game_id}"
 
 
+def _require_uuid_param(value: str, field_name: str) -> str:
+    validation = input_validator.validate_uuid(value, field_name)
+    if not validation.is_valid:
+        raise HTTPException(status_code=400, detail=validation.error_message)
+    return str(uuid.UUID(validation.sanitized_value))
+
+
 def _serialize_game_state_for_client(game_state: GameState) -> Dict[str, Any]:
     """序列化游戏状态给前端，并消费一次性特效队列，避免重复弹窗。"""
     state_dict = game_state.to_dict()
@@ -1121,6 +1128,7 @@ async def create_new_game(request: NewGameRequest, http_request: Request, respon
 async def load_game(save_id: str, request: Request, response: Response):
     """加载游戏"""
     try:
+        save_id = _require_uuid_param(save_id, "存档ID")
         logger.info(f"Loading game: {save_id}")
 
         # 获取用户ID
@@ -1199,6 +1207,7 @@ async def load_game(save_id: str, request: Request, response: Response):
 @app.get("/api/game/{game_id}")
 async def get_game_state(game_id: str, request: Request, response: Response):
     """获取游戏状态（支持自动从磁盘加载）"""
+    game_id = _require_uuid_param(game_id, "游戏ID")
 
     # 获取用户ID
     user_id = user_session_manager.get_or_create_user_id(request, response)
@@ -1277,6 +1286,8 @@ async def get_game_state_detailed(game_id: str, request: Request, response: Resp
 @app.get("/api/game/{game_id}/quests")
 async def get_game_quests(game_id: str, request: Request, response: Response):
     """获取游戏任务列表"""
+    game_id = _require_uuid_param(game_id, "游戏ID")
+
     # 获取用户ID
     user_id = user_session_manager.get_or_create_user_id(request, response)
     game_key = (user_id, game_id)
@@ -2013,6 +2024,7 @@ async def process_combat_result(game_id: str, request: Request, response: Respon
     """处理战斗结果（怪物被击败）"""
     trace_id = str(uuid.uuid4())
     try:
+        game_id = _require_uuid_param(game_id, "游戏ID")
         # 获取用户ID
         user_id = user_session_manager.get_or_create_user_id(request, response)
         game_key = (user_id, game_id)
@@ -2411,6 +2423,7 @@ async def _process_post_choice_updates(game_state: GameState):
 async def get_pending_choice(game_id: str, request: Request, response: Response):
     """获取待处理的选择上下文（事件驱动，仅在玩家操作后调用）"""
     try:
+        game_id = _require_uuid_param(game_id, "游戏ID")
         # 获取用户ID
         user_id = user_session_manager.get_or_create_user_id(request, response)
         game_key = (user_id, game_id)
@@ -2509,6 +2522,7 @@ async def import_save(request: Request, response: Response, file: UploadFile = F
 async def save_game(game_id: str, request: Request, response: Response):
     """保存游戏"""
     try:
+        game_id = _require_uuid_param(game_id, "游戏ID")
         # 获取用户ID
         user_id = user_session_manager.get_or_create_user_id(request, response)
         game_key = (user_id, game_id)
@@ -2571,6 +2585,7 @@ async def list_saves(request: Request, response: Response):
 async def delete_save(save_id: str, request: Request, response: Response):
     """删除当前用户的存档"""
     try:
+        save_id = _require_uuid_param(save_id, "存档ID")
         # 获取用户ID
         user_id = user_session_manager.get_or_create_user_id(request, response)
 
@@ -2605,6 +2620,7 @@ async def delete_save(save_id: str, request: Request, response: Response):
 async def export_save(save_id: str, request: Request, response: Response):
     """导出存档为JSON文件"""
     try:
+        save_id = _require_uuid_param(save_id, "存档ID")
         # 获取用户ID
         user_id = user_session_manager.get_or_create_user_id(request, response)
 
@@ -2912,6 +2928,7 @@ async def update_config(updates: Dict[str, Any]):
 async def transition_map(game_id: str, transition_data: Dict[str, Any], request: Request, response: Response):
     """手动切换地图"""
     try:
+        game_id = _require_uuid_param(game_id, "游戏ID")
         # 获取用户ID
         user_id = user_session_manager.get_or_create_user_id(request, response)
         game_key = (user_id, game_id)
@@ -2960,6 +2977,7 @@ async def transition_map(game_id: str, transition_data: Dict[str, Any], request:
 async def get_progress_summary(game_id: str, request: Request, response: Response):
     """获取游戏进度摘要"""
     try:
+        game_id = _require_uuid_param(game_id, "游戏ID")
         # 获取用户ID
         user_id = user_session_manager.get_or_create_user_id(request, response)
         game_key = (user_id, game_id)
@@ -3262,6 +3280,7 @@ if config.game.debug_mode:
     @app.get("/api/debug/game/{game_id}")
     async def debug_get_game_detail(game_id: str, request: Request, response: Response):
         """调试：获取游戏详细状态"""
+        game_id = _require_uuid_param(game_id, "游戏ID")
         user_id = user_session_manager.get_or_create_user_id(request, response)
         return debug_api.get_game_detail(user_id, game_id)
 
@@ -3292,6 +3311,10 @@ if config.game.debug_mode:
             加载结果，包含游戏状态和叙述
         """
         try:
+            req.game_id = _require_uuid_param(req.game_id, "游戏ID")
+            if req.user_id:
+                req.user_id = _require_uuid_param(req.user_id, "用户ID")
+
             # 确定要使用的用户ID
             if req.user_id:
                 # 调试模式下允许指定用户ID

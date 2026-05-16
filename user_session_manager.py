@@ -64,6 +64,13 @@ class UserSessionManager:
     def _create_new_user_id(self) -> str:
         """创建新的用户ID"""
         return str(uuid.uuid4())
+
+    def _normalize_uuid(self, value: str, field_name: str) -> str:
+        """Return canonical UUID text or reject unsafe path identifiers."""
+        try:
+            return str(uuid.UUID(str(value)))
+        except (ValueError, AttributeError, TypeError) as exc:
+            raise ValueError(f"Invalid {field_name}") from exc
     
     def _is_valid_user_id(self, user_id: str) -> bool:
         """验证用户ID是否有效"""
@@ -84,7 +91,12 @@ class UserSessionManager:
     
     def _get_user_directory(self, user_id: str) -> Path:
         """获取用户存档目录"""
-        return self.users_dir / user_id
+        safe_user_id = self._normalize_uuid(user_id, "user_id")
+        user_dir = (self.users_dir / safe_user_id).resolve()
+        users_root = self.users_dir.resolve()
+        if user_dir.parent != users_root:
+            raise ValueError("Invalid user directory")
+        return user_dir
     
     def _get_user_metadata_path(self, user_id: str) -> Path:
         """获取用户元数据文件路径"""
@@ -120,7 +132,12 @@ class UserSessionManager:
     
     def get_user_save_path(self, user_id: str, save_id: str) -> Path:
         """获取用户的存档文件路径"""
-        return self._get_user_directory(user_id) / f"{save_id}.json"
+        safe_save_id = self._normalize_uuid(save_id, "save_id")
+        user_dir = self._get_user_directory(user_id)
+        save_path = (user_dir / f"{safe_save_id}.json").resolve()
+        if save_path.parent != user_dir:
+            raise ValueError("Invalid save path")
+        return save_path
     
     def list_user_saves(self, user_id: str) -> List[Dict[str, Any]]:
         """列出用户的所有存档"""

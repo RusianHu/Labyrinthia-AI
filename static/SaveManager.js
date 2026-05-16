@@ -435,23 +435,36 @@ Object.assign(LabyrinthiaGame.prototype, {
         ];
     },
 
+    escapeSecurityAlertHTML(value) {
+        return String(value ?? '').replace(/[&<>"']/g, (char) => ({
+            '&': '&amp;',
+            '<': '&lt;',
+            '>': '&gt;',
+            '"': '&quot;',
+            "'": '&#39;'
+        }[char]));
+    },
+
     /**
      * 显示安全警告对话框
      */
     showSecurityAlert(messages, technicalError) {
+        const safeMessages = messages.map(message => this.escapeSecurityAlertHTML(message));
+        const safeTechnicalError = this.escapeSecurityAlertHTML(technicalError);
+
         // 创建警告对话框
         const alertDiv = document.createElement('div');
         alertDiv.className = 'security-alert-overlay';
         alertDiv.innerHTML = `
             <div class="security-alert-box">
                 <div class="security-alert-icon">🛡️</div>
-                <div class="security-alert-title">${messages[0]}</div>
-                <div class="security-alert-message">${messages[1]}</div>
-                <div class="security-alert-hint">${messages[2]}</div>
+                <div class="security-alert-title">${safeMessages[0]}</div>
+                <div class="security-alert-message">${safeMessages[1]}</div>
+                <div class="security-alert-hint">${safeMessages[2]}</div>
                 <div class="security-alert-technical">
                     <details>
                         <summary>技术详情</summary>
-                        <code>${technicalError}</code>
+                        <code>${safeTechnicalError}</code>
                     </details>
                 </div>
                 <button class="security-alert-button" onclick="this.closest('.security-alert-overlay').remove()">
